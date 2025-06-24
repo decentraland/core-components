@@ -1,10 +1,10 @@
 import { ILoggerComponent, IFetchComponent } from '@well-known-components/interfaces'
 import { createFetchMockedComponent, createLoggerMockedComponent } from '@dcl/core-commons'
 import { createAnalyticsComponent } from '../src/component'
-import { IAnalyticsComponent, AnalyticsEvent, Environment } from '../src/types'
+import { IAnalyticsComponent, Environment } from '../src/types'
 
 let logs: ILoggerComponent
-let fetch: IFetchComponent
+let fetcher: IFetchComponent
 let component: IAnalyticsComponent
 let analyticsApiUrl: string
 let analyticsApiToken: string
@@ -19,9 +19,9 @@ beforeEach(async () => {
   fetchMock = jest.fn()
   errorLogMock = jest.fn()
   logs = createLoggerMockedComponent({ error: errorLogMock })
-  fetch = createFetchMockedComponent({ fetch: fetchMock })
+  fetcher = createFetchMockedComponent({ fetch: fetchMock })
   component = await createAnalyticsComponent(
-    { logs, fetch },
+    { logs, fetcher },
     'test-context',
     environment,
     analyticsApiUrl,

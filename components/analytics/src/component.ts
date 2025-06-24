@@ -1,21 +1,21 @@
 import { isErrorWithMessage } from '@dcl/core-commons'
 import { Environment, IAnalyticsComponent, IAnalyticsDependencies } from './types'
 
-export async function createAnalyticsComponent(
-  components: Pick<IAnalyticsDependencies, 'fetch' | 'logs'>,
+export async function createAnalyticsComponent<T extends Record<string, any>>(
+  components: Pick<IAnalyticsDependencies, 'fetcher' | 'logs'>,
   context: string,
   env: Environment,
   analyticsApiUrl: string,
   analyticsApiToken: string
-): Promise<IAnalyticsComponent> {
-  const { fetch, logs } = components
+): Promise<IAnalyticsComponent<T>> {
+  const { fetcher, logs } = components
   const logger = logs.getLogger('analytics-component')
 
-  async function sendEvent(name: string, body: Record<string, any>): Promise<void> {
-    logger.info(`Sending event to Analytics ${name}`)
+  async function sendEvent(name: keyof T, body: T[keyof T]): Promise<void> {
+    logger.info(`Sending event to Analytics ${name.toString()}`)
 
     try {
-      const response = await fetch.fetch(analyticsApiUrl, {
+      const response = await fetcher.fetch(analyticsApiUrl, {
         method: 'POST',
         headers: {
           'x-token': analyticsApiToken,
@@ -35,7 +35,7 @@ export async function createAnalyticsComponent(
         throw new Error(`Got status ${response.status} from the Analytics API`)
       }
     } catch (error) {
-      logger.error(`Error sending event to Analytics ${name}`, {
+      logger.error(`Error sending event to Analytics ${name.toString()}`, {
         error: isErrorWithMessage(error) ? error.message : 'Unknown error'
       })
     }

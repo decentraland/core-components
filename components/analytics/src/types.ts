@@ -2,7 +2,7 @@ import { IFetchComponent, ILoggerComponent } from '@well-known-components/interf
 
 export interface IAnalyticsDependencies {
   logs: ILoggerComponent
-  fetch: IFetchComponent
+  fetcher: IFetchComponent
 }
 
 export type AnalyticsEvent = {
@@ -12,6 +12,6 @@ export type AnalyticsEvent = {
 
 export type Environment = 'prd' | 'stg' | 'dev'
 
-export interface IAnalyticsComponent {
-  sendEvent: (name: string, body: Record<string, any>) => Promise<void>
+export interface IAnalyticsComponent<T extends Record<string, any> = Record<string, any>> {
+  sendEvent: (name: keyof T, body: T[keyof T]) => Promise<void>
 }
