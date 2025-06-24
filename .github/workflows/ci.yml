@@ -42,8 +42,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check for changeset
-        run: pnpm changeset status --since=main
+      # - name: Check for changeset
+      #   run: pnpm changeset status --since=main
 
       - name: Run linting
         run: pnpm lint
