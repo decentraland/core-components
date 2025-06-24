@@ -1,5 +1,5 @@
 import { isErrorWithMessage } from '@dcl/core-commons'
-import { AnalyticsEvent, Environment, IAnalyticsComponent, IAnalyticsDependencies } from './types'
+import { Environment, IAnalyticsComponent, IAnalyticsDependencies } from './types'
 
 export async function createAnalyticsComponent(
   components: Pick<IAnalyticsDependencies, 'fetch' | 'logs'>,
@@ -11,8 +11,8 @@ export async function createAnalyticsComponent(
   const { fetch, logs } = components
   const logger = logs.getLogger('analytics-component')
 
-  async function sendEvent(event: AnalyticsEvent): Promise<void> {
-    logger.info(`Sending event to Analytics ${event.event}`)
+  async function sendEvent(name: string, body: Record<string, any>): Promise<void> {
+    logger.info(`Sending event to Analytics ${name}`)
 
     try {
       const response = await fetch.fetch(analyticsApiUrl, {
@@ -22,12 +22,12 @@ export async function createAnalyticsComponent(
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          context,
-          ...event,
+          event: name,
           body: {
-            ...event.body,
+            ...body,
             env
-          }
+          },
+          context
         })
       })
 
@@ -35,7 +35,7 @@ export async function createAnalyticsComponent(
         throw new Error(`Got status ${response.status} from the Analytics API`)
       }
     } catch (error) {
-      logger.error(`Error sending event to Analytics ${event.event}`, {
+      logger.error(`Error sending event to Analytics ${name}`, {
         error: isErrorWithMessage(error) ? error.message : 'Unknown error'
       })
     }

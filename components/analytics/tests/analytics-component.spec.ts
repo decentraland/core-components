@@ -30,15 +30,14 @@ beforeEach(async () => {
 })
 
 describe('when sending an event', () => {
-  let testEvent: AnalyticsEvent
+  let eventBody: Record<string, any>
+  let eventName: string
 
   beforeEach(async () => {
-    testEvent = {
-      event: 'user_login',
-      body: {
-        userId: '123',
-        timestamp: Date.now()
-      }
+    eventName = 'user_login'
+    eventBody = {
+      userId: '123',
+      timestamp: Date.now()
     }
   })
 
@@ -51,7 +50,7 @@ describe('when sending an event', () => {
     })
 
     it('should send the event to the Analytics API and resolve', async () => {
-      await expect(component.sendEvent(testEvent)).resolves.not.toThrow()
+      await expect(component.sendEvent(eventName, eventBody)).resolves.not.toThrow()
 
       expect(fetchMock).toHaveBeenCalledWith(analyticsApiUrl, {
         method: 'POST',
@@ -60,12 +59,12 @@ describe('when sending an event', () => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          ...testEvent,
-          context: 'test-context',
+          event: eventName,
           body: {
-            ...testEvent.body,
+            ...eventBody,
             env: environment
-          }
+          },
+          context: 'test-context'
         })
       })
     })
@@ -80,7 +79,7 @@ describe('when sending an event', () => {
     })
 
     it('should log the error message with the event details and resolve', async () => {
-      await component.sendEvent(testEvent)
+      await expect(component.sendEvent(eventName, eventBody)).resolves.toBeUndefined()
 
       expect(errorLogMock).toHaveBeenCalledWith('Error sending event to Analytics user_login', {
         error: 'Network error'
@@ -97,7 +96,7 @@ describe('when sending an event', () => {
     })
 
     it('should log error message with event details and resolve', async () => {
-      await component.sendEvent(testEvent)
+      await expect(component.sendEvent(eventName, eventBody)).resolves.toBeUndefined()
 
       expect(errorLogMock).toHaveBeenCalledWith('Error sending event to Analytics user_login', {
         error: 'Got status 400 from the Analytics API'

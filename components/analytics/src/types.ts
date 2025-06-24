@@ -13,5 +13,5 @@ export type AnalyticsEvent = {
 export type Environment = 'prd' | 'stg' | 'dev'
 
 export interface IAnalyticsComponent {
-  sendEvent: (event: AnalyticsEvent) => Promise<void>
+  sendEvent: (name: string, body: Record<string, any>) => Promise<void>
 }
