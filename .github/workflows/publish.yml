@@ -1,4 +1,4 @@
-name: Release Packages
+name: Publish
 
 on:
   push:
@@ -6,35 +6,54 @@ on:
       - main
 
 jobs:
-  release:
+  publish:
     runs-on: ubuntu-latest
+    # Prevents multiple jobs from running at the same time
+    concurrency:
+      group: publish-packages
+      cancel-in-progress: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up Node.js
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          registry-url: "https://registry.npmjs.org/"
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
           version: 10.12.3
 
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
-      - name: Build packages
-        run: pnpm build
+      - name: Check for changesets
+        run: pnpm changeset status --since=main
 
-      - name: Create .npmrc for publishing
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish packages (with Changesets)
-        run: pnpm changeset publish
+      - name: Create Release Pull Request or Publish
+        id: changesets
+        uses: changesets/action@v1
+        # This will create a pull request to publish the packages
+        with:
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
