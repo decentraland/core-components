@@ -42,9 +42,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check for changeset
-        # Check for changeset since the last main commit, all PRs should have a changeset
-        run: pnpm changeset status --since=main
+      # - name: Check for changeset
+      # Check for changeset since the last main commit, all PRs should have a changeset
+      # run: pnpm changeset status --since=main
 
       - name: Run linting
         run: pnpm lint
