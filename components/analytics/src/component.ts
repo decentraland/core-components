@@ -1,18 +1,18 @@
 import { isErrorWithMessage } from '@dcl/core-commons'
-import { Environment, IAnalyticsComponent, IAnalyticsDependencies } from './types'
+import { IAnalyticsComponent, IAnalyticsDependencies } from './types'
 
 export async function createAnalyticsComponent<T extends Record<string, any>>(
-  components: Pick<IAnalyticsDependencies, 'fetcher' | 'logs'>,
-  context: string,
-  env: Environment,
-  analyticsApiUrl: string,
-  analyticsApiToken: string
+  components: Pick<IAnalyticsDependencies, 'fetcher' | 'logs' | 'config'>
 ): Promise<IAnalyticsComponent<T>> {
-  const { fetcher, logs } = components
+  const { fetcher, logs, config } = components
   const logger = logs.getLogger('analytics-component')
+  const context = await config.requireString('ANALYTICS_CONTEXT')
+  const analyticsApiUrl = await config.requireString('ANALYTICS_API_URL')
+  const analyticsApiToken = await config.requireString('ANALYTICS_API_TOKEN')
+  const env = await config.requireString('ENV')
 
-  async function sendEvent(name: keyof T, body: T[keyof T]): Promise<void> {
-    logger.info(`Sending event to Analytics ${name.toString()}`)
+  async function _sendEvent(name: keyof T, body: T[keyof T]): Promise<void> {
+    logger.debug(`Sending event to Analytics ${name.toString()}`)
 
     try {
       const response = await fetcher.fetch(analyticsApiUrl, {
@@ -41,7 +41,16 @@ export async function createAnalyticsComponent<T extends Record<string, any>>(
     }
   }
 
+  function fireEvent(name: keyof T, body: T[keyof T]): void {
+    void _sendEvent(name, body)
+  }
+
+  async function sendEvent(name: keyof T, body: T[keyof T]): Promise<void> {
+    return _sendEvent(name, body)
+  }
+
   return {
-    sendEvent
+    sendEvent,
+    fireEvent
   }
 }

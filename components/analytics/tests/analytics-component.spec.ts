@@ -1,14 +1,16 @@
-import { ILoggerComponent, IFetchComponent } from '@well-known-components/interfaces'
-import { createFetchMockedComponent, createLoggerMockedComponent } from '@dcl/core-commons'
+import { ILoggerComponent, IFetchComponent, IConfigComponent } from '@well-known-components/interfaces'
+import { createFetchMockedComponent, createLoggerMockedComponent, createConfigMockedComponent } from '@dcl/core-commons'
 import { createAnalyticsComponent } from '../src/component'
-import { IAnalyticsComponent, Environment } from '../src/types'
+import { IAnalyticsComponent } from '../src/types'
 
 let logs: ILoggerComponent
 let fetcher: IFetchComponent
 let component: IAnalyticsComponent
+let config: IConfigComponent
+let context: string
 let analyticsApiUrl: string
 let analyticsApiToken: string
-let environment: Environment
+let environment: string
 let fetchMock: jest.Mock
 let errorLogMock: jest.Mock
 
@@ -16,17 +18,26 @@ beforeEach(async () => {
   analyticsApiUrl = 'https://analytics.example.com/events'
   analyticsApiToken = 'test-token-123'
   environment = 'dev'
+  context = 'test-context'
   fetchMock = jest.fn()
   errorLogMock = jest.fn()
   logs = createLoggerMockedComponent({ error: errorLogMock })
   fetcher = createFetchMockedComponent({ fetch: fetchMock })
-  component = await createAnalyticsComponent(
-    { logs, fetcher },
-    'test-context',
-    environment,
-    analyticsApiUrl,
-    analyticsApiToken
-  )
+  config = createConfigMockedComponent({
+    requireString: jest.fn().mockImplementation((key) => {
+      switch (key) {
+        case 'ANALYTICS_CONTEXT':
+          return context
+        case 'ANALYTICS_API_URL':
+          return analyticsApiUrl
+        case 'ANALYTICS_API_TOKEN':
+          return analyticsApiToken
+        case 'ENV':
+          return environment
+      }
+    })
+  })
+  component = await createAnalyticsComponent({ logs, fetcher, config })
 })
 
 describe('when sending an event', () => {
