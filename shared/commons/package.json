@@ -1,6 +1,6 @@
 {
   "name": "@dcl/core-commons",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Shared utilities and types for core components",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
