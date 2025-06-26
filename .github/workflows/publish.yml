@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
-
 jobs:
   publish:
+    permissions:
+      contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     # Prevents multiple jobs from running at the same time
     concurrency:
@@ -55,4 +57,4 @@ jobs:
           publish: pnpm changeset publish
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
