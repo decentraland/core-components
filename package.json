@@ -5,6 +5,7 @@
   "description": "Monorepo for core components",
   "scripts": {
     "build": "pnpm -r build",
+    "ci:publish": "pnpm publish -r",
     "dev": "pnpm -r dev",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
