@@ -6,11 +6,6 @@ export interface IAnalyticsDependencies {
   config: IConfigComponent
 }
 
-export type AnalyticsEvent = {
-  event: string
-  body: Record<string, any>
-}
-
 export interface IAnalyticsComponent<T extends Record<string, any> = Record<string, any>> {
   /**
    * Send an event and wait for the response.
