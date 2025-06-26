@@ -1,0 +1,33 @@
+{
+  "name": "core-components",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monorepo for core components",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r dev",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r clean",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1",
+    "@dcl/eslint-config": "^2.2.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.0.4",
+    "jest": "^30.0.2",
+    "ts-jest": "^29.4.0",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@10.12.3",
+  "dependencies": {
+    "@well-known-components/interfaces": "^1.5.2"
+  }
+}

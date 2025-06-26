@@ -1,0 +1,26 @@
+{
+  "name": "@dcl/job-component",
+  "version": "0.1.0",
+  "description": "Job component for core components library",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest --config ../../jest.config.js",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/core-commons": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
