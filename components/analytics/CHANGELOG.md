@@ -1,5 +1,13 @@
 # @dcl/analytics-component
 
+## 0.2.2
+
+### Patch Changes
+
+- ddcdb62: Fix package entrypoint
+- Updated dependencies [ddcdb62]
+  - @dcl/core-commons@0.2.2
+
 ## 0.2.1
 
 ### Patch Changes

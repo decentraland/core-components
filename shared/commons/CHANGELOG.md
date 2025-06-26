@@ -1,5 +1,11 @@
 # @dcl/core-commons
 
+## 0.2.2
+
+### Patch Changes
+
+- ddcdb62: Fix package entrypoint
+
 ## 0.2.1
 
 ### Patch Changes
