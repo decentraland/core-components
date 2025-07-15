@@ -92,12 +92,8 @@ describe('when creating a slack component', () => {
   })
 
   describe('and no configuration provided', () => {
-    beforeEach(() => {
-      slackComponent = createSlackComponent({ logs }, {})
-    })
-
-    it('should throw error when sending message', async () => {
-      await expect(slackComponent.sendMessage({ text: 'test' })).rejects.toThrow('No webhook URL or token provided')
+    it('should throw error when creating component', () => {
+      expect(() => createSlackComponent({ logs }, {})).toThrow('No webhook URL or token provided')
     })
   })
 

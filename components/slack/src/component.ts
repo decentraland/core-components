@@ -12,20 +12,26 @@ export function createSlackComponent(
   let webhookUrl: string | undefined = config.webhookUrl
   let token: string | undefined = config.token
   let client: WebClient | undefined
+  let webhook: IncomingWebhook | undefined
+
+  if (!webhookUrl && !token) {
+    throw new Error('No webhook URL or token provided')
+  }
 
   if (token) {
     client = new WebClient(token)
   }
+  if (webhookUrl) {
+    webhook = new IncomingWebhook(webhookUrl)
+  }
 
   async function sendMessage(message: SlackMessage): Promise<void> {
     try {
-      if (!webhookUrl && !token) {
-        throw new Error('No webhook URL or token provided')
-      }
-      if (token && client && !message.channel) {
+      if (client && !message.channel) {
         throw new Error('Channel is required when using token')
       }
-      if (token && client) {
+
+      if (client) {
         await client.chat.postMessage({
           channel: message.channel!,
           text: message.text,
@@ -37,8 +43,7 @@ export function createSlackComponent(
           thread_ts: message.thread_ts,
           reply_broadcast: message.reply_broadcast
         })
-      } else if (webhookUrl) {
-        const webhook = new IncomingWebhook(webhookUrl)
+      } else if (webhookUrl && webhook) {
         await webhook.send({
           text: message.text,
           blocks: message.blocks,
