@@ -1,0 +1,32 @@
+{
+  "name": "@dcl/slack-component",
+  "version": "0.2.2",
+  "description": "Slack component for core components library",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest --config ../../jest.config.js",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/core-commons": "workspace:*",
+    "@slack/web-api": "^6.8.1",
+    "@slack/webhook": "^6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@types/node": "^24.0.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

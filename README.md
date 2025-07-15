@@ -10,7 +10,8 @@ This repository is organized as a monorepo using pnpm workspaces with the follow
 core-components/
 ├── components/          # Reusable components
 │   ├── analytics/      # Analytics component for event tracking
-│   └── job/           # Job scheduling and execution component
+│   ├── job/           # Job scheduling and execution component
+│   └── slack/         # Slack messaging component
 └── shared/             # Shared utilities and types
     └── commons/       # Common utilities, types, and constants
 ```
@@ -81,6 +82,58 @@ await job.start()
 // ... later
 await job.stop()
 ```
+
+### Slack Component (`@dcl/slack-component`)
+
+A component for sending messages to Slack using webhooks or bot tokens.
+
+**Features:**
+
+- Send messages to Slack using webhooks or bot tokens
+- Support for simple and complex messages (blocks, attachments)
+- Error handling and logging
+- Flexible channel and message options configuration
+- Lifecycle methods for start/stop
+
+**Usage:**
+
+```typescript
+import { createSlackComponent } from '@dcl/slack-component'
+
+const slack = createSlackComponent({ logs }, { webhookUrl: 'https://hooks.slack.com/services/XXX/YYY/ZZZ' })
+
+// Send simple text message
+await slack.sendMessage({ text: 'Hello from DCL!' })
+
+// Send to specific channel with custom username and icon (requires bot token)
+const slackWithToken = createSlackComponent({ logs }, { token: 'xoxb-your-bot-token' })
+await slackWithToken.sendMessage({
+  channel: '#alerts',
+  text: 'Important alert!',
+  username: 'My Bot',
+  icon_emoji: ':rocket:',
+  icon_url: 'https://example.com/icon.png'
+})
+
+// Send complex message with blocks
+await slack.sendMessage({
+  text: 'Backup message',
+  blocks: [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '*Important message*\nThis is a formatted message'
+      }
+    }
+  ]
+})
+```
+
+**Note:**
+
+- If you use a webhook, Slack will ignore `username`, `icon_emoji`, and `icon_url` fields. These can only be customized when using a bot token (`token: 'xoxb-...'`).
+- Use `webhookUrl` for simple integrations, or `token` for full message customization and advanced features.
 
 ### Core Commons (`@dcl/core-commons`)
 
@@ -169,6 +222,7 @@ Packages are published to npm with the following scope:
 
 - `@dcl/analytics-component`
 - `@dcl/job-component`
+- `@dcl/slack-component`
 
 ## 🔗 Related
 
