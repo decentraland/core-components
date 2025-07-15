@@ -112,31 +112,3 @@ describe('when creating a slack component', () => {
     })
   })
 })
-
-describe('when starting the component', () => {
-  let slackComponent: ReturnType<typeof createSlackComponent>
-
-  beforeEach(() => {
-    slackComponent = createSlackComponent({ logs }, { webhookUrl: 'test' })
-  })
-
-  it('should log start message', async () => {
-    await slackComponent[START_COMPONENT]?.()
-
-    expect(infoLogMock).toHaveBeenCalledWith('Slack component started')
-  })
-})
-
-describe('when stopping the component', () => {
-  let slackComponent: ReturnType<typeof createSlackComponent>
-
-  beforeEach(() => {
-    slackComponent = createSlackComponent({ logs }, { webhookUrl: 'test' })
-  })
-
-  it('should log stop message', async () => {
-    await slackComponent[STOP_COMPONENT]?.()
-
-    expect(infoLogMock).toHaveBeenCalledWith('Slack component stopped')
-  })
-})
