@@ -50,21 +50,7 @@ export function createSlackComponent(
     }
   }
 
-  async function start() {
-    if (logger) {
-      logger.info('Slack component started')
-    }
-  }
-
-  async function stop() {
-    if (logger) {
-      logger.info('Slack component stopped')
-    }
-  }
-
   return {
-    sendMessage,
-    [START_COMPONENT]: start,
-    [STOP_COMPONENT]: stop
+    sendMessage
   }
 }
