@@ -8,49 +8,35 @@ export function createSlackComponent(
   config: SlackConfig
 ): ISlackComponent {
   const { logs } = components
-  const logger = logs?.getLogger?.('slack')
-  let webhookUrl: string | undefined = config.webhookUrl
+  const logger = logs.getLogger('slack')
   let token: string | undefined = config.token
-  let client: WebClient | undefined
-  let webhook: IncomingWebhook | undefined
 
-  if (!webhookUrl && !token) {
-    throw new Error('No webhook URL or token provided')
+  if (!token) {
+    logger.error('No token provided')
+    throw new Error('No token provided')
   }
 
-  if (token) {
-    client = new WebClient(token)
-  }
-  if (webhookUrl) {
-    webhook = new IncomingWebhook(webhookUrl)
-  }
+  const client = new WebClient(token)
 
   async function sendMessage(message: SlackMessage): Promise<void> {
     try {
-      if (client && !message.channel) {
+      if (!message.channel) {
         throw new Error('Channel is required when using token')
       }
 
-      if (client) {
-        await client.chat.postMessage({
-          channel: message.channel!,
-          text: message.text,
-          blocks: message.blocks,
-          attachments: message.attachments,
-          username: message.username,
-          icon_emoji: message.icon_emoji,
-          icon_url: message.icon_url,
-          thread_ts: message.thread_ts,
-          reply_broadcast: message.reply_broadcast
-        })
-      } else if (webhookUrl && webhook) {
-        await webhook.send({
-          text: message.text,
-          blocks: message.blocks,
-          attachments: message.attachments
-        })
-      }
+      await client.chat.postMessage({
+        channel: message.channel!,
+        text: message.text,
+        blocks: message.blocks,
+        attachments: message.attachments,
+        username: message.username,
+        icon_emoji: message.icon_emoji,
+        icon_url: message.icon_url,
+        thread_ts: message.thread_ts,
+        reply_broadcast: message.reply_broadcast
+      })
     } catch (error) {
+      logger.debug(`Failed to send message: ${error}`)
       throw new Error(`Failed to send message: ${error}`)
     }
   }

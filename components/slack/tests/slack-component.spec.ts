@@ -2,14 +2,11 @@ import { ILoggerComponent, START_COMPONENT, STOP_COMPONENT } from '@well-known-c
 import { createLoggerMockedComponent } from '@dcl/core-commons'
 import { createSlackComponent } from '../src/component'
 import { SlackMessage } from '../src/types'
-import { IncomingWebhook } from '@slack/webhook'
 import { WebClient } from '@slack/web-api'
 
-jest.mock('@slack/webhook')
 jest.mock('@slack/web-api')
 
 let logs: ILoggerComponent
-let mockWebhook: jest.Mocked<IncomingWebhook>
 let mockClient: jest.Mocked<WebClient>
 let infoLogMock: jest.Mock
 
@@ -20,39 +17,12 @@ describe('when creating a slack component', () => {
   beforeEach(() => {
     infoLogMock = jest.fn()
     logs = createLoggerMockedComponent({ info: infoLogMock })
-    mockWebhook = {
-      send: jest.fn().mockResolvedValue({})
-    } as unknown as jest.Mocked<IncomingWebhook>
     mockClient = {
       chat: {
         postMessage: jest.fn().mockResolvedValue({})
       }
     } as unknown as jest.Mocked<WebClient>
-    ;(IncomingWebhook as unknown as jest.Mock).mockImplementation(() => mockWebhook)
     ;(WebClient as unknown as jest.Mock).mockImplementation(() => mockClient)
-  })
-
-  describe('and using webhook configuration', () => {
-    let webhookUrl: string
-    let message: SlackMessage
-
-    beforeEach(() => {
-      webhookUrl = 'https://hooks.slack.com/services/test'
-      slackComponent = createSlackComponent({ logs }, { webhookUrl })
-      message = {
-        text: 'Test message',
-        blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Test' } }]
-      }
-    })
-
-    it('should send message via webhook', async () => {
-      await slackComponent.sendMessage(message)
-
-      expect(mockWebhook.send).toHaveBeenCalledWith({
-        text: 'Test message',
-        blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Test' } }]
-      })
-    })
   })
 
   describe('and using token configuration', () => {
@@ -91,9 +61,9 @@ describe('when creating a slack component', () => {
     })
   })
 
-  describe('and no configuration provided', () => {
+  describe('and no token provided', () => {
     it('should throw error when creating component', () => {
-      expect(() => createSlackComponent({ logs }, {})).toThrow('No webhook URL or token provided')
+      expect(() => createSlackComponent({ logs }, {})).toThrow('No token provided')
     })
   })
 
@@ -104,7 +74,32 @@ describe('when creating a slack component', () => {
     })
 
     it('should throw error when channel is missing', async () => {
-      await expect(slackComponent.sendMessage({ text: 'test' })).rejects.toThrow('Channel is required when using token')
+      const messageWithoutChannel: SlackMessage = {
+        text: 'test',
+        channel: ''
+      }
+
+      await expect(slackComponent.sendMessage(messageWithoutChannel)).rejects.toThrow(
+        'Channel is required when using token'
+      )
+    })
+  })
+
+  describe('and API call fails', () => {
+    let message: SlackMessage
+
+    beforeEach(() => {
+      token = 'xoxb-test-token'
+      slackComponent = createSlackComponent({ logs }, { token })
+      message = {
+        text: 'Test message',
+        channel: 'test-channel'
+      }
+      ;(mockClient.chat.postMessage as jest.Mock).mockRejectedValueOnce(new Error('API Error'))
+    })
+
+    it('should throw error with failure message', async () => {
+      await expect(slackComponent.sendMessage(message)).rejects.toThrow('Failed to send message: Error: API Error')
     })
   })
 })
