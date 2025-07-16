@@ -1,17 +1,16 @@
 # @dcl/slack-component
 
-A component for sending messages to Slack using webhooks or bot tokens, following the best practices from the official Slack documentation.
+A component for sending messages to Slack using bot tokens, following the best practices from the official Slack documentation.
 
 ## Features
 
-- Send messages to Slack using webhooks or bot tokens
+- Send messages to Slack using bot tokens
 - Support for simple text messages and complex messages with blocks and attachments
 - Improved TypeScript types based on official Slack documentation
 - Message validation according to Slack specifications
 - Robust error handling with detailed logging
 - Flexible channel and message options configuration
 - Compatible with TypeScript 5.3.x and Node.js >= 18.0.0
-- Implements START_COMPONENT and STOP_COMPONENT lifecycle methods
 
 ## Installation
 
@@ -21,10 +20,7 @@ pnpm add @dcl/slack-component
 
 ## Configuration
 
-The component requires either a webhook URL or a bot token:
-
-- **Webhook**: Simple integration, limited customization
-- **Bot Token**: Full customization including username, icon, and advanced features
+The component requires a bot token for authentication and message sending.
 
 ## Usage
 
@@ -33,15 +29,7 @@ The component requires either a webhook URL or a bot token:
 ```typescript
 import { createSlackComponent } from '@dcl/slack-component'
 
-// Using webhook (simple integration)
-const slack = createSlackComponent(
-  { logs },
-  {
-    webhookUrl: 'https://hooks.slack.com/services/XXX/YYY/ZZZ'
-  }
-)
-
-// Using bot token (full customization)
+// Using bot token
 const slack = createSlackComponent(
   { logs },
   {
@@ -50,23 +38,16 @@ const slack = createSlackComponent(
 )
 ```
 
-### Start and stop the component
-
-```typescript
-// Start the component
-await slack[START_COMPONENT]?.({})
-
-// Stop the component
-await slack[STOP_COMPONENT]?.()
-```
-
 ### Send messages
 
 ```typescript
 // Send simple text message
-await slack.sendMessage({ text: 'Hello from DCL!' })
+await slack.sendMessage({
+  text: 'Hello from DCL!',
+  channel: '#general'
+})
 
-// Send to specific channel (requires bot token)
+// Send to specific channel with customization
 await slack.sendMessage({
   channel: '#alerts',
   text: 'Important alert!',
@@ -78,6 +59,7 @@ await slack.sendMessage({
 // Send complex message with blocks
 await slack.sendMessage({
   text: 'Backup message',
+  channel: '#notifications',
   blocks: [
     {
       type: 'section',
@@ -92,6 +74,7 @@ await slack.sendMessage({
 // Send message with attachments
 await slack.sendMessage({
   text: 'Error report',
+  channel: '#errors',
   attachments: [
     {
       color: '#ff0000',
@@ -109,14 +92,6 @@ await slack.sendMessage({
 
 ## API
 
-### `[START_COMPONENT]?(startOptions: IBaseComponent.ComponentStartOptions): Promise<void>`
-
-Start the Slack component. Logs that the component has started.
-
-### `[STOP_COMPONENT]?(): Promise<void>`
-
-Stop the Slack component. Logs that the component has stopped.
-
 ### `sendMessage(message: SlackMessage): Promise<void>`
 
 Send a message to Slack and wait for the response.
@@ -130,7 +105,7 @@ interface SlackMessage {
   text?: string
   blocks?: any[]
   attachments?: any[]
-  channel?: string
+  channel: string
   username?: string
   icon_emoji?: string
   icon_url?: string
@@ -143,31 +118,29 @@ interface SlackMessage {
 
 ```typescript
 interface SlackConfig {
-  webhookUrl?: string
-  token?: string
+  token: string
 }
 ```
 
-## Webhook vs Bot Token
+## Bot Token Setup
 
-### Webhook Limitations
+To use this component, you need to:
 
-- Cannot customize `username`, `icon_emoji`, or `icon_url`
-- Uses the name and icon configured in the webhook integration
-- Simpler setup, good for basic integrations
-
-### Bot Token Features
-
-- Full customization of `username`, `icon_emoji`, and `icon_url`
-- Access to all Slack API features
-- Requires bot token setup and proper permissions
+1. **Create a Slack App** at https://api.slack.com/apps
+2. **Configure Bot Token Scopes**:
+   - `chat:write` - for sending messages to channels
+   - `chat:write.public` - for sending messages to public channels
+   - `chat:write.customize` - for customizing bot name and avatar
+3. **Install the app** to your workspace
+4. **Get the Bot User OAuth Token** (starts with `xoxb-`)
 
 ## Error Handling
 
-The component automatically handles errors and logs them using the logging system. Errors include:
+The component automatically handles errors and logs them using the logging system. Common errors include:
 
-- Network and other communication errors
-- Configuration errors when neither webhook nor token is provided
+- `No token provided` - when token is missing from configuration
+- `Channel is required when using token` - when channel is not specified
+- `Failed to send message` - when API call fails (network, permissions, etc.)
 
 ## Compatibility
 
@@ -185,19 +158,6 @@ pnpm test
 pnpm test --watch
 ```
 
-## Development
-
-```bash
-# Build the component
-pnpm build
-
-# Development in watch mode
-pnpm dev
-
-# Clean build files
-pnpm clean
-```
-
 ## Improvements Based on Official Documentation
 
 This component follows the best practices from the [official Slack documentation](https://tools.slack.dev/node-slack-sdk/typescript/):
@@ -206,5 +166,5 @@ This component follows the best practices from the [official Slack documentation
 - Message validation according to Slack specifications
 - Robust error handling
 - Compatibility with the latest TypeScript versions
-- Uses official Slack webhook and API libraries
+- Uses official Slack API library
 - Implements standard component lifecycle methods

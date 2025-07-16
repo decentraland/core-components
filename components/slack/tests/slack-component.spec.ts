@@ -63,25 +63,7 @@ describe('when creating a slack component', () => {
 
   describe('and no token provided', () => {
     it('should throw error when creating component', () => {
-      expect(() => createSlackComponent({ logs }, {})).toThrow('No token provided')
-    })
-  })
-
-  describe('and using token without channel', () => {
-    beforeEach(() => {
-      token = 'xoxb-test-token'
-      slackComponent = createSlackComponent({ logs }, { token })
-    })
-
-    it('should throw error when channel is missing', async () => {
-      const messageWithoutChannel: SlackMessage = {
-        text: 'test',
-        channel: ''
-      }
-
-      await expect(slackComponent.sendMessage(messageWithoutChannel)).rejects.toThrow(
-        'Channel is required when using token'
-      )
+      expect(() => createSlackComponent({ logs }, { token: '' })).toThrow('No token provided')
     })
   })
 

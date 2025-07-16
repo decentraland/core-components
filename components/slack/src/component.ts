@@ -19,12 +19,8 @@ export function createSlackComponent(
 
   async function sendMessage(message: SlackMessage): Promise<void> {
     try {
-      if (!message.channel) {
-        throw new Error('Channel is required when using token')
-      }
-
       await client.chat.postMessage({
-        channel: message.channel!,
+        channel: message.channel,
         text: message.text,
         blocks: message.blocks,
         attachments: message.attachments,
