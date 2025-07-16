@@ -1,5 +1,4 @@
-import { START_COMPONENT, STOP_COMPONENT, ILoggerComponent } from '@well-known-components/interfaces'
-import { IncomingWebhook } from '@slack/webhook'
+import { ILoggerComponent } from '@well-known-components/interfaces'
 import { WebClient } from '@slack/web-api'
 import { SlackConfig, SlackMessage, ISlackComponent } from './types'
 
