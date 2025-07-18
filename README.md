@@ -18,123 +18,10 @@ core-components/
 
 ## 🚀 Components
 
-### Analytics Component (`@dcl/analytics-component`)
-
-A component for sending analytics events to an external API.
-
-**Features:**
-
-- Send analytics events with environment context
-- Error handling and logging
-- Configurable API endpoint and authentication
-
-**Usage:**
-
-```typescript
-import { createAnalyticsComponent } from '@dcl/analytics-component'
-
-const analytics = await createAnalyticsComponent(
-  { fetch, logs },
-  'service-name',
-  'prd',
-  'https://api.analytics.com/events',
-  'your-api-token'
-)
-
-await analytics.sendEvent({
-  event: 'user_action',
-  body: { userId: '123', action: 'click' }
-})
-```
-
-### Job Component (`@dcl/job-component`)
-
-A component for scheduling and executing recurring jobs with configurable timing and error handling.
-
-**Features:**
-
-- Recurring job execution with configurable intervals
-- Startup delay support
-- Error handling and completion callbacks
-- Graceful shutdown capabilities
-
-**Usage:**
-
-```typescript
-import { createJobComponent } from '@dcl/job-component'
-
-const job = createJobComponent(
-  { logs },
-  async () => {
-    // Your job logic here
-    console.log('Executing job...')
-  },
-  5000, // Run every 5 seconds
-  {
-    repeat: true,
-    startupDelay: 1000,
-    onError: (error) => console.error('Job error:', error),
-    onFinish: () => console.log('Job finished')
-  }
-)
-
-await job.start()
-// ... later
-await job.stop()
-```
-
-### Slack Component (`@dcl/slack-component`)
-
-A component for sending messages to Slack using bot tokens.
-
-**Features:**
-
-- Send messages to Slack using bot tokens
-- Support for simple and complex messages (blocks, attachments)
-- Error handling and logging
-- Flexible channel and message options configuration
-- Lifecycle methods for start/stop
-
-**Usage:**
-
-```typescript
-import { createSlackComponent } from '@dcl/slack-component'
-
-// Send to specific channel with custom username and icon (requires bot token)
-const slackWithToken = createSlackComponent({ logs }, { token: 'xoxb-your-bot-token' })
-await slackWithToken.sendMessage({
-  channel: '#alerts',
-  text: 'Important alert!',
-  username: 'My Bot',
-  icon_emoji: ':rocket:',
-  icon_url: 'https://example.com/icon.png'
-})
-
-// Send complex message with blocks
-await slack.sendMessage({
-  text: 'Backup message',
-  blocks: [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '*Important message*\nThis is a formatted message'
-      }
-    }
-  ]
-})
-```
-
-### Core Commons (`@dcl/core-commons`)
-
-Shared utilities, types, constants, and mocks used across all components.
-
-**Includes:**
-
-- Common TypeScript types
-- Utility functions
-- Constants
-- Mock implementations for testing
+- Analytics Component (`@dcl/analytics-component`)(./components/analytics/README.md)
+- Job Component (`@dcl/job-component`)(./components/job/README.md)
+- Slack Component (`@dcl/slack-component`)(./components/slack/README.md)
+- Core Commons (`@dcl/core-commons`)(./shared/commons/README.md)
 
 ## 🛠️ Development
 
@@ -208,11 +95,59 @@ Testing is configured with Jest and `ts-jest` for TypeScript support. The config
 
 ## 📦 Publishing
 
-Packages are published to npm with the following scope:
+This project uses [Changesets](https://github.com/changesets/changesets) for automated version management and publishing to npm. All packages are published under the `@dcl` scope:
 
 - `@dcl/analytics-component`
 - `@dcl/job-component`
 - `@dcl/slack-component`
+- `@dcl/core-commons`
+
+### Publishing Workflow
+
+Every pull request that introduces changes to any package **must** include a changeset file that describes the changes and their semantic versioning impact.
+
+#### Step 1: Create a Changeset
+
+When making changes to any package, run the changeset command to create a changeset file:
+
+```bash
+pnpm changeset
+```
+
+This interactive command will:
+
+- Ask you to select which packages have changed
+- Prompt you to choose the version bump type (major, minor, or patch)
+- Request a summary of the changes for the changelog
+
+The command creates a new file in the `.changeset/` directory with your change description.
+
+#### Step 2: Commit and Submit PR
+
+Include the generated changeset file in your PR:
+
+```bash
+git add .changeset/
+git commit -m "Add changeset for [your changes]"
+```
+
+#### Step 3: Merge PR
+
+After peer review and approval, merge your PR. The changeset CI will automatically:
+
+- Detect the merged changeset
+- Create a new "Version Packages" PR with:
+  - Updated version numbers in `package.json` files
+  - Generated changelogs for each affected package
+  - Consumed changeset files (they'll be deleted)
+
+#### Step 4: Release
+
+Merge the "Version Packages" PR to trigger the automated publishing process:
+
+- Packages are built and published to npm
+- Git tags are created for the new versions
+- GitHub releases are generated
 
 ## 🔗 Related
 

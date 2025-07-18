@@ -53,6 +53,7 @@ jobs:
           title: 'chore: version packages'
           commit: 'chore: version packages [skip ci]'
           publish: pnpm ci:publish
+          commitMode: 'github-api'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

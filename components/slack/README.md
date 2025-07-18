@@ -1,54 +1,23 @@
-# @dcl/slack-component
+# Slack Component (`@dcl/slack-component`)
 
-A component for sending messages to Slack using bot tokens, following the best practices from the official Slack documentation.
+A component for sending messages to Slack using bot tokens.
 
 ## Features
 
 - Send messages to Slack using bot tokens
-- Support for simple text messages and complex messages with blocks and attachments
-- Improved TypeScript types based on official Slack documentation
-- Message validation according to Slack specifications
-- Robust error handling with detailed logging
+- Support for simple and complex messages (blocks, attachments)
+- Error handling and logging
 - Flexible channel and message options configuration
-- Compatible with TypeScript 5.3.x and Node.js >= 18.0.0
-
-## Installation
-
-```bash
-pnpm add @dcl/slack-component
-```
-
-## Configuration
-
-The component requires a bot token for authentication and message sending.
+- Lifecycle methods for start/stop
 
 ## Usage
-
-### Create the component
 
 ```typescript
 import { createSlackComponent } from '@dcl/slack-component'
 
-// Using bot token
-const slack = createSlackComponent(
-  { logs },
-  {
-    token: 'xoxb-your-bot-token'
-  }
-)
-```
-
-### Send messages
-
-```typescript
-// Send simple text message
-await slack.sendMessage({
-  text: 'Hello from DCL!',
-  channel: '#general'
-})
-
-// Send to specific channel with customization
-await slack.sendMessage({
+// Send to specific channel with custom username and icon (requires bot token)
+const slackWithToken = createSlackComponent({ logs }, { token: 'xoxb-your-bot-token' })
+await slackWithToken.sendMessage({
   channel: '#alerts',
   text: 'Important alert!',
   username: 'My Bot',
@@ -70,56 +39,6 @@ await slack.sendMessage({
     }
   ]
 })
-
-// Send message with attachments
-await slack.sendMessage({
-  text: 'Error report',
-  channel: '#errors',
-  attachments: [
-    {
-      color: '#ff0000',
-      fields: [
-        {
-          title: 'Error',
-          value: 'Database connection failed',
-          short: true
-        }
-      ]
-    }
-  ]
-})
-```
-
-## API
-
-### `sendMessage(message: SlackMessage): Promise<void>`
-
-Send a message to Slack and wait for the response.
-
-## Types
-
-### `SlackMessage`
-
-```typescript
-interface SlackMessage {
-  text?: string
-  blocks?: any[]
-  attachments?: any[]
-  channel: string
-  username?: string
-  icon_emoji?: string
-  icon_url?: string
-  thread_ts?: string
-  reply_broadcast?: boolean
-}
-```
-
-### `SlackConfig`
-
-```typescript
-interface SlackConfig {
-  token: string
-}
 ```
 
 ## Bot Token Setup
