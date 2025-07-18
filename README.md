@@ -128,7 +128,7 @@ Include the generated changeset file in your PR:
 
 ```bash
 git add .changeset/
-git commit -m "Add changeset for [your changes]"
+git commit -m "feat: Add changeset for [your changes]"
 ```
 
 #### Step 3: Merge PR
