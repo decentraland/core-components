@@ -7,13 +7,8 @@ export function createSlackComponent(
   config: SlackConfig
 ): ISlackComponent {
   const { logs } = components
+  const { token } = config
   const logger = logs.getLogger('slack')
-  let token: string | undefined = config.token
-
-  if (!token) {
-    logger.error('No token provided')
-    throw new Error('No token provided')
-  }
 
   const client = new WebClient(token)
 

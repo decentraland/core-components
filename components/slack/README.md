@@ -138,8 +138,6 @@ To use this component, you need to:
 
 The component automatically handles errors and logs them using the logging system. Common errors include:
 
-- `No token provided` - when token is missing from configuration
-- `Channel is required when using token` - when channel is not specified
 - `Failed to send message` - when API call fails (network, permissions, etc.)
 
 ## Compatibility
@@ -147,24 +145,3 @@ The component automatically handles errors and logs them using the logging syste
 - **TypeScript**: 5.3.x or higher
 - **Node.js**: 18.0.0 or higher
 - **Slack API**: Compatible with the latest Slack API version
-
-## Testing
-
-```bash
-# Run tests
-pnpm test
-
-# Run tests in watch mode
-pnpm test --watch
-```
-
-## Improvements Based on Official Documentation
-
-This component follows the best practices from the [official Slack documentation](https://tools.slack.dev/node-slack-sdk/typescript/):
-
-- Improved and complete TypeScript types
-- Message validation according to Slack specifications
-- Robust error handling
-- Compatibility with the latest TypeScript versions
-- Uses official Slack API library
-- Implements standard component lifecycle methods

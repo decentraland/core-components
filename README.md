@@ -85,11 +85,11 @@ await job.stop()
 
 ### Slack Component (`@dcl/slack-component`)
 
-A component for sending messages to Slack using webhooks or bot tokens.
+A component for sending messages to Slack using bot tokens.
 
 **Features:**
 
-- Send messages to Slack using webhooks or bot tokens
+- Send messages to Slack using bot tokens
 - Support for simple and complex messages (blocks, attachments)
 - Error handling and logging
 - Flexible channel and message options configuration
@@ -99,11 +99,6 @@ A component for sending messages to Slack using webhooks or bot tokens.
 
 ```typescript
 import { createSlackComponent } from '@dcl/slack-component'
-
-const slack = createSlackComponent({ logs }, { webhookUrl: 'https://hooks.slack.com/services/XXX/YYY/ZZZ' })
-
-// Send simple text message
-await slack.sendMessage({ text: 'Hello from DCL!' })
 
 // Send to specific channel with custom username and icon (requires bot token)
 const slackWithToken = createSlackComponent({ logs }, { token: 'xoxb-your-bot-token' })
@@ -129,11 +124,6 @@ await slack.sendMessage({
   ]
 })
 ```
-
-**Note:**
-
-- If you use a webhook, Slack will ignore `username`, `icon_emoji`, and `icon_url` fields. These can only be customized when using a bot token (`token: 'xoxb-...'`).
-- Use `webhookUrl` for simple integrations, or `token` for full message customization and advanced features.
 
 ### Core Commons (`@dcl/core-commons`)
 

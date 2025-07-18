@@ -61,12 +61,6 @@ describe('when creating a slack component', () => {
     })
   })
 
-  describe('and no token provided', () => {
-    it('should throw error when creating component', () => {
-      expect(() => createSlackComponent({ logs }, { token: '' })).toThrow('No token provided')
-    })
-  })
-
   describe('and API call fails', () => {
     let message: SlackMessage
 
