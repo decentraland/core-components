@@ -61,7 +61,7 @@ describe('when sending messages', () => {
     })
 
     it('should send the message successfully', async () => {
-      await expect(component.send(testMessage)).resolves.not.toThrow()
+      await expect(component.sendMessage(testMessage)).resolves.not.toThrow()
       expect(sendMock).toHaveBeenCalledTimes(1)
     })
   })
@@ -72,7 +72,7 @@ describe('when sending messages', () => {
     })
 
     it('should throw error with failure message', async () => {
-      await expect(component.send(testMessage)).rejects.toThrow('SQS send failed')
+      await expect(component.sendMessage(testMessage)).rejects.toThrow('SQS send failed')
     })
   })
 })
@@ -169,24 +169,24 @@ describe('when handling different message types', () => {
 
   it('should handle string messages', async () => {
     const message = 'simple string message'
-    await component.send(message)
+    await component.sendMessage(message)
     expect(sendMock).toHaveBeenCalledTimes(1)
   })
 
   it('should handle object messages', async () => {
     const message = { id: 1, name: 'test', active: true }
-    await component.send(message)
+    await component.sendMessage(message)
     expect(sendMock).toHaveBeenCalledTimes(1)
   })
 
   it('should handle array messages', async () => {
     const message = [1, 2, 3, 'test']
-    await component.send(message)
+    await component.sendMessage(message)
     expect(sendMock).toHaveBeenCalledTimes(1)
   })
 
   it('should handle null and undefined messages', async () => {
-    await component.send(null)
+    await component.sendMessage(null)
     expect(sendMock).toHaveBeenCalledTimes(1)
   })
 })
