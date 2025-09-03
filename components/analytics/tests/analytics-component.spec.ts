@@ -24,7 +24,7 @@ beforeEach(async () => {
   logs = createLoggerMockedComponent({ error: errorLogMock })
   fetcher = createFetchMockedComponent({ fetch: fetchMock })
   config = createConfigMockedComponent({
-    requireString: jest.fn().mockImplementation((key: string) => {
+    requireString: jest.fn().mockImplementation((key) => {
       switch (key) {
         case 'ANALYTICS_CONTEXT':
           return context
@@ -34,8 +34,6 @@ beforeEach(async () => {
           return analyticsApiToken
         case 'ENV':
           return environment
-        default:
-          throw new Error(`Unknown key: ${key}`)
       }
     })
   })
