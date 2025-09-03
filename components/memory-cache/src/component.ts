@@ -1,6 +1,5 @@
 import { LRUCache } from 'lru-cache'
-
-import { ICacheStorageComponent } from './types'
+import { ICacheStorageComponent } from '@dcl/core-commons'
 
 export function createInMemoryCacheComponent(): ICacheStorageComponent {
   const cache = new LRUCache<string, any>({
@@ -31,14 +30,6 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
       const regexPattern = pattern.replace(/\*/g, '.*')
       const regex = new RegExp(regexPattern)
       return allKeys.filter((key: string) => regex.test(key))
-    },
-
-    start: async (): Promise<void> => {
-      // No-op for memory cache
-    },
-
-    stop: async (): Promise<void> => {
-      cache.clear()
     }
   }
 

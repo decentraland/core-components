@@ -1,7 +1,6 @@
-import { ILoggerComponent } from '@well-known-components/interfaces'
+import { ILoggerComponent, START_COMPONENT, STOP_COMPONENT } from '@well-known-components/interfaces'
 import { createClient, RedisClientType } from 'redis'
-
-import { ICacheStorageComponent } from './types'
+import { ICacheStorageComponent } from '@dcl/core-commons'
 
 export async function createRedisComponent(
   hostUrl: string,
@@ -96,8 +95,8 @@ export async function createRedisComponent(
   }
 
   return {
-    start,
-    stop,
+    [START_COMPONENT]: start,
+    [STOP_COMPONENT]: stop,
     get,
     set,
     remove,

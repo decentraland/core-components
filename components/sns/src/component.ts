@@ -22,9 +22,9 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
     endpoint: optionalEndpoint ? optionalEndpoint : undefined
   })
 
-  async function publishMessages(events: any[]): Promise<{
+  async function publishMessages(events: Array<{ type: string; subType?: string; [key: string]: any }>): Promise<{
     successfulMessageIds: string[]
-    failedEvents: any[]
+    failedEvents: Array<{ type: string; subType?: string; [key: string]: any }>
   }> {
     // split events into batches of 10
     const batches = chunk(events, MAX_BATCH_SIZE)

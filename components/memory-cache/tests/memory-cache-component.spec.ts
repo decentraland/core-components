@@ -1,5 +1,5 @@
 import { createInMemoryCacheComponent } from '../src/component'
-import { ICacheStorageComponent } from '../src/types'
+import { ICacheStorageComponent } from '@dcl/core-commons'
 
 let component: ICacheStorageComponent
 
@@ -8,8 +8,13 @@ beforeEach(() => {
 })
 
 describe('when storing and retrieving values', () => {
-  const testKey = 'test-key'
-  const testValue = { id: 123, name: 'test' }
+  let testKey: string
+  let testValue: { id: number; name: string }
+
+  beforeEach(() => {
+    testKey = 'test-key'
+    testValue = { id: 123, name: 'test' }
+  })
 
   describe('and setting a value without TTL', () => {
     beforeEach(async () => {
@@ -56,10 +61,12 @@ describe('when storing and retrieving values', () => {
 })
 
 describe('when scanning keys', () => {
-  const keys = ['user:123', 'user:456', 'session:abc', 'session:def']
-  const values = ['value1', 'value2', 'value3', 'value4']
+  let keys: string[]
+  let values: string[]
 
   beforeEach(async () => {
+    keys = ['user:123', 'user:456', 'session:abc', 'session:def']
+    values = ['value1', 'value2', 'value3', 'value4']
     for (let i = 0; i < keys.length; i++) {
       await component.set(keys[i], values[i])
     }
@@ -103,42 +110,71 @@ describe('when scanning keys', () => {
 })
 
 describe('when handling different data types', () => {
-  it('should handle strings', async () => {
-    const value = 'test string'
-    await component.set('string-key', value)
+  describe('and storing string values', () => {
+    let value: string
+    
+    beforeEach(async () => {
+      value = 'test string'
+      await component.set('string-key', value)
+    })
 
-    const result = await component.get('string-key')
-    expect(result).toBe(value)
+    it('should retrieve the string value', async () => {
+      const result = await component.get('string-key')
+      expect(result).toBe(value)
+    })
   })
 
-  it('should handle numbers', async () => {
-    const value = 42
-    await component.set('number-key', value)
+  describe('and storing number values', () => {
+    let value: number
+    
+    beforeEach(async () => {
+      value = 42
+      await component.set('number-key', value)
+    })
 
-    const result = await component.get('number-key')
-    expect(result).toBe(value)
+    it('should retrieve the number value', async () => {
+      const result = await component.get('number-key')
+      expect(result).toBe(value)
+    })
   })
 
-  it('should handle objects', async () => {
-    const value = { id: 1, name: 'test', active: true }
-    await component.set('object-key', value)
+  describe('and storing object values', () => {
+    let value: { id: number; name: string; active: boolean }
+    
+    beforeEach(async () => {
+      value = { id: 1, name: 'test', active: true }
+      await component.set('object-key', value)
+    })
 
-    const result = await component.get('object-key')
-    expect(result).toEqual(value)
+    it('should retrieve the object value', async () => {
+      const result = await component.get('object-key')
+      expect(result).toEqual(value)
+    })
   })
 
-  it('should handle arrays', async () => {
-    const value = [1, 'two', { three: 3 }]
-    await component.set('array-key', value)
+  describe('and storing array values', () => {
+    let value: (number | string | object)[]
+    
+    beforeEach(async () => {
+      value = [1, 'two', { three: 3 }]
+      await component.set('array-key', value)
+    })
 
-    const result = await component.get('array-key')
-    expect(result).toEqual(value)
+    it('should retrieve the array value', async () => {
+      const result = await component.get('array-key')
+      expect(result).toEqual(value)
+    })
   })
 
-  it('should handle null values', async () => {
-    await component.set('null-key', null)
-    const nullResult = await component.get('null-key')
-    expect(nullResult).toBeNull()
+  describe('and storing null values', () => {
+    beforeEach(async () => {
+      await component.set('null-key', null)
+    })
+
+    it('should retrieve null', async () => {
+      const result = await component.get('null-key')
+      expect(result).toBeNull()
+    })
   })
 })
 
@@ -157,7 +193,9 @@ describe('when handling cache operations', () => {
     expect(result).toBe(secondValue)
   })
 
-  it('should handle multiple concurrent operations', async () => {
+  it('should handle multiple concurrent operations without data corruption', async () => {
+    // This test verifies that the cache can handle multiple concurrent set operations
+    // without data corruption or race conditions
     const operations = []
 
     for (let i = 0; i < 10; i++) {
@@ -169,30 +207,6 @@ describe('when handling cache operations', () => {
     for (let i = 0; i < 10; i++) {
       const result = await component.get(`concurrent-key-${i}`)
       expect(result).toBe(`value-${i}`)
-    }
-  })
-
-  it('should clear cache on stop', async () => {
-    const testKey = 'test-key'
-    const testValue = 'test-value'
-
-    await component.set(testKey, testValue)
-
-    // Verify value is stored
-    let retrieved = await component.get(testKey)
-    expect(retrieved).toBe(testValue)
-
-    // Stop component should clear cache
-    if (component.stop) {
-      await component.stop()
-    }
-
-    // Value should be cleared (if stop was called)
-    retrieved = await component.get(testKey)
-    if (component.stop) {
-      expect(retrieved).toBeNull()
-    } else {
-      expect(retrieved).toBe(testValue)
     }
   })
 })
