@@ -1,9 +1,4 @@
-// Shared types for core components
 import { IBaseComponent } from '@well-known-components/interfaces'
-
-export interface ASharedType {
-  a: string
-}
 
 export interface ICacheStorageComponent extends IBaseComponent {
   get<T>(key: string): Promise<T | null>

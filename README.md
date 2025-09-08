@@ -11,17 +11,30 @@ core-components/
 ├── components/          # Reusable components
 │   ├── analytics/      # Analytics component for event tracking
 │   ├── job/           # Job scheduling and execution component
-│   └── slack/         # Slack messaging component
+│   ├── slack/         # Slack messaging component
+│   ├── sns/           # AWS SNS publisher component
+│   ├── sqs/           # AWS SQS queue component
+│   ├── redis/         # Redis cache component
+│   └── memory-cache/  # In-memory LRU cache component
 └── shared/             # Shared utilities and types
     └── commons/       # Common utilities, types, and constants
 ```
 
 ## 🚀 Components
 
-- Analytics Component (`@dcl/analytics-component`)(./components/analytics/README.md)
-- Job Component (`@dcl/job-component`)(./components/job/README.md)
-- Slack Component (`@dcl/slack-component`)(./components/slack/README.md)
-- Core Commons (`@dcl/core-commons`)(./shared/commons/README.md)
+### Communication & Messaging
+- **Analytics Component** (`@dcl/analytics-component`) - Event tracking and analytics integration
+- **Slack Component** (`@dcl/slack-component`) - Slack messaging and notifications
+- **SNS Component** (`@dcl/sns-component`) - AWS SNS message publishing
+
+### Queue & Cache
+- **SQS Component** (`@dcl/sqs-component`) - AWS SQS queue management
+- **Redis Component** (`@dcl/redis-component`) - Redis distributed caching
+- **Memory Cache Component** (`@dcl/memory-cache-component`) - In-memory LRU caching
+
+### Utilities
+- **Job Component** (`@dcl/job-component`) - Job scheduling and execution
+- **Core Commons** (`@dcl/core-commons`) - Shared utilities, types, and constants
 
 ## 🛠️ Development
 
@@ -100,6 +113,10 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/analytics-component`
 - `@dcl/job-component`
 - `@dcl/slack-component`
+- `@dcl/sns-component`
+- `@dcl/sqs-component`
+- `@dcl/redis-component`
+- `@dcl/memory-cache-component`
 - `@dcl/core-commons`
 
 ### Publishing Workflow
