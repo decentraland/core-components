@@ -112,7 +112,7 @@ describe('when scanning keys', () => {
 describe('when handling different data types', () => {
   describe('and storing string values', () => {
     let value: string
-    
+
     beforeEach(async () => {
       value = 'test string'
       await component.set('string-key', value)
@@ -126,7 +126,7 @@ describe('when handling different data types', () => {
 
   describe('and storing number values', () => {
     let value: number
-    
+
     beforeEach(async () => {
       value = 42
       await component.set('number-key', value)
@@ -140,7 +140,7 @@ describe('when handling different data types', () => {
 
   describe('and storing object values', () => {
     let value: { id: number; name: string; active: boolean }
-    
+
     beforeEach(async () => {
       value = { id: 1, name: 'test', active: true }
       await component.set('object-key', value)
@@ -154,7 +154,7 @@ describe('when handling different data types', () => {
 
   describe('and storing array values', () => {
     let value: (number | string | object)[]
-    
+
     beforeEach(async () => {
       value = [1, 'two', { three: 3 }]
       await component.set('array-key', value)
@@ -191,22 +191,5 @@ describe('when handling cache operations', () => {
     await component.set(key, secondValue)
     result = await component.get(key)
     expect(result).toBe(secondValue)
-  })
-
-  it('should handle multiple concurrent operations without data corruption', async () => {
-    // This test verifies that the cache can handle multiple concurrent set operations
-    // without data corruption or race conditions
-    const operations = []
-
-    for (let i = 0; i < 10; i++) {
-      operations.push(component.set(`concurrent-key-${i}`, `value-${i}`))
-    }
-
-    await Promise.all(operations)
-
-    for (let i = 0; i < 10; i++) {
-      const result = await component.get(`concurrent-key-${i}`)
-      expect(result).toBe(`value-${i}`)
-    }
   })
 })

@@ -2,6 +2,7 @@ import { IConfigComponent } from '@well-known-components/interfaces'
 import { createConfigMockedComponent } from '@dcl/core-commons'
 import { createSqsComponent } from '../src/component'
 import { IQueueComponent } from '../src/types'
+import { Message } from '@aws-sdk/client-sqs'
 
 // Mock the AWS SDK
 jest.mock('@aws-sdk/client-sqs', () => ({
@@ -53,10 +54,11 @@ beforeEach(async () => {
 })
 
 describe('when sending messages', () => {
-  const testMessage = { type: 'test', data: 'test data' }
+  let testMessage: { type: string; data: string }
 
   describe('and the send succeeds', () => {
     beforeEach(() => {
+      testMessage = { type: 'test', data: 'test data' }
       sendMock.mockResolvedValue({ MessageId: 'msg-123' })
     })
 
@@ -79,20 +81,21 @@ describe('when sending messages', () => {
 
 describe('when receiving messages', () => {
   describe('and messages are available', () => {
-    const mockMessages = [
-      {
-        MessageId: 'msg-1',
-        Body: JSON.stringify({ Message: JSON.stringify({ type: 'test1' }) }),
-        ReceiptHandle: 'receipt-1'
-      },
-      {
-        MessageId: 'msg-2',
-        Body: JSON.stringify({ Message: JSON.stringify({ type: 'test2' }) }),
-        ReceiptHandle: 'receipt-2'
-      }
-    ]
+    let mockMessages: Message[]
 
     beforeEach(() => {
+      mockMessages = [
+        {
+          MessageId: 'msg-1',
+          Body: JSON.stringify({ Message: JSON.stringify({ type: 'test1' }) }),
+          ReceiptHandle: 'receipt-1'
+        },
+        {
+          MessageId: 'msg-2',
+          Body: JSON.stringify({ Message: JSON.stringify({ type: 'test2' }) }),
+          ReceiptHandle: 'receipt-2'
+        }
+      ]
       sendMock.mockResolvedValue({
         Messages: mockMessages
       })
