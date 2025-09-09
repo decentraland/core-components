@@ -1,5 +1,11 @@
 # @dcl/core-commons
 
+## 0.3.0
+
+### Minor Changes
+
+- 46ccace: Add ICacheStorageComponent interface
+
 ## 0.2.3
 
 ### Patch Changes
