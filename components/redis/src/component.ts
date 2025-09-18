@@ -8,10 +8,10 @@ export async function createRedisComponent(
 ): Promise<ICacheStorageComponent> {
   const { logs } = components
   const logger = logs.getLogger('redis-component')
-  
+
   // Initialize client immediately for testing
   const client: RedisClientType = createClient({ url: hostUrl })
-  
+
   client.on('error', (err: Error) => {
     logger.error('Redis client error', { error: err.message })
   })
@@ -94,12 +94,42 @@ export async function createRedisComponent(
     }
   }
 
+  async function setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
+    const multi = await client.multi()
+    multi.hSet(key, field, JSON.stringify(value))
+    if (ttlInSecondsForHash) {
+      multi.expire(key, ttlInSecondsForHash)
+    }
+    await multi.exec()
+  }
+
+  async function getFromHash<T>(key: string, field: string): Promise<T | null> {
+    const value = await client.hGet(key, field)
+    return value ? JSON.parse(value) : null
+  }
+
+  async function removeFromHash(key: string, field: string): Promise<void> {
+    await client.hDel(key, field)
+  }
+
+  async function getAllHashFields<T>(key: string): Promise<Record<string, T>> {
+    const hashFields = await client.hGetAll(key)
+    return Object.entries(hashFields).reduce((acc: Record<string, T>, [field, value]) => {
+      acc[field] = JSON.parse(value)
+      return acc
+    }, {} as Record<string, T>)
+  }
+
   return {
     [START_COMPONENT]: start,
     [STOP_COMPONENT]: stop,
     get,
     set,
     remove,
-    keys
+    keys,
+    setInHash,
+    getFromHash,
+    removeFromHash,
+    getAllHashFields
   }
 }
