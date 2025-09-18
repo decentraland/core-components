@@ -277,7 +277,7 @@ describe('when retrieving all fields from non-existent hash', () => {
   })
 })
 
-describe('when getting avalue from hash', () => {
+describe('when getting a value from hash', () => {
   let hashKey: string
   let field: string
   let value: { id: number; name: string }
