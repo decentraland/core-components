@@ -193,3 +193,182 @@ describe('when handling cache operations', () => {
     expect(result).toBe(secondValue)
   })
 })
+
+describe('when setting values in a hash', () => {
+  let hashKey: string
+  let field1: string
+  let field2: string
+  let value1: { id: number; name: string }
+  let value2: { id: number; name: string }
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field1 = 'field1'
+    field2 = 'field2'
+    value1 = { id: 1, name: 'value1' }
+    value2 = { id: 2, name: 'value2' }
+
+    await component.setInHash(hashKey, field1, value1)
+    await component.setInHash(hashKey, field2, value2)
+  })
+
+  it('should store the values', async () => {
+    const result1 = await component.getFromHash<typeof value1>(hashKey, field1)
+    const result2 = await component.getFromHash<typeof value2>(hashKey, field2)
+
+    expect(result1).toEqual(value1)
+    expect(result2).toEqual(value2)
+  })
+})
+
+describe('when setting hash values with TTL', () => {
+  let hashKey: string
+  let field: string
+  let value: { id: number; name: string }
+  let ttl: number
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field = 'field1'
+    value = { id: 1, name: 'value1' }
+    ttl = 3600
+
+    await component.setInHash(hashKey, field, value, ttl)
+  })
+
+  it('should store the value with TTL', async () => {
+    const result = await component.getFromHash<typeof value>(hashKey, field)
+    expect(result).toEqual(value)
+  })
+})
+
+describe('when retrieving all hash fields', () => {
+  let hashKey: string
+  let field1: string
+  let field2: string
+  let value1: { id: number; name: string }
+  let value2: { id: number; name: string }
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field1 = 'field1'
+    field2 = 'field2'
+    value1 = { id: 1, name: 'value1' }
+    value2 = { id: 2, name: 'value2' }
+
+    await component.setInHash(hashKey, field1, value1)
+    await component.setInHash(hashKey, field2, value2)
+  })
+
+  it('should return all hash fields', async () => {
+    const allFields = await component.getAllHashFields<typeof value1>(hashKey)
+
+    expect(allFields).toEqual({
+      [field1]: value1,
+      [field2]: value2
+    })
+  })
+})
+
+describe('when retrieving all fields from non-existent hash', () => {
+  it('should return empty object', async () => {
+    const result = await component.getAllHashFields('non-existent-hash')
+    expect(result).toEqual({})
+  })
+})
+
+describe('when getting avalue from hash', () => {
+  let hashKey: string
+  let field: string
+  let value: { id: number; name: string }
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field = 'field1'
+    value = { id: 1, name: 'value1' }
+
+    await component.setInHash(hashKey, field, value)
+  })
+
+  it('should return the stored value', async () => {
+    const result = await component.getFromHash<typeof value>(hashKey, field)
+    expect(result).toEqual(value)
+  })
+})
+
+describe('when getting a value from non-existent hash', () => {
+  it('should return null', async () => {
+    const result = await component.getFromHash('non-existent-hash', 'field')
+    expect(result).toBeNull()
+  })
+})
+
+describe('when getting non-existent field from existing hash', () => {
+  let hashKey: string
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    await component.setInHash(hashKey, 'existing-field', { id: 1, name: 'value' })
+  })
+
+  it('should return null', async () => {
+    const result = await component.getFromHash(hashKey, 'non-existent-field')
+    expect(result).toBeNull()
+  })
+})
+
+describe('when removing field from hash', () => {
+  let hashKey: string
+  let field1: string
+  let field2: string
+  let value1: { id: number; name: string }
+  let value2: { id: number; name: string }
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field1 = 'field1'
+    field2 = 'field2'
+    value1 = { id: 1, name: 'value1' }
+    value2 = { id: 2, name: 'value2' }
+
+    await component.setInHash(hashKey, field1, value1)
+    await component.setInHash(hashKey, field2, value2)
+    await component.removeFromHash(hashKey, field1)
+  })
+
+  it('should remove the specified field', async () => {
+    const result1 = await component.getFromHash(hashKey, field1)
+    const result2 = await component.getFromHash<typeof value2>(hashKey, field2)
+
+    expect(result1).toBeNull()
+    expect(result2).toEqual(value2)
+  })
+})
+
+describe('when removing from non-existent hash', () => {
+  it('should resolve without throwing an error', async () => {
+    await expect(component.removeFromHash('non-existent-hash', 'field')).resolves.not.toThrow()
+  })
+})
+
+describe('when overwriting hash field values', () => {
+  let hashKey: string
+  let field: string
+  let originalValue: { id: number; name: string }
+  let newValue: { id: number; name: string }
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field = 'field1'
+    originalValue = { id: 1, name: 'original' }
+    newValue = { id: 999, name: 'updated' }
+
+    await component.setInHash(hashKey, field, originalValue)
+    await component.setInHash(hashKey, field, newValue)
+  })
+
+  it('should overwrite the field value', async () => {
+    const result = await component.getFromHash<typeof newValue>(hashKey, field)
+    expect(result).toEqual(newValue)
+  })
+})

@@ -33,25 +33,23 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
     },
 
     async setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
-      if (ttlInSecondsForHash && ttlInSecondsForHash > 0) {
-        const exists = cache.get(key)
-        if (!exists) {
-          cache.set(key, { [field]: value }, { ttl: ttlInSecondsForHash * 1000 })
-        }
-      } else {
-        cache.set(key, { [field]: value })
-      }
+      const hash = { ...(cache.get(key) ?? {}) }
+      const options = ttlInSecondsForHash && ttlInSecondsForHash > 0 ? { ttl: ttlInSecondsForHash * 1000 } : undefined
+
+      hash[field] = value
+      cache.set(key, hash, options)
     },
 
     async getFromHash<T>(key: string, field: string): Promise<T | null> {
-      return cache.get(key)?.[field]
+      return cache.get(key)?.[field] ?? null
     },
 
     async removeFromHash(key: string, field: string): Promise<void> {
       const hash = cache.get(key)
       if (!hash) return
-      delete hash[field]
-      cache.set(key, hash)
+      const newHash = { ...hash }
+      delete newHash[field]
+      cache.set(key, newHash)
     },
 
     async getAllHashFields<T>(key: string): Promise<Record<string, T>> {
