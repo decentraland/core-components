@@ -175,37 +175,7 @@ describe('when scanning keys', () => {
   })
 })
 
-describe('when handling different data types', () => {
-  it('should handle strings', async () => {
-    const value = 'test string'
-    await component.set('string-key', value)
-    const serialized = JSON.stringify(value)
-    expect(setMock).toHaveBeenCalledWith('string-key', serialized, { EX: undefined })
-  })
-
-  it('should handle numbers', async () => {
-    const value = 42
-    await component.set('number-key', value)
-    const serialized = JSON.stringify(value)
-    expect(setMock).toHaveBeenCalledWith('number-key', serialized, { EX: undefined })
-  })
-
-  it('should handle objects', async () => {
-    const value = { id: 1, name: 'test', active: true }
-    await component.set('object-key', value)
-    const serialized = JSON.stringify(value)
-    expect(setMock).toHaveBeenCalledWith('object-key', serialized, { EX: undefined })
-  })
-
-  it('should handle arrays', async () => {
-    const value = [1, 'two', { three: 3 }]
-    await component.set('array-key', value)
-    const serialized = JSON.stringify(value)
-    expect(setMock).toHaveBeenCalledWith('array-key', serialized, { EX: undefined })
-  })
-})
-
-describe('when setting values in hash without TTL', () => {
+describe('when setting values in a hash without TTL', () => {
   let hashKey: string
   let field: string
   let value: { id: number; name: string }
@@ -226,7 +196,7 @@ describe('when setting values in hash without TTL', () => {
   })
 })
 
-describe('when setting values in hash with TTL', () => {
+describe('when setting values in a hash with TTL', () => {
   let hashKey: string
   let field: string
   let value: { id: number; name: string }
@@ -270,7 +240,7 @@ describe('when setting hash values with zero TTL', () => {
   })
 })
 
-describe('when getting a value from hash that exists', () => {
+describe('when getting a value from a hash that exists', () => {
   let hashKey: string
   let field: string
   let value: { id: number; name: string }

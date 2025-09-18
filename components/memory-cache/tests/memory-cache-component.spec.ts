@@ -270,8 +270,8 @@ describe('when retrieving all hash fields', () => {
   })
 })
 
-describe('when retrieving all fields from non-existent hash', () => {
-  it('should return empty object', async () => {
+describe('when retrieving all fields from a non-existent hash', () => {
+  it('should return an empty object', async () => {
     const result = await component.getAllHashFields('non-existent-hash')
     expect(result).toEqual({})
   })
@@ -296,14 +296,14 @@ describe('when getting a value from hash', () => {
   })
 })
 
-describe('when getting a value from non-existent hash', () => {
+describe('when getting a value from a non-existent hash', () => {
   it('should return null', async () => {
     const result = await component.getFromHash('non-existent-hash', 'field')
     expect(result).toBeNull()
   })
 })
 
-describe('when getting non-existent field from existing hash', () => {
+describe('when getting a non-existent field from an existing hash', () => {
   let hashKey: string
 
   beforeEach(async () => {
@@ -345,7 +345,7 @@ describe('when removing field from hash', () => {
   })
 })
 
-describe('when removing from non-existent hash', () => {
+describe('when removing from a non-existent hash', () => {
   it('should resolve without throwing an error', async () => {
     await expect(component.removeFromHash('non-existent-hash', 'field')).resolves.not.toThrow()
   })
