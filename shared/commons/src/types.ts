@@ -45,7 +45,7 @@ export interface ICacheStorageComponent extends IBaseComponent {
    */
   getFromHash<T>(key: string, field: string): Promise<T | null>
   /**
-   * Removes a value from a hash by key and field.
+   * Removes a value from a hash by key and field. If the hash is empty, it will be deleted.
    * @param key - The key where the hash is stored.
    * @param field - The field to remove.
    */
