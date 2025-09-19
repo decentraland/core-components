@@ -25,11 +25,41 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
     async keys(pattern?: string): Promise<string[]> {
       const allKeys = Array.from(cache.keys()) as string[]
       if (!pattern) return allKeys
-      
+
       // Simple pattern matching - convert glob-like pattern to regex
       const regexPattern = pattern.replace(/\*/g, '.*')
       const regex = new RegExp(regexPattern)
       return allKeys.filter((key: string) => regex.test(key))
+    },
+
+    async setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
+      cache.set(
+        key,
+        { ...(cache.get(key) ?? {}), [field]: value },
+        ttlInSecondsForHash !== undefined ? { ttl: ttlInSecondsForHash * 1000 } : undefined
+      )
+    },
+
+    async getFromHash<T>(key: string, field: string): Promise<T | null> {
+      return cache.get(key)?.[field] ?? null
+    },
+
+    async removeFromHash(key: string, field: string): Promise<void> {
+      const hash = cache.get(key)
+      if (!hash) return
+      const newHash = { ...hash }
+      delete newHash[field]
+
+      // If the hash is empty, delete it
+      if (Object.keys(newHash).length === 0) {
+        cache.delete(key)
+      } else {
+        cache.set(key, newHash)
+      }
+    },
+
+    async getAllHashFields<T>(key: string): Promise<Record<string, T>> {
+      return cache.get(key) ?? {}
     }
   }
 

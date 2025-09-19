@@ -1,7 +1,7 @@
 import { ILoggerComponent } from '@well-known-components/interfaces'
 import { createLoggerMockedComponent } from '@dcl/core-commons'
 import { createRedisComponent } from '../src/component'
-import { ICacheStorageComponent } from '../src/types'
+import { ICacheStorageComponent } from '@dcl/core-commons'
 
 // Mock the redis module
 jest.mock('redis', () => ({
@@ -17,6 +17,13 @@ let getMock: jest.Mock
 let setMock: jest.Mock
 let delMock: jest.Mock
 let scanMock: jest.Mock
+let hSetMock: jest.Mock
+let hGetMock: jest.Mock
+let hDelMock: jest.Mock
+let hGetAllMock: jest.Mock
+let multiMock: jest.Mock
+let expireMock: jest.Mock
+let execMock: jest.Mock
 let errorLogMock: jest.Mock
 let debugLogMock: jest.Mock
 
@@ -29,6 +36,17 @@ beforeEach(async () => {
   setMock = jest.fn().mockResolvedValue('OK')
   delMock = jest.fn().mockResolvedValue(1)
   scanMock = jest.fn()
+  hSetMock = jest.fn().mockResolvedValue(1)
+  hGetMock = jest.fn()
+  hDelMock = jest.fn().mockResolvedValue(1)
+  hGetAllMock = jest.fn()
+  expireMock = jest.fn().mockResolvedValue(1)
+  execMock = jest.fn().mockResolvedValue(['OK', 1])
+  multiMock = jest.fn().mockReturnValue({
+    hSet: hSetMock,
+    expire: expireMock,
+    exec: execMock
+  })
   errorLogMock = jest.fn()
   debugLogMock = jest.fn()
 
@@ -39,6 +57,11 @@ beforeEach(async () => {
     set: setMock,
     del: delMock,
     scan: scanMock,
+    hSet: hSetMock,
+    hGet: hGetMock,
+    hDel: hDelMock,
+    hGetAll: hGetAllMock,
+    multi: multiMock,
     on: jest.fn()
   }
 
@@ -152,32 +175,175 @@ describe('when scanning keys', () => {
   })
 })
 
-describe('when handling different data types', () => {
-  it('should handle strings', async () => {
-    const value = 'test string'
-    await component.set('string-key', value)
-    const serialized = JSON.stringify(value)
-    expect(setMock).toHaveBeenCalledWith('string-key', serialized, { EX: undefined })
+describe('when setting values in a hash without TTL', () => {
+  let hashKey: string
+  let field: string
+  let value: { id: number; name: string }
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field = 'field1'
+    value = { id: 1, name: 'value1' }
+
+    await component.setInHash(hashKey, field, value)
   })
 
-  it('should handle numbers', async () => {
-    const value = 42
-    await component.set('number-key', value)
-    const serialized = JSON.stringify(value)
-    expect(setMock).toHaveBeenCalledWith('number-key', serialized, { EX: undefined })
+  it('should call Redis hSet command without expiry', () => {
+    expect(multiMock).toHaveBeenCalled()
+    expect(hSetMock).toHaveBeenCalledWith(hashKey, field, JSON.stringify(value))
+    expect(expireMock).not.toHaveBeenCalled()
+    expect(execMock).toHaveBeenCalled()
+  })
+})
+
+describe('when setting values in a hash with TTL', () => {
+  let hashKey: string
+  let field: string
+  let value: { id: number; name: string }
+  let ttl: number
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field = 'field1'
+    value = { id: 1, name: 'value1' }
+    ttl = 3600
+
+    await component.setInHash(hashKey, field, value, ttl)
   })
 
-  it('should handle objects', async () => {
-    const value = { id: 1, name: 'test', active: true }
-    await component.set('object-key', value)
-    const serialized = JSON.stringify(value)
-    expect(setMock).toHaveBeenCalledWith('object-key', serialized, { EX: undefined })
+  it('should call Redis hSet command with expiry', () => {
+    expect(multiMock).toHaveBeenCalled()
+    expect(hSetMock).toHaveBeenCalledWith(hashKey, field, JSON.stringify(value))
+    expect(expireMock).toHaveBeenCalledWith(hashKey, ttl)
+    expect(execMock).toHaveBeenCalled()
+  })
+})
+
+describe('when setting hash values with zero TTL', () => {
+  let hashKey: string
+  let field: string
+  let value: { id: number; name: string }
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field = 'field1'
+    value = { id: 1, name: 'value1' }
+
+    await component.setInHash(hashKey, field, value, 0)
   })
 
-  it('should handle arrays', async () => {
-    const value = [1, 'two', { three: 3 }]
-    await component.set('array-key', value)
-    const serialized = JSON.stringify(value)
-    expect(setMock).toHaveBeenCalledWith('array-key', serialized, { EX: undefined })
+  it('should not set expiry for zero TTL', () => {
+    expect(multiMock).toHaveBeenCalled()
+    expect(hSetMock).toHaveBeenCalledWith(hashKey, field, JSON.stringify(value))
+    expect(expireMock).not.toHaveBeenCalled()
+    expect(execMock).toHaveBeenCalled()
+  })
+})
+
+describe('when getting a value from a hash that exists', () => {
+  let hashKey: string
+  let field: string
+  let value: { id: number; name: string }
+  let serializedValue: string
+
+  beforeEach(() => {
+    hashKey = 'test-hash'
+    field = 'field1'
+    value = { id: 1, name: 'value1' }
+    serializedValue = JSON.stringify(value)
+
+    hGetMock.mockResolvedValue(serializedValue)
+  })
+
+  it('should retrieve and deserialize the hash field value', async () => {
+    const result = await component.getFromHash(hashKey, field)
+
+    expect(hGetMock).toHaveBeenCalledWith(hashKey, field)
+    expect(result).toEqual(value)
+  })
+})
+
+describe('when getting a value from hash that does not exist', () => {
+  let hashKey: string
+  let field: string
+
+  beforeEach(() => {
+    hashKey = 'test-hash'
+    field = 'field1'
+
+    hGetMock.mockResolvedValue(null)
+  })
+
+  it('should return null', async () => {
+    const result = await component.getFromHash(hashKey, field)
+
+    expect(hGetMock).toHaveBeenCalledWith(hashKey, field)
+    expect(result).toBeNull()
+  })
+})
+
+describe('when removing a field from a hash', () => {
+  let hashKey: string
+  let field: string
+
+  beforeEach(async () => {
+    hashKey = 'test-hash'
+    field = 'field1'
+
+    await component.removeFromHash(hashKey, field)
+  })
+
+  it('should call the redis deletion command with the hash key and field', () => {
+    expect(hDelMock).toHaveBeenCalledWith(hashKey, field)
+  })
+})
+
+describe('when getting all hash fields', () => {
+  let hashKey: string
+  let field1: string
+  let field2: string
+  let value1: { id: number; name: string }
+  let value2: { id: number; name: string }
+  let hashData: Record<string, string>
+
+  beforeEach(() => {
+    hashKey = 'test-hash'
+    field1 = 'field1'
+    field2 = 'field2'
+    value1 = { id: 1, name: 'value1' }
+    value2 = { id: 2, name: 'value2' }
+    hashData = {
+      [field1]: JSON.stringify(value1),
+      [field2]: JSON.stringify(value2)
+    }
+
+    hGetAllMock.mockResolvedValue(hashData)
+  })
+
+  it('should retrieve and deserialize all hash fields', async () => {
+    const result = await component.getAllHashFields(hashKey)
+
+    expect(hGetAllMock).toHaveBeenCalledWith(hashKey)
+    expect(result).toEqual({
+      [field1]: value1,
+      [field2]: value2
+    })
+  })
+})
+
+describe('when getting all fields from an empty hash', () => {
+  let hashKey: string
+
+  beforeEach(() => {
+    hashKey = 'test-hash'
+
+    hGetAllMock.mockResolvedValue({})
+  })
+
+  it('should return an empty object', async () => {
+    const result = await component.getAllHashFields(hashKey)
+
+    expect(hGetAllMock).toHaveBeenCalledWith(hashKey)
+    expect(result).toEqual({})
   })
 })
