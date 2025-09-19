@@ -1,5 +1,12 @@
 # @dcl/analytics-component
 
+## 0.2.5
+
+### Patch Changes
+
+- Updated dependencies [31cc8ef]
+  - @dcl/core-commons@0.4.0
+
 ## 0.2.4
 
 ### Patch Changes

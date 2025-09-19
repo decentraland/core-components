@@ -1,6 +1,6 @@
 {
   "name": "@dcl/job-component",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Job component for core components library",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",

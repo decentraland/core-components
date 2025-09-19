@@ -1,5 +1,11 @@
 # @dcl/core-commons
 
+## 0.4.0
+
+### Minor Changes
+
+- 31cc8ef: Adds the new hash functions
+
 ## 0.3.0
 
 ### Minor Changes

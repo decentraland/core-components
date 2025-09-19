@@ -1,6 +1,6 @@
 {
   "name": "@dcl/memory-cache-component",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "In-memory cache component for core components library",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
