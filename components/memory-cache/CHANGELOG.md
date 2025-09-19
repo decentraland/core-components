@@ -1,5 +1,16 @@
 # @dcl/memory-cache-component
 
+## 2.1.0
+
+### Minor Changes
+
+- 31cc8ef: Adds the new hash functions
+
+### Patch Changes
+
+- Updated dependencies [31cc8ef]
+  - @dcl/core-commons@0.4.0
+
 ## 2.0.1
 
 ### Patch Changes
