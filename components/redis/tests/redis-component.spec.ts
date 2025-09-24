@@ -1,5 +1,5 @@
 import { ILoggerComponent } from '@well-known-components/interfaces'
-import { createLoggerMockedComponent } from '@dcl/core-commons'
+import { createLoggerMockedComponent, LockNotAcquiredError, LockNotReleasedError } from '@dcl/core-commons'
 import { createRedisComponent } from '../src/component'
 import { ICacheStorageComponent } from '@dcl/core-commons'
 
@@ -24,6 +24,7 @@ let hGetAllMock: jest.Mock
 let multiMock: jest.Mock
 let expireMock: jest.Mock
 let execMock: jest.Mock
+let evalMock: jest.Mock
 let errorLogMock: jest.Mock
 let debugLogMock: jest.Mock
 
@@ -42,6 +43,7 @@ beforeEach(async () => {
   hGetAllMock = jest.fn()
   expireMock = jest.fn().mockResolvedValue(1)
   execMock = jest.fn().mockResolvedValue(['OK', 1])
+  evalMock = jest.fn()
   multiMock = jest.fn().mockReturnValue({
     hSet: hSetMock,
     expire: expireMock,
@@ -62,6 +64,7 @@ beforeEach(async () => {
     hDel: hDelMock,
     hGetAll: hGetAllMock,
     multi: multiMock,
+    eval: evalMock,
     on: jest.fn()
   }
 
@@ -345,5 +348,206 @@ describe('when getting all fields from an empty hash', () => {
 
     expect(hGetAllMock).toHaveBeenCalledWith(hashKey)
     expect(result).toEqual({})
+  })
+})
+
+describe('when acquiring locks', () => {
+  const lockKey = 'test-lock'
+
+  describe('and the lock is successfully acquired on first try', () => {
+    beforeEach(() => {
+      setMock.mockResolvedValue('OK')
+    })
+
+    it('should acquire the lock with custom retry options', async () => {
+      await component.acquireLock(lockKey, {
+        ttlInMilliseconds: 5000,
+        retryDelayInMilliseconds: 100,
+        retries: 5
+      })
+
+      expect(setMock).toHaveBeenCalledWith(lockKey.toLowerCase(), expect.any(String), { NX: true, EX: 5000 })
+    })
+  })
+
+  describe('and the lock is acquired after retries', () => {
+    beforeEach(() => {
+      setMock
+        .mockResolvedValueOnce(null) // First attempt fails
+        .mockResolvedValueOnce(null) // Second attempt fails
+        .mockResolvedValueOnce('OK') // Third attempt succeeds
+    })
+
+    it('should retry and eventually acquire the lock', async () => {
+      const retryDelay = 50
+      const retries = 5
+
+      await component.acquireLock(lockKey, {
+        retryDelayInMilliseconds: retryDelay,
+        retries
+      })
+
+      expect(setMock).toHaveBeenCalledTimes(3)
+    })
+  })
+
+  describe('and the lock cannot be acquired after all retries', () => {
+    beforeEach(() => {
+      setMock.mockResolvedValue(null) // All attempts fail
+    })
+
+    it('should throw LockNotAcquiredError after exhausting retries', async () => {
+      const retries = 3
+
+      await expect(component.acquireLock(lockKey, { retries })).rejects.toThrow(LockNotAcquiredError)
+
+      expect(setMock).toHaveBeenCalledTimes(retries)
+    })
+  })
+})
+
+describe('when releasing locks', () => {
+  const lockKey = 'test-lock'
+
+  describe('and the lock is successfully released', () => {
+    beforeEach(() => {
+      evalMock.mockResolvedValue(1) // Lock was owned and deleted
+    })
+
+    it('should release the lock successfully', async () => {
+      await component.releaseLock(lockKey)
+
+      expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if redis.call("GET", KEYS[1]) == ARGV[1]'), {
+        keys: [lockKey.toLowerCase()],
+        arguments: [expect.any(String)]
+      })
+    })
+  })
+
+  describe('and the lock is not owned by this instance', () => {
+    beforeEach(() => {
+      evalMock.mockResolvedValue(0) // Lock was not owned by this instance
+    })
+
+    it('should throw LockNotReleasedError', async () => {
+      await expect(component.releaseLock(lockKey)).rejects.toThrow(LockNotReleasedError)
+
+      expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if redis.call("GET", KEYS[1]) == ARGV[1]'), {
+        keys: [lockKey.toLowerCase()],
+        arguments: [expect.any(String)]
+      })
+    })
+  })
+
+  describe('and there is an error during release', () => {
+    const error = new Error('Redis connection error')
+
+    beforeEach(() => {
+      evalMock.mockRejectedValue(error)
+    })
+
+    it('should throw an error', async () => {
+      await expect(component.releaseLock(lockKey)).rejects.toThrow(error)
+    })
+  })
+})
+
+describe('when trying to acquire locks', () => {
+  const lockKey = 'test-lock'
+
+  describe('and the lock is successfully acquired', () => {
+    beforeEach(() => {
+      setMock.mockResolvedValue('OK')
+    })
+
+    it('should return true', async () => {
+      const result = await component.tryAcquireLock(lockKey)
+
+      expect(result).toBe(true)
+      expect(setMock).toHaveBeenCalledWith(lockKey.toLowerCase(), expect.any(String), { NX: true, EX: 10000 })
+    })
+
+    it('should return true with custom options', async () => {
+      const result = await component.tryAcquireLock(lockKey, {
+        ttlInMilliseconds: 5000,
+        retries: 2
+      })
+
+      expect(result).toBe(true)
+      expect(setMock).toHaveBeenCalledWith(lockKey.toLowerCase(), expect.any(String), { NX: true, EX: 5000 })
+    })
+  })
+
+  describe('and the lock cannot be acquired', () => {
+    beforeEach(() => {
+      setMock.mockResolvedValue(null) // All attempts fail
+    })
+
+    it('should return false after exhausting retries', async () => {
+      const result = await component.tryAcquireLock(lockKey, { retries: 2 })
+
+      expect(result).toBe(false)
+      expect(setMock).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('and there is a Redis error', () => {
+    const error = new Error('Redis connection error')
+
+    beforeEach(() => {
+      setMock.mockRejectedValue(error)
+    })
+
+    it('should throw the Redis error', async () => {
+      await expect(component.tryAcquireLock(lockKey)).rejects.toThrow(error)
+    })
+  })
+})
+
+describe('when trying to release locks', () => {
+  const lockKey = 'test-lock'
+
+  describe('and the lock is successfully released', () => {
+    beforeEach(() => {
+      evalMock.mockResolvedValue(1) // Lock was owned and deleted
+    })
+
+    it('should return true', async () => {
+      const result = await component.tryReleaseLock(lockKey)
+
+      expect(result).toBe(true)
+      expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if redis.call("GET", KEYS[1]) == ARGV[1]'), {
+        keys: [lockKey.toLowerCase()],
+        arguments: [expect.any(String)]
+      })
+    })
+  })
+
+  describe('and the lock is not owned by this instance', () => {
+    beforeEach(() => {
+      evalMock.mockResolvedValue(0) // Lock was not owned by this instance
+    })
+
+    it('should return false', async () => {
+      const result = await component.tryReleaseLock(lockKey)
+
+      expect(result).toBe(false)
+      expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if redis.call("GET", KEYS[1]) == ARGV[1]'), {
+        keys: [lockKey.toLowerCase()],
+        arguments: [expect.any(String)]
+      })
+    })
+  })
+
+  describe('and there is a Redis error', () => {
+    const error = new Error('Redis connection error')
+
+    beforeEach(() => {
+      evalMock.mockRejectedValue(error)
+    })
+
+    it('should throw the Redis error', async () => {
+      await expect(component.tryReleaseLock(lockKey)).rejects.toThrow(error)
+    })
   })
 })
