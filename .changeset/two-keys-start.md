@@ -4,4 +4,4 @@
 '@dcl/core-commons': minor
 ---
 
-Add the acquireLock, releaseLock, tryAdquireLock and tryReleaseLock functions to the redis and memory storage components.
+Add the acquireLock, releaseLock, tryAcquireLock, and tryReleaseLock functions to the Redis and memory storage components.
