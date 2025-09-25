@@ -1,5 +1,16 @@
 # @dcl/redis-component
 
+## 2.2.0
+
+### Minor Changes
+
+- 839b790: Add the acquireLock, releaseLock, tryAcquireLock, and tryReleaseLock functions to the Redis and memory storage components.
+
+### Patch Changes
+
+- Updated dependencies [839b790]
+  - @dcl/core-commons@0.5.0
+
 ## 2.1.0
 
 ### Minor Changes
