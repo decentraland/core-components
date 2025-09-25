@@ -1,6 +1,16 @@
 import { ILoggerComponent, START_COMPONENT, STOP_COMPONENT } from '@well-known-components/interfaces'
 import { createClient, RedisClientType } from 'redis'
-import { ICacheStorageComponent } from '@dcl/core-commons'
+import { randomUUID } from 'crypto'
+import {
+  ICacheStorageComponent,
+  isErrorWithMessage,
+  sleep,
+  DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS,
+  DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS,
+  DEFAULT_ACQUIRE_LOCK_RETRIES,
+  LockNotAcquiredError,
+  LockNotReleasedError
+} from '@dcl/core-commons'
 
 export async function createRedisComponent(
   hostUrl: string,
@@ -8,6 +18,7 @@ export async function createRedisComponent(
 ): Promise<ICacheStorageComponent> {
   const { logs } = components
   const logger = logs.getLogger('redis-component')
+  const randomValue = randomUUID()
 
   // Initialize client immediately for testing
   const client: RedisClientType = createClient({ url: hostUrl })
@@ -60,6 +71,88 @@ export async function createRedisComponent(
     } catch (err: any) {
       logger.error(`Error setting key "${key}"`, err)
       throw err
+    }
+  }
+
+  async function acquireLock(
+    key: string,
+    options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
+  ): Promise<void> {
+    const ttl = options?.ttlInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
+    const retryDelay = options?.retryDelayInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS
+    const retries = options?.retries ?? DEFAULT_ACQUIRE_LOCK_RETRIES
+
+    for (let i = 0; i < retries; i++) {
+      const lock = await client.set(key.toLowerCase(), randomValue, { NX: true, EX: ttl })
+      if (lock) {
+        logger.debug(`Successfully acquired lock for key "${key}"`)
+        return
+      } else {
+        logger.debug(`Could not acquire lock for key "${key}"`)
+        if (i < retries - 1) {
+          await sleep(retryDelay)
+        }
+      }
+    }
+
+    throw new LockNotAcquiredError(key)
+  }
+
+  async function releaseLock(key: string): Promise<void> {
+    try {
+      const result = (await client.eval(
+        `
+        if redis.call("GET", KEYS[1]) == ARGV[1] then
+          return redis.call("DEL", KEYS[1])
+        else
+          return 0
+        end`,
+        {
+          keys: [key.toLowerCase()],
+          arguments: [randomValue]
+        }
+      )) as number
+
+      if (result === 1) {
+        return
+      } else {
+        throw new LockNotReleasedError(key)
+      }
+    } catch (error) {
+      if (error instanceof LockNotReleasedError) {
+        throw error
+      }
+      logger.error(
+        `Error releasing lock for key "${key}": ${isErrorWithMessage(error) ? error.message : 'Unknown error'}`
+      )
+      throw error
+    }
+  }
+
+  async function tryAcquireLock(
+    key: string,
+    options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
+  ): Promise<boolean> {
+    try {
+      await acquireLock(key, options)
+      return true
+    } catch (error) {
+      if (error instanceof LockNotAcquiredError) {
+        return false
+      }
+      throw error
+    }
+  }
+
+  async function tryReleaseLock(key: string): Promise<boolean> {
+    try {
+      await releaseLock(key)
+      return true
+    } catch (error) {
+      if (error instanceof LockNotReleasedError) {
+        return false
+      }
+      throw error
     }
   }
 
@@ -130,6 +223,10 @@ export async function createRedisComponent(
     setInHash,
     getFromHash,
     removeFromHash,
-    getAllHashFields
+    getAllHashFields,
+    acquireLock,
+    releaseLock,
+    tryAcquireLock,
+    tryReleaseLock
   }
 }

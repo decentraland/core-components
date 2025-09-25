@@ -1,5 +1,5 @@
 import { createInMemoryCacheComponent } from '../src/component'
-import { ICacheStorageComponent } from '@dcl/core-commons'
+import { ICacheStorageComponent, LockNotAcquiredError, LockNotReleasedError, sleep } from '@dcl/core-commons'
 
 let component: ICacheStorageComponent
 
@@ -370,5 +370,229 @@ describe('when overwriting hash field values', () => {
   it('should overwrite the field value', async () => {
     const result = await component.getFromHash<typeof newValue>(hashKey, field)
     expect(result).toEqual(newValue)
+  })
+})
+
+describe('when acquiring locks', () => {
+  const lockKey = 'test-lock'
+
+  describe('and the lock is available', () => {
+    it('should acquire the lock', async () => {
+      await component.acquireLock(lockKey)
+
+      // Verify lock is acquired by trying to get it
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBeTruthy()
+    })
+  })
+
+  describe('and the lock is already held by the same instance', () => {
+    beforeEach(async () => {
+      // First acquisition
+      await component.acquireLock(lockKey)
+    })
+
+    it('should throw LockNotAcquiredError after exhausting retries', async () => {
+      const retries = 2
+      const retryDelay = 10
+
+      // This should throw after all retries since the lock is already held
+      await expect(
+        component.acquireLock(lockKey, {
+          retries,
+          retryDelayInMilliseconds: retryDelay
+        })
+      ).rejects.toThrow(LockNotAcquiredError)
+
+      // The lock should still be held by the same instance
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBeTruthy()
+    })
+  })
+
+  describe('and the lock becomes available after retrying', () => {
+    beforeEach(async () => {
+      await component.set(lockKey, 'other-instance-value', 0.05) // 50ms TTL
+      // Wait for the lock to expire
+      await sleep(60)
+    })
+
+    it('should acquire the lock', async () => {
+      await component.acquireLock(lockKey, {
+        retries: 3,
+        retryDelayInMilliseconds: 10
+      })
+
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBeTruthy()
+    })
+  })
+
+  describe('and the lock cannot be acquired after all retries', () => {
+    beforeEach(async () => {
+      // Set a long-lasting lock from another instance
+      await component.set(lockKey, 'other-instance-value', 60) // 60 second TTL
+    })
+
+    it('should throw LockNotAcquiredError after exhausting retries', async () => {
+      const retries = 2
+      const retryDelay = 10
+
+      await expect(
+        component.acquireLock(lockKey, {
+          retries,
+          retryDelayInMilliseconds: retryDelay
+        })
+      ).rejects.toThrow(LockNotAcquiredError)
+
+      // Lock should still be held by the other instance
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBe('other-instance-value')
+    })
+  })
+})
+
+describe('when releasing locks', () => {
+  const lockKey = 'test-lock'
+
+  describe('and the lock is owned by this instance', () => {
+    beforeEach(async () => {
+      await component.acquireLock(lockKey)
+    })
+
+    it('should release the lock successfully', async () => {
+      await component.releaseLock(lockKey)
+
+      // Verify lock is released
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBeNull()
+    })
+  })
+
+  describe('and the lock is not owned by this instance', () => {
+    beforeEach(async () => {
+      // Set a lock from another instance
+      await component.set(lockKey, 'other-instance-value')
+    })
+
+    it('should throw LockNotReleasedError', async () => {
+      await expect(component.releaseLock(lockKey)).rejects.toThrow(LockNotReleasedError)
+
+      // Verify lock is still held by the other instance
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBe('other-instance-value')
+    })
+  })
+
+  describe('and the lock does not exist', () => {
+    it('should throw LockNotReleasedError', async () => {
+      await expect(component.releaseLock('non-existent-lock')).rejects.toThrow(LockNotReleasedError)
+    })
+  })
+})
+
+describe('when trying to acquire locks', () => {
+  const lockKey = 'test-lock'
+
+  describe('and the lock is available', () => {
+    it('should return true', async () => {
+      const result = await component.tryAcquireLock(lockKey)
+
+      expect(result).toBe(true)
+      // Verify lock is acquired by trying to get it
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBeTruthy()
+    })
+
+    it('should return true with custom options', async () => {
+      const result = await component.tryAcquireLock(lockKey, {
+        ttlInMilliseconds: 5000,
+        retries: 3
+      })
+
+      expect(result).toBe(true)
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBeTruthy()
+    })
+  })
+
+  describe('and the lock is already held', () => {
+    beforeEach(async () => {
+      await component.set(lockKey, 'other-instance-value', 60) // 60 second TTL
+    })
+
+    it('should return false after exhausting retries', async () => {
+      const result = await component.tryAcquireLock(lockKey, {
+        retries: 2,
+        retryDelayInMilliseconds: 10
+      })
+
+      expect(result).toBe(false)
+      // Lock should still be held by the other instance
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBe('other-instance-value')
+    })
+  })
+
+  describe('and the lock becomes available after retries', () => {
+    beforeEach(async () => {
+      await component.set(lockKey, 'other-instance-value', 0.05) // 50ms TTL
+      // Wait for the lock to expire
+      await new Promise((resolve) => setTimeout(resolve, 60))
+    })
+
+    it('should return true when lock becomes available', async () => {
+      const result = await component.tryAcquireLock(lockKey, {
+        retries: 3,
+        retryDelayInMilliseconds: 10
+      })
+
+      expect(result).toBe(true)
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBeTruthy()
+    })
+  })
+})
+
+describe('when trying to release locks', () => {
+  const lockKey = 'test-lock'
+
+  describe('and the lock is owned by this instance', () => {
+    beforeEach(async () => {
+      await component.acquireLock(lockKey)
+    })
+
+    it('should return true', async () => {
+      const result = await component.tryReleaseLock(lockKey)
+
+      expect(result).toBe(true)
+      // Verify lock is released
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBeNull()
+    })
+  })
+
+  describe('and the lock is not owned by this instance', () => {
+    beforeEach(async () => {
+      // Set a lock from another instance
+      await component.set(lockKey, 'other-instance-value')
+    })
+
+    it('should return false', async () => {
+      const result = await component.tryReleaseLock(lockKey)
+
+      expect(result).toBe(false)
+      // Verify lock is still held by the other instance
+      const lockValue = await component.get(lockKey)
+      expect(lockValue).toBe('other-instance-value')
+    })
+  })
+
+  describe('and the lock does not exist', () => {
+    it('should return false', async () => {
+      const result = await component.tryReleaseLock('non-existent-lock')
+
+      expect(result).toBe(false)
+    })
   })
 })

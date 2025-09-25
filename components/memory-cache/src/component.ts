@@ -1,11 +1,23 @@
 import { LRUCache } from 'lru-cache'
-import { ICacheStorageComponent } from '@dcl/core-commons'
+import { randomUUID } from 'crypto'
+import {
+  ICacheStorageComponent,
+  sleep,
+  fromSecondsToMilliseconds,
+  DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS,
+  DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS,
+  DEFAULT_ACQUIRE_LOCK_RETRIES,
+  LockNotAcquiredError,
+  LockNotReleasedError
+} from '@dcl/core-commons'
 
 export function createInMemoryCacheComponent(): ICacheStorageComponent {
   const cache = new LRUCache<string, any>({
     max: 10000,
     ttl: 1000 * 60 * 60 // 1 hour default TTL
   })
+
+  const randomValue = randomUUID()
 
   const component: ICacheStorageComponent = {
     async get<T>(key: string): Promise<T | null> {
@@ -14,7 +26,7 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
     },
 
     async set<T>(key: string, value: T, ttl?: number): Promise<void> {
-      const options = ttl ? { ttl: ttl * 1000 } : undefined
+      const options = ttl ? { ttl: fromSecondsToMilliseconds(ttl) } : undefined
       cache.set(key, value, options)
     },
 
@@ -36,7 +48,7 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
       cache.set(
         key,
         { ...(cache.get(key) ?? {}), [field]: value },
-        ttlInSecondsForHash !== undefined ? { ttl: ttlInSecondsForHash * 1000 } : undefined
+        ttlInSecondsForHash !== undefined ? { ttl: fromSecondsToMilliseconds(ttlInSecondsForHash) } : undefined
       )
     },
 
@@ -60,6 +72,72 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
 
     async getAllHashFields<T>(key: string): Promise<Record<string, T>> {
       return cache.get(key) ?? {}
+    },
+
+    async acquireLock(
+      key: string,
+      options?: {
+        ttlInMilliseconds?: number
+        retryDelayInMilliseconds?: number
+        retries?: number
+      }
+    ): Promise<void> {
+      const ttl = options?.ttlInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
+      const retryDelay = options?.retryDelayInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS
+      const retries = options?.retries ?? DEFAULT_ACQUIRE_LOCK_RETRIES
+
+      for (let i = 0; i < retries; i++) {
+        const lock = cache.get(key) ?? null
+        if (lock === null) {
+          cache.set(key, randomValue, { ttl })
+          return
+        }
+        if (i < retries - 1) {
+          await sleep(retryDelay)
+        }
+      }
+
+      throw new LockNotAcquiredError(key)
+    },
+
+    async releaseLock(key: string): Promise<void> {
+      const lock = cache.get(key) ?? null
+      if (lock === randomValue) {
+        cache.delete(key)
+        return
+      }
+      throw new LockNotReleasedError(key)
+    },
+
+    async tryAcquireLock(
+      key: string,
+      options?: {
+        ttlInMilliseconds?: number
+        retryDelayInMilliseconds?: number
+        retries?: number
+      }
+    ): Promise<boolean> {
+      try {
+        await component.acquireLock(key, options)
+        return true
+      } catch (error) {
+        if (error instanceof LockNotAcquiredError) {
+          return false
+        }
+        throw error
+      }
+    },
+
+    async tryReleaseLock(key: string): Promise<boolean> {
+      try {
+        await component.releaseLock(key)
+        return true
+      } catch (error) {
+        if (error instanceof LockNotReleasedError) {
+          return false
+        }
+        throw error
+      }
     }
   }
 

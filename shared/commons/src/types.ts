@@ -56,4 +56,43 @@ export interface ICacheStorageComponent extends IBaseComponent {
    * @returns Promise resolving to an object with all fields and their values.
    */
   getAllHashFields<T>(key: string): Promise<Record<string, T>>
+
+  /**
+   * Acquires a lock for a key. Throws LockNotAcquiredError if lock cannot be acquired.
+   * @param key - The key to acquire the lock for.
+   * @param options - Lock options including TTL, retry delay, and number of retries.
+   * @param options.ttlInMilliseconds - Time-to-live for the lock in milliseconds. Default: 10000 (10 seconds).
+   * @param options.retryDelayInMilliseconds - Delay between retries in milliseconds. Default: 200.
+   * @param options.retries - Number of retry attempts. Default: 10.
+   * @throws {LockNotAcquiredError} When the lock cannot be acquired after all retries.
+   */
+  acquireLock(
+    key: string,
+    options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
+  ): Promise<void>
+  /**
+   * Releases a lock for a key. Throws LockNotReleasedError if lock cannot be released.
+   * @param key - The key to release the lock for.
+   * @throws {LockNotReleasedError} When the lock cannot be released (not owned by this instance).
+   */
+  releaseLock(key: string): Promise<void>
+  /**
+   * Attempts to acquire a lock for a key without throwing errors.
+   * @param key - The key to acquire the lock for.
+   * @param options - Lock options including TTL, retry delay, and number of retries.
+   * @param options.ttlInMilliseconds - Time-to-live for the lock in milliseconds. Default: 10000 (10 seconds).
+   * @param options.retryDelayInMilliseconds - Delay between retries in milliseconds. Default: 200.
+   * @param options.retries - Number of retry attempts. Default: 10.
+   * @returns Promise resolving to true if lock was acquired, false otherwise.
+   */
+  tryAcquireLock(
+    key: string,
+    options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
+  ): Promise<boolean>
+  /**
+   * Attempts to release a lock for a key without throwing errors.
+   * @param key - The key to release the lock for.
+   * @returns Promise resolving to true if the lock was released, false otherwise.
+   */
+  tryReleaseLock(key: string): Promise<boolean>
 }
