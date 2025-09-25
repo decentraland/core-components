@@ -1,5 +1,11 @@
 # @dcl/core-commons
 
+## 0.5.0
+
+### Minor Changes
+
+- 839b790: Add the acquireLock, releaseLock, tryAcquireLock, and tryReleaseLock functions to the Redis and memory storage components.
+
 ## 0.4.0
 
 ### Minor Changes
