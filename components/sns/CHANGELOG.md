@@ -1,5 +1,11 @@
 # @dcl/sns-component
 
+## 2.1.0
+
+### Minor Changes
+
+- 4395f1d: Publish single message
+
 ## 2.0.3
 
 ### Patch Changes
