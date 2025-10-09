@@ -14,7 +14,8 @@ npm install @dcl/sns-component
 import { createSnsComponent } from '@dcl/sns-component'
 
 const snsPublisher = await createSnsComponent({ config })
-await snsPublisher.publishMessages([event1, event2])
+await snsPublisher.publishMessage(event) // Single message
+await snsPublisher.publishMessages([event1, event2]) // Batch of messages
 ```
 
 ## Configuration
@@ -26,6 +27,7 @@ The component requires the following environment variables:
 
 ## Features
 
+- Single message publishing
 - Batch message publishing (up to 10 messages per batch)
 - Automatic retry handling
 - Type-safe message attributes
