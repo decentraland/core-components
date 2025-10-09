@@ -1,4 +1,4 @@
-import { PublishBatchCommand, SNSClient } from '@aws-sdk/client-sns'
+import { PublishBatchCommand, PublishCommand, SNSClient, PublishCommandOutput } from '@aws-sdk/client-sns'
 import { IConfigComponent } from '@well-known-components/interfaces'
 
 import { IPublisherComponent } from './types'
@@ -21,6 +21,28 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
   const client = new SNSClient({
     endpoint: optionalEndpoint ? optionalEndpoint : undefined
   })
+
+  async function publishMessage(event: {
+    type: string
+    subType?: string
+    [key: string]: any
+  }): Promise<PublishCommandOutput> {
+    const command = new PublishCommand({
+      TopicArn: snsArn,
+      Message: JSON.stringify(event),
+      MessageAttributes: {
+        type: {
+          DataType: 'String',
+          StringValue: event.type
+        },
+        subType: {
+          DataType: 'String',
+          StringValue: event.subType
+        }
+      }
+    })
+    return client.send(command)
+  }
 
   async function publishMessages(events: Array<{ type: string; subType?: string; [key: string]: any }>): Promise<{
     successfulMessageIds: string[]
@@ -77,5 +99,5 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
     return { successfulMessageIds, failedEvents }
   }
 
-  return { publishMessages }
+  return { publishMessage, publishMessages }
 }

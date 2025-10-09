@@ -6,6 +6,7 @@ import { IPublisherComponent } from '../src/types'
 // Mock the AWS SDK
 jest.mock('@aws-sdk/client-sns', () => ({
   SNSClient: jest.fn(),
+  PublishCommand: jest.fn().mockImplementation((params) => ({ input: params })),
   PublishBatchCommand: jest.fn().mockImplementation((params) => ({ input: params }))
 }))
 
@@ -48,6 +49,39 @@ beforeEach(async () => {
   })
 
   component = await createSnsComponent({ config })
+})
+
+describe('when publishing a single message', () => {
+  const event = {
+    type: 'user_login',
+    subType: 'web',
+    userId: '123',
+    timestamp: new Date().toISOString()
+  }
+
+  describe('and the publish succeeds', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValue({
+        MessageId: 'msg-123'
+      })
+    })
+
+    it('should publish the message successfully', async () => {
+      const result = await component.publishMessage(event)
+      expect(result.MessageId).toEqual('msg-123')
+      expect(sendMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and the publish fails', () => {
+    beforeEach(() => {
+      sendMock.mockRejectedValue(new Error('AWS Error'))
+    })
+
+    it('should throw the error', async () => {
+      await expect(component.publishMessage(event)).rejects.toThrow('AWS Error')
+    })
+  })
 })
 
 describe('when publishing messages', () => {
