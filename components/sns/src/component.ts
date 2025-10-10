@@ -1,7 +1,7 @@
 import { PublishBatchCommand, PublishCommand, SNSClient, PublishCommandOutput } from '@aws-sdk/client-sns'
 import { IConfigComponent } from '@well-known-components/interfaces'
 
-import { IPublisherComponent } from './types'
+import { IPublisherComponent, CustomMessageAttributes } from './types'
 
 function chunk<T>(theArray: T[], size: number): T[][] {
   return theArray.reduce((acc: T[][], _, i) => {
@@ -22,11 +22,14 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
     endpoint: optionalEndpoint ? optionalEndpoint : undefined
   })
 
-  async function publishMessage(event: {
-    type: string
-    subType?: string
-    [key: string]: any
-  }): Promise<PublishCommandOutput> {
+  async function publishMessage(
+    event: {
+      type: string
+      subType?: string
+      [key: string]: any
+    },
+    customMessageAttributes?: CustomMessageAttributes
+  ): Promise<PublishCommandOutput> {
     const command = new PublishCommand({
       TopicArn: snsArn,
       Message: JSON.stringify(event),
@@ -38,13 +41,17 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
         subType: {
           DataType: 'String',
           StringValue: event.subType
-        }
+        },
+        ...customMessageAttributes
       }
     })
     return client.send(command)
   }
 
-  async function publishMessages(events: Array<{ type: string; subType?: string; [key: string]: any }>): Promise<{
+  async function publishMessages(
+    events: Array<{ type: string; subType?: string; [key: string]: any }>,
+    customMessageAttributes?: CustomMessageAttributes
+  ): Promise<{
     successfulMessageIds: string[]
     failedEvents: Array<{ type: string; subType?: string; [key: string]: any }>
   }> {
@@ -64,7 +71,8 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
             subType: {
               DataType: 'String',
               StringValue: event.subType || 'unknown'
-            }
+            },
+            ...customMessageAttributes
           }
         }
       })
