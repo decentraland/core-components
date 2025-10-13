@@ -1,7 +1,7 @@
 import { IConfigComponent } from '@well-known-components/interfaces'
 import { createConfigMockedComponent } from '@dcl/core-commons'
 import { createSnsComponent } from '../src/component'
-import { IPublisherComponent } from '../src/types'
+import { CustomMessageAttributes, IPublisherComponent } from '../src/types'
 
 // Mock the AWS SDK
 jest.mock('@aws-sdk/client-sns', () => ({
@@ -71,6 +71,22 @@ describe('when publishing a single message', () => {
       expect(result.MessageId).toEqual('msg-123')
       expect(sendMock).toHaveBeenCalledTimes(1)
     })
+
+    it('should publish with only default message attributes', async () => {
+      await component.publishMessage(event)
+
+      const sentCommand = sendMock.mock.calls[0][0]
+      expect(sentCommand.input.MessageAttributes).toEqual({
+        type: {
+          DataType: 'String',
+          StringValue: 'user_login'
+        },
+        subType: {
+          DataType: 'String',
+          StringValue: 'web'
+        }
+      })
+    })
   })
 
   describe('and the publish fails', () => {
@@ -106,6 +122,24 @@ describe('when publishing messages', () => {
       expect(result.successfulMessageIds).toEqual(['msg-123'])
       expect(result.failedEvents).toEqual([])
       expect(sendMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('should publish with only default message attributes', async () => {
+      await component.publishMessages([event])
+
+      const sentCommand = sendMock.mock.calls[0][0]
+      const entries = sentCommand.input.PublishBatchRequestEntries
+
+      expect(entries[0].MessageAttributes).toEqual({
+        type: {
+          DataType: 'String',
+          StringValue: 'user_login'
+        },
+        subType: {
+          DataType: 'String',
+          StringValue: 'web'
+        }
+      })
     })
   })
 
@@ -193,7 +227,7 @@ describe('when publishing messages', () => {
 
 describe('when publishing a single message with custom MessageAttributes', () => {
   let event: any
-  let customAttributes: any
+  let customAttributes: CustomMessageAttributes
 
   beforeEach(() => {
     event = {
@@ -215,7 +249,7 @@ describe('when publishing a single message with custom MessageAttributes', () =>
   })
 
   afterEach(() => {
-    jest.resetAllMocks()
+    sendMock.mockClear()
   })
 
   describe('and the publish succeeds', () => {
@@ -230,16 +264,9 @@ describe('when publishing a single message with custom MessageAttributes', () =>
 
       expect(result.MessageId).toEqual('msg-123')
       expect(sendMock).toHaveBeenCalledTimes(1)
-    })
-
-    it('should include custom attributes in the PublishCommand', async () => {
-      const { PublishCommand } = require('@aws-sdk/client-sns')
-      await component.publishMessage(event, customAttributes)
-
-      const publishCommandCall = PublishCommand.mock.calls[PublishCommand.mock.calls.length - 1]
-      const params = publishCommandCall[0]
-
-      expect(params.MessageAttributes).toEqual({
+      
+      const sentCommand = sendMock.mock.calls[0][0]
+      expect(sentCommand.input.MessageAttributes).toEqual({
         type: {
           DataType: 'String',
           StringValue: 'user_login'
@@ -260,29 +287,65 @@ describe('when publishing a single message with custom MessageAttributes', () =>
     })
   })
 
-  describe('and custom attributes are not provided', () => {
-    beforeEach(() => {
-      sendMock.mockResolvedValue({
-        MessageId: 'msg-456'
+  describe('and custom attributes attempt to override reserved attributes', () => {
+    describe('and type attribute is included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          type: {
+            DataType: 'String',
+            StringValue: 'malicious_type'
+          }
+        }
+      })
+
+      it('should throw an error indicating type cannot be overridden', async () => {
+        await expect(component.publishMessage(event, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes: type'
+        )
       })
     })
 
-    it('should publish with only default attributes', async () => {
-      const { PublishCommand } = require('@aws-sdk/client-sns')
-      await component.publishMessage(event)
+    describe('and subType attribute is included', () => {
+      let invalidAttributes: CustomMessageAttributes
 
-      const publishCommandCall = PublishCommand.mock.calls[PublishCommand.mock.calls.length - 1]
-      const params = publishCommandCall[0]
-
-      expect(params.MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_login'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'web'
+      beforeEach(() => {
+        invalidAttributes = {
+          subType: {
+            DataType: 'String',
+            StringValue: 'malicious_subtype'
+          }
         }
+      })
+
+      it('should throw an error indicating subType cannot be overridden', async () => {
+        await expect(component.publishMessage(event, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes: subType'
+        )
+      })
+    })
+
+    describe('and both type and subType attributes are included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          type: {
+            DataType: 'String',
+            StringValue: 'malicious_type'
+          },
+          subType: {
+            DataType: 'String',
+            StringValue: 'malicious_subtype'
+          }
+        }
+      })
+
+      it('should throw an error indicating both cannot be overridden', async () => {
+        await expect(component.publishMessage(event, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes'
+        )
       })
     })
   })
@@ -290,7 +353,7 @@ describe('when publishing a single message with custom MessageAttributes', () =>
 
 describe('when publishing multiple messages with custom MessageAttributes', () => {
   let events: any[]
-  let customAttributes: any
+  let customAttributes: CustomMessageAttributes
 
   beforeEach(() => {
     events = [
@@ -310,139 +373,153 @@ describe('when publishing multiple messages with custom MessageAttributes', () =
   })
 
   afterEach(() => {
-    jest.resetAllMocks()
+    sendMock.mockClear()
   })
 
-  describe('and the publish succeeds', () => {
-    beforeEach(() => {
-      sendMock.mockResolvedValue({
-        Successful: [{ MessageId: 'msg-1' }, { MessageId: 'msg-2' }],
-        Failed: []
-      })
+  beforeEach(() => {
+    sendMock.mockResolvedValue({
+      Successful: [{ MessageId: 'msg-1' }, { MessageId: 'msg-2' }],
+      Failed: []
+    })
+  })
+
+  it('should include custom attributes in all batch entries', async () => {
+    await component.publishMessages(events, customAttributes)
+
+    const sentCommand = sendMock.mock.calls[0][0]
+    const entries = sentCommand.input.PublishBatchRequestEntries
+
+    expect(entries).toHaveLength(2)
+    expect(entries[0].MessageAttributes).toEqual({
+      type: {
+        DataType: 'String',
+        StringValue: 'user_login'
+      },
+      subType: {
+        DataType: 'String',
+        StringValue: 'web'
+      },
+      environment: {
+        DataType: 'String',
+        StringValue: 'production'
+      },
+      version: {
+        DataType: 'String',
+        StringValue: 'v2.0.0'
+      }
+    })
+    expect(entries[1].MessageAttributes).toEqual({
+      type: {
+        DataType: 'String',
+        StringValue: 'user_logout'
+      },
+      subType: {
+        DataType: 'String',
+        StringValue: 'mobile'
+      },
+      environment: {
+        DataType: 'String',
+        StringValue: 'production'
+      },
+      version: {
+        DataType: 'String',
+        StringValue: 'v2.0.0'
+      }
+    })
+  })
+
+  it('should apply custom attributes to all batches when publishing more than 10 messages', async () => {
+    const largeEventArray = Array.from({ length: 25 }, (_, i) => ({
+      type: 'test_event',
+      subType: 'batch',
+      index: i
+    }))
+    sendMock.mockResolvedValue({
+      Successful: Array.from({ length: 10 }, (_, i) => ({ MessageId: `msg-${i}` })),
+      Failed: []
     })
 
-    it('should publish all messages with custom attributes', async () => {
-      const result = await component.publishMessages(events, customAttributes)
+    await component.publishMessages(largeEventArray, customAttributes)
 
-      expect(result.successfulMessageIds).toEqual(['msg-1', 'msg-2'])
-      expect(result.failedEvents).toEqual([])
-      expect(sendMock).toHaveBeenCalledTimes(1)
-    })
+    // Should be called 3 times (10 + 10 + 5 messages)
+    expect(sendMock).toHaveBeenCalledTimes(3)
 
-    it('should include custom attributes in all batch entries', async () => {
-      const { PublishBatchCommand } = require('@aws-sdk/client-sns')
-      await component.publishMessages(events, customAttributes)
-
-      const batchCommandCall = PublishBatchCommand.mock.calls[PublishBatchCommand.mock.calls.length - 1]
-      const params = batchCommandCall[0]
-      const entries = params.PublishBatchRequestEntries
-
-      expect(entries).toHaveLength(2)
-      expect(entries[0].MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_login'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'web'
-        },
-        environment: {
+    // Check each batch has custom attributes
+    sendMock.mock.calls.forEach((call: any) => {
+      const command = call[0]
+      const entries = command.input.PublishBatchRequestEntries
+      entries.forEach((entry: any) => {
+        expect(entry.MessageAttributes.environment).toEqual({
           DataType: 'String',
           StringValue: 'production'
-        },
-        version: {
-          DataType: 'String',
-          StringValue: 'v2.0.0'
-        }
-      })
-      expect(entries[1].MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_logout'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'mobile'
-        },
-        environment: {
-          DataType: 'String',
-          StringValue: 'production'
-        },
-        version: {
-          DataType: 'String',
-          StringValue: 'v2.0.0'
-        }
-      })
-    })
-  })
-
-  describe('and custom attributes are not provided', () => {
-    beforeEach(() => {
-      sendMock.mockResolvedValue({
-        Successful: [{ MessageId: 'msg-1' }, { MessageId: 'msg-2' }],
-        Failed: []
-      })
-    })
-
-    it('should publish with only default attributes', async () => {
-      const { PublishBatchCommand } = require('@aws-sdk/client-sns')
-      await component.publishMessages(events)
-
-      const batchCommandCall = PublishBatchCommand.mock.calls[PublishBatchCommand.mock.calls.length - 1]
-      const params = batchCommandCall[0]
-      const entries = params.PublishBatchRequestEntries
-
-      expect(entries[0].MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_login'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'web'
-        }
-      })
-    })
-  })
-
-  describe('and publishing more than 10 messages with custom attributes', () => {
-    let largeEventArray: any[]
-
-    beforeEach(() => {
-      largeEventArray = Array.from({ length: 25 }, (_, i) => ({
-        type: 'test_event',
-        subType: 'batch',
-        index: i
-      }))
-      sendMock.mockResolvedValue({
-        Successful: Array.from({ length: 10 }, (_, i) => ({ MessageId: `msg-${i}` })),
-        Failed: []
-      })
-    })
-
-    it('should apply custom attributes to all batches', async () => {
-      const { PublishBatchCommand } = require('@aws-sdk/client-sns')
-      await component.publishMessages(largeEventArray, customAttributes)
-
-      // Should be called 3 times (10 + 10 + 5 messages)
-      expect(sendMock).toHaveBeenCalledTimes(3)
-
-      // Check each batch has custom attributes
-      const batchCalls = PublishBatchCommand.mock.calls
-      batchCalls.forEach((call: any) => {
-        const params = call[0]
-        const entries = params.PublishBatchRequestEntries
-        entries.forEach((entry: any) => {
-          expect(entry.MessageAttributes.environment).toEqual({
-            DataType: 'String',
-            StringValue: 'production'
-          })
-          expect(entry.MessageAttributes.version).toEqual({
-            DataType: 'String',
-            StringValue: 'v2.0.0'
-          })
         })
+        expect(entry.MessageAttributes.version).toEqual({
+          DataType: 'String',
+          StringValue: 'v2.0.0'
+        })
+      })
+    })
+  })
+
+  describe('and custom attributes attempt to override reserved attributes', () => {
+    describe('and type attribute is included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          type: {
+            DataType: 'String',
+            StringValue: 'malicious_type'
+          }
+        }
+      })
+
+      it('should throw an error indicating type cannot be overridden', async () => {
+        await expect(component.publishMessages(events, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes: type'
+        )
+      })
+    })
+
+    describe('and subType attribute is included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          subType: {
+            DataType: 'String',
+            StringValue: 'malicious_subtype'
+          }
+        }
+      })
+
+      it('should throw an error indicating subType cannot be overridden', async () => {
+        await expect(component.publishMessages(events, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes: subType'
+        )
+      })
+    })
+
+    describe('and both type and subType attributes are included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          type: {
+            DataType: 'String',
+            StringValue: 'malicious_type'
+          },
+          subType: {
+            DataType: 'String',
+            StringValue: 'malicious_subtype'
+          }
+        }
+      })
+
+      it('should throw an error indicating both cannot be overridden', async () => {
+        await expect(component.publishMessages(events, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes'
+        )
       })
     })
   })

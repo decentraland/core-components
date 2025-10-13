@@ -12,6 +12,21 @@ function chunk<T>(theArray: T[], size: number): T[][] {
   }, [])
 }
 
+function validateCustomAttributes(customMessageAttributes?: CustomMessageAttributes): void {
+  if (!customMessageAttributes) {
+    return
+  }
+
+  const reservedKeys = ['type', 'subType']
+  const invalidKeys = Object.keys(customMessageAttributes).filter((key) => reservedKeys.includes(key))
+
+  if (invalidKeys.length > 0) {
+    throw new Error(
+      `Cannot override reserved message attributes: ${invalidKeys.join(', ')}. These attributes are automatically set from the event object.`
+    )
+  }
+}
+
 export async function createSnsComponent({ config }: { config: IConfigComponent }): Promise<IPublisherComponent> {
   // SNS PublishBatch can handle up to 10 messages in a single request
   const MAX_BATCH_SIZE = 10
@@ -30,6 +45,8 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
     },
     customMessageAttributes?: CustomMessageAttributes
   ): Promise<PublishCommandOutput> {
+    validateCustomAttributes(customMessageAttributes)
+
     const command = new PublishCommand({
       TopicArn: snsArn,
       Message: JSON.stringify(event),
@@ -55,6 +72,8 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
     successfulMessageIds: string[]
     failedEvents: Array<{ type: string; subType?: string; [key: string]: any }>
   }> {
+    validateCustomAttributes(customMessageAttributes)
+
     // split events into batches of 10
     const batches = chunk(events, MAX_BATCH_SIZE)
 
