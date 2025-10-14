@@ -356,10 +356,6 @@ describe('when publishing multiple messages with custom MessageAttributes', () =
   let customAttributes: CustomMessageAttributes
 
   beforeEach(() => {
-    events = [
-      { type: 'user_login', subType: 'web', userId: '123' },
-      { type: 'user_logout', subType: 'mobile', userId: '456' }
-    ]
     customAttributes = {
       environment: {
         DataType: 'String',
@@ -376,92 +372,106 @@ describe('when publishing multiple messages with custom MessageAttributes', () =
     sendMock.mockClear()
   })
 
-  beforeEach(() => {
-    sendMock.mockResolvedValue({
-      Successful: [{ MessageId: 'msg-1' }, { MessageId: 'msg-2' }],
-      Failed: []
-    })
-  })
-
-  it('should include custom attributes in all batch entries', async () => {
-    await component.publishMessages(events, customAttributes)
-
-    const sentCommand = sendMock.mock.calls[0][0]
-    const entries = sentCommand.input.PublishBatchRequestEntries
-
-    expect(entries).toHaveLength(2)
-    expect(entries[0].MessageAttributes).toEqual({
-      type: {
-        DataType: 'String',
-        StringValue: 'user_login'
-      },
-      subType: {
-        DataType: 'String',
-        StringValue: 'web'
-      },
-      environment: {
-        DataType: 'String',
-        StringValue: 'production'
-      },
-      version: {
-        DataType: 'String',
-        StringValue: 'v2.0.0'
-      }
-    })
-    expect(entries[1].MessageAttributes).toEqual({
-      type: {
-        DataType: 'String',
-        StringValue: 'user_logout'
-      },
-      subType: {
-        DataType: 'String',
-        StringValue: 'mobile'
-      },
-      environment: {
-        DataType: 'String',
-        StringValue: 'production'
-      },
-      version: {
-        DataType: 'String',
-        StringValue: 'v2.0.0'
-      }
-    })
-  })
-
-  it('should apply custom attributes to all batches when publishing more than 10 messages', async () => {
-    const largeEventArray = Array.from({ length: 25 }, (_, i) => ({
-      type: 'test_event',
-      subType: 'batch',
-      index: i
-    }))
-    sendMock.mockResolvedValue({
-      Successful: Array.from({ length: 10 }, (_, i) => ({ MessageId: `msg-${i}` })),
-      Failed: []
+  describe('and there are less than 10 messages to be published', () => {
+    beforeEach(() => {
+      events = [
+        { type: 'user_login', subType: 'web', userId: '123' },
+        { type: 'user_logout', subType: 'mobile', userId: '456' }
+      ]
+      sendMock.mockResolvedValue({
+        Successful: [{ MessageId: 'msg-1' }, { MessageId: 'msg-2' }],
+        Failed: []
+      })
     })
 
-    await component.publishMessages(largeEventArray, customAttributes)
+    it('should include custom attributes in all batch entries', async () => {
+      await component.publishMessages(events, customAttributes)
 
-    // Should be called 3 times (10 + 10 + 5 messages)
-    expect(sendMock).toHaveBeenCalledTimes(3)
+      const sentCommand = sendMock.mock.calls[0][0]
+      const entries = sentCommand.input.PublishBatchRequestEntries
 
-    // Check each batch has custom attributes
-    sendMock.mock.calls.forEach((call: any) => {
-      const command = call[0]
-      const entries = command.input.PublishBatchRequestEntries
-      entries.forEach((entry: any) => {
-        expect(entry.MessageAttributes.environment).toEqual({
+      expect(entries).toHaveLength(2)
+      expect(entries[0].MessageAttributes).toEqual({
+        type: {
+          DataType: 'String',
+          StringValue: 'user_login'
+        },
+        subType: {
+          DataType: 'String',
+          StringValue: 'web'
+        },
+        environment: {
           DataType: 'String',
           StringValue: 'production'
-        })
-        expect(entry.MessageAttributes.version).toEqual({
+        },
+        version: {
           DataType: 'String',
           StringValue: 'v2.0.0'
+        }
+      })
+      expect(entries[1].MessageAttributes).toEqual({
+        type: {
+          DataType: 'String',
+          StringValue: 'user_logout'
+        },
+        subType: {
+          DataType: 'String',
+          StringValue: 'mobile'
+        },
+        environment: {
+          DataType: 'String',
+          StringValue: 'production'
+        },
+        version: {
+          DataType: 'String',
+          StringValue: 'v2.0.0'
+        }
+      })
+    })
+  })
+
+  describe('and there are more than 10 messages to be published', () => {
+    beforeEach(() => {
+      events = Array.from({ length: 25 }, (_, i) => ({
+        type: 'test_event',
+        subType: 'batch',
+        index: i
+      }))
+      sendMock.mockResolvedValue({
+        Successful: Array.from({ length: 10 }, (_, i) => ({ MessageId: `msg-${i}` })),
+        Failed: []
+      })
+    })
+
+    it('should apply custom attributes to all batches', async () => {
+      await component.publishMessages(events, customAttributes)
+
+      // Should be called 3 times (10 + 10 + 5 messages)
+      expect(sendMock).toHaveBeenCalledTimes(3)
+
+      // Check each batch has custom attributes
+      sendMock.mock.calls.forEach((call: any) => {
+        const command = call[0]
+        const entries = command.input.PublishBatchRequestEntries
+        entries.forEach((entry: any) => {
+          expect(entry.MessageAttributes.environment).toEqual({
+            DataType: 'String',
+            StringValue: 'production'
+          })
+          expect(entry.MessageAttributes.version).toEqual({
+            DataType: 'String',
+            StringValue: 'v2.0.0'
+          })
         })
       })
     })
   })
 
   describe('and custom attributes attempt to override reserved attributes', () => {
+    beforeEach(() => {
+      events = [{ type: 'user_login', subType: 'web', userId: '123' }]
+    })
+
     describe('and type attribute is included', () => {
       let invalidAttributes: CustomMessageAttributes
 
