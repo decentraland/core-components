@@ -268,7 +268,7 @@ describe('when deleting objects', () => {
       await expect(component.deleteObject(key)).rejects.toThrow()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
+      expect(sendMock).toHaveBeenCalledWith(new DeleteObjectCommand({
         Bucket: bucketName,
         Key: key
       }))
