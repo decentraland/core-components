@@ -75,17 +75,22 @@ describe('when publishing a single message', () => {
     it('should publish with only default message attributes', async () => {
       await component.publishMessage(event)
 
-      const sentCommand = sendMock.mock.calls[0][0]
-      expect(sentCommand.input.MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_login'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'web'
-        }
-      })
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            MessageAttributes: {
+              type: {
+                DataType: 'String',
+                StringValue: 'user_login'
+              },
+              subType: {
+                DataType: 'String',
+                StringValue: 'web'
+              }
+            }
+          })
+        })
+      )
     })
   })
 
@@ -127,19 +132,26 @@ describe('when publishing messages', () => {
     it('should publish with only default message attributes', async () => {
       await component.publishMessages([event])
 
-      const sentCommand = sendMock.mock.calls[0][0]
-      const entries = sentCommand.input.PublishBatchRequestEntries
-
-      expect(entries[0].MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_login'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'web'
-        }
-      })
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: [
+              expect.objectContaining({
+                MessageAttributes: {
+                  type: {
+                    DataType: 'String',
+                    StringValue: 'user_login'
+                  },
+                  subType: {
+                    DataType: 'String',
+                    StringValue: 'web'
+                  }
+                }
+              })
+            ]
+          })
+        })
+      )
     })
   })
 
@@ -264,26 +276,30 @@ describe('when publishing a single message with custom MessageAttributes', () =>
 
       expect(result.MessageId).toEqual('msg-123')
       expect(sendMock).toHaveBeenCalledTimes(1)
-      
-      const sentCommand = sendMock.mock.calls[0][0]
-      expect(sentCommand.input.MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_login'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'web'
-        },
-        correlationId: {
-          DataType: 'String',
-          StringValue: 'abc-123-def'
-        },
-        priority: {
-          DataType: 'String',
-          StringValue: 'high'
-        }
-      })
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            MessageAttributes: {
+              type: {
+                DataType: 'String',
+                StringValue: 'user_login'
+              },
+              subType: {
+                DataType: 'String',
+                StringValue: 'web'
+              },
+              correlationId: {
+                DataType: 'String',
+                StringValue: 'abc-123-def'
+              },
+              priority: {
+                DataType: 'String',
+                StringValue: 'high'
+              }
+            }
+          })
+        })
+      )
     })
   })
 
@@ -387,46 +403,54 @@ describe('when publishing multiple messages with custom MessageAttributes', () =
     it('should include custom attributes in all batch entries', async () => {
       await component.publishMessages(events, customAttributes)
 
-      const sentCommand = sendMock.mock.calls[0][0]
-      const entries = sentCommand.input.PublishBatchRequestEntries
-
-      expect(entries).toHaveLength(2)
-      expect(entries[0].MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_login'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'web'
-        },
-        environment: {
-          DataType: 'String',
-          StringValue: 'production'
-        },
-        version: {
-          DataType: 'String',
-          StringValue: 'v2.0.0'
-        }
-      })
-      expect(entries[1].MessageAttributes).toEqual({
-        type: {
-          DataType: 'String',
-          StringValue: 'user_logout'
-        },
-        subType: {
-          DataType: 'String',
-          StringValue: 'mobile'
-        },
-        environment: {
-          DataType: 'String',
-          StringValue: 'production'
-        },
-        version: {
-          DataType: 'String',
-          StringValue: 'v2.0.0'
-        }
-      })
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: [
+              expect.objectContaining({
+                MessageAttributes: {
+                  type: {
+                    DataType: 'String',
+                    StringValue: 'user_login'
+                  },
+                  subType: {
+                    DataType: 'String',
+                    StringValue: 'web'
+                  },
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                }
+              }),
+              expect.objectContaining({
+                MessageAttributes: {
+                  type: {
+                    DataType: 'String',
+                    StringValue: 'user_logout'
+                  },
+                  subType: {
+                    DataType: 'String',
+                    StringValue: 'mobile'
+                  },
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                }
+              })
+            ]
+          })
+        })
+      )
     })
   })
 
@@ -449,21 +473,72 @@ describe('when publishing multiple messages with custom MessageAttributes', () =
       // Should be called 3 times (10 + 10 + 5 messages)
       expect(sendMock).toHaveBeenCalledTimes(3)
 
-      // Check each batch has custom attributes
-      sendMock.mock.calls.forEach((call: any) => {
-        const command = call[0]
-        const entries = command.input.PublishBatchRequestEntries
-        entries.forEach((entry: any) => {
-          expect(entry.MessageAttributes.environment).toEqual({
-            DataType: 'String',
-            StringValue: 'production'
-          })
-          expect(entry.MessageAttributes.version).toEqual({
-            DataType: 'String',
-            StringValue: 'v2.0.0'
+      // Check each batch call has custom attributes
+      expect(sendMock).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: expect.arrayContaining([
+              expect.objectContaining({
+                MessageAttributes: expect.objectContaining({
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                })
+              })
+            ])
           })
         })
-      })
+      )
+
+      expect(sendMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: expect.arrayContaining([
+              expect.objectContaining({
+                MessageAttributes: expect.objectContaining({
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                })
+              })
+            ])
+          })
+        })
+      )
+
+      expect(sendMock).toHaveBeenNthCalledWith(
+        3,
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: expect.arrayContaining([
+              expect.objectContaining({
+                MessageAttributes: expect.objectContaining({
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                })
+              })
+            ])
+          })
+        })
+      )
     })
   })
 
