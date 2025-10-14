@@ -1,5 +1,15 @@
 # @dcl/sns-component
 
+## 3.0.0
+
+### Major Changes
+
+- 0df236f: Adding custom MessageAttributes to SNS Component
+
+### Patch Changes
+
+- 63e623d: Adding validation for existing message attributes (Type & Subtype)
+
 ## 2.1.0
 
 ### Minor Changes
