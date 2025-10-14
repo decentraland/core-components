@@ -3,17 +3,17 @@ import { createConfigMockedComponent } from '@dcl/core-commons'
 import { createS3Component } from '../src/component'
 import { IS3Component } from '../src/types'
 
-// Helper to create mock commands
-const createMockCommand = (params: any) => ({ input: params })
-
 // Mock the AWS SDK
-jest.mock('@aws-sdk/client-s3', () => ({
-  S3Client: jest.fn(),
-  PutObjectCommand: jest.fn().mockImplementation(createMockCommand),
-  GetObjectCommand: jest.fn().mockImplementation(createMockCommand),
-  DeleteObjectCommand: jest.fn().mockImplementation(createMockCommand),
-  ListObjectsV2Command: jest.fn().mockImplementation(createMockCommand),
-  HeadObjectCommand: jest.fn().mockImplementation(createMockCommand),
+jest.mock('@aws-sdk/client-s3', () => {
+  const createMockCommand = (params: any) => ({ input: params })
+  
+  return {
+    S3Client: jest.fn(),
+    PutObjectCommand: jest.fn().mockImplementation(createMockCommand),
+    GetObjectCommand: jest.fn().mockImplementation(createMockCommand),
+    DeleteObjectCommand: jest.fn().mockImplementation(createMockCommand),
+    ListObjectsV2Command: jest.fn().mockImplementation(createMockCommand),
+    HeadObjectCommand: jest.fn().mockImplementation(createMockCommand),
   NoSuchKey: class NoSuchKey extends Error {
     constructor(message?: string) {
       super(message)
@@ -26,7 +26,8 @@ jest.mock('@aws-sdk/client-s3', () => ({
       this.name = 'NotFound'
     }
   }
-}))
+  }
+})
 
 let config: IConfigComponent
 let component: IS3Component
