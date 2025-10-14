@@ -16,8 +16,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.908.0",
-    "@dcl/core-commons": "workspace:*",
-    "@well-known-components/interfaces": "^1.5.1"
+    "@dcl/core-commons": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

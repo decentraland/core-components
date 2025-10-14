@@ -1,0 +1,366 @@
+---
+description: Decentraland Well-Known Components (WKC) architecture patterns and conventions.
+globs: src/components.ts,test/components.ts,src/types/components.ts,src/types/system.ts,src/logic/*/component.ts,src/adapters/*.ts,src/adapters/**/*.ts,src/controllers/handlers/**/*.ts
+alwaysApply: false
+---
+
+# Decentraland Well-Known Components (WKC)
+
+## Scope
+
+- `src/components.ts` - Main component initialization file
+- `test/components.ts` - Test environment component setup
+- `src/types/components.ts` - Component interface definitions
+- `src/types/system.ts` - System-wide type definitions
+- `src/logic/*/component.ts` - Individual component implementations (job, ws-pool)
+- `src/adapters/*.ts` - External service integration components
+- `src/adapters/**/*.ts` - Adapter subdirectories (like rpc-server/)
+- `src/controllers/handlers/**/*.ts` - HTTP/RPC/UWS handler components
+
+## Rules
+
+### 1. Component Interface Design
+
+**MUST** (required)
+
+- All components must extend `IBaseComponent` from `@well-known-components/interfaces`
+- Component interfaces must be defined in `types/components.ts`
+- Use TypeScript interfaces with minimal, focused responsibilities
+- Implement lifecycle symbols `START_COMPONENT` and `STOP_COMPONENT` when needed
+
+```typescript
+// ❌ Incorrect
+export interface IUserComponent {
+  getUser: (id: string) => User
+  createUser: (data: any) => User
+  updateUser: (id: string, data: any) => User
+  deleteUser: (id: string) => void
+  sendEmail: (to: string, content: string) => void // Mixed responsibilities
+}
+
+// ✅ Correct
+export interface IUserComponent extends IBaseComponent {
+  getUser: (id: string) => Promise<User>
+  createUser: (data: CreateUserData) => Promise<User>
+  updateUser: (id: string, data: UpdateUserData) => Promise<User>
+  deleteUser: (id: string) => Promise<void>
+}
+```
+
+### 2. Component Factory Pattern
+
+**MUST** (required)
+
+- Use async factory functions with `create*Component` naming convention
+- Accept dependencies through `Pick<AppComponents, 'dependency1' | 'dependency2'>` parameter
+- Return objects implementing the component interface
+- Handle component initialization and dependency injection properly
+
+```typescript
+// ❌ Incorrect
+export function createUserComponent(db: any, logger: any): IUserComponent {
+  return {
+    getUser: (id) => db.query('SELECT * FROM users WHERE id = ?', [id])
+  }
+}
+
+// ✅ Correct
+export async function createUserComponent(
+  components: Pick<AppComponents, 'database' | 'logger'>
+): Promise<IUserComponent> {
+  const { database, logger } = components
+  
+  return {
+    async getUser(id: string): Promise<User> {
+      logger.info('Fetching user', { userId: id })
+      return await database.query('SELECT * FROM users WHERE id = $1', [id])
+    }
+  }
+}
+```
+
+### 3. Component Lifecycle Management
+
+**MUST** (required)
+
+- Implement `START_COMPONENT` and `STOP_COMPONENT` symbols for stateful components
+- Use proper async initialization patterns
+- Handle cleanup and resource disposal in stop functions
+- Ensure graceful shutdown capabilities
+
+```typescript
+// ❌ Incorrect
+export async function createJobComponent(components: Pick<AppComponents, 'config'>): Promise<IJobComponent> {
+  const jobs = setInterval(() => {
+    // Job logic
+  }, 5000)
+  
+  return {
+    scheduleJob: (job) => { /* implementation */ }
+  }
+}
+
+// ✅ Correct
+export async function createJobComponent(components: Pick<AppComponents, 'config'>): Promise<IJobComponent> {
+  const { config } = components
+  let intervalId: NodeJS.Timer | undefined
+  
+  const start = async () => {
+    intervalId = setInterval(() => {
+      // Job logic
+    }, config.getNumber('JOB_INTERVAL', 5000))
+  }
+  
+  const stop = async () => {
+    if (intervalId) {
+      clearInterval(intervalId)
+      intervalId = undefined
+    }
+  }
+  
+  return {
+    [START_COMPONENT]: start,
+    [STOP_COMPONENT]: stop,
+    scheduleJob: (job) => { /* implementation */ }
+  }
+}
+```
+
+### 4. Component Organization
+
+**MUST** (required)
+
+- Follow the WKC architecture pattern with clear separation of concerns
+- Organize components by their responsibilities in the appropriate directories
+
+**Directory Structure:**
+
+- **`src/adapters/`** - External service integrations (databases, APIs, third-party services)
+  - PostgreSQL, Redis, S3, SNS, Catalyst clients
+  - Email services, CDN cache invalidation
+  - Any component that communicates with external systems
+
+- **`src/logic/`** - Business logic components (domain-specific functionality)
+  - User management, communities, friendships
+  - Job scheduling, notifications, voice chat
+  - Any component that implements business rules
+
+- **`src/controllers/`** - Request/response handling (presentation layer)
+  - HTTP handlers, RPC handlers, WebSocket handlers
+  - Route definitions, middleware
+  - Input validation and response formatting
+
+- **`src/types/`** - Shared type definitions
+  - Component interfaces in `components.ts`
+  - System-wide types in `system.ts`
+  - Handler-specific types
+
+**Component File Organization:**
+- Place component interfaces in `types/components.ts` or `logic/component/types.ts`
+- Use `components.ts` for main component initialization and dependency wiring
+- Create `logic/component/component.ts` (with index.ts) or `logic/component.ts` for component implementation
+- Include `logic/component/index.ts` to export the component and types
+
+```typescript
+// ❌ Incorrect - Mixed concerns in single file
+// src/userStuff.ts
+export interface IUserComponent { /* ... */ }
+export interface IEmailComponent { /* ... */ }
+export async function createUserComponent() { /* ... */ }
+export async function createEmailComponent() { /* ... */ }
+
+// ✅ Correct - Separated concerns
+// src/types/components.ts
+export interface IUserComponent extends IBaseComponent { /* ... */ }
+export interface IEmailComponent extends IBaseComponent { /* ... */ }
+
+// src/logic/user/user.ts
+export async function createUserComponent() { /* ... */ }
+
+// src/logic/user/index.ts
+export { createUserComponent } from './user'
+
+// src/adapters/email.ts
+export async function createEmailComponent() { /* ... */ }
+```
+
+### 5. Dependency Injection
+
+**MUST** (required)
+
+- Use `Pick<AppComponents, 'dependency1' | 'dependency2'>` for explicit dependency declaration
+- Destructure dependencies at the beginning of factory functions
+- Avoid circular dependencies between components
+- Pass only necessary dependencies to each component
+
+```typescript
+// ❌ Incorrect
+export async function createUserComponent(components: AppComponents): Promise<IUserComponent> {
+  // Uses all components, unclear dependencies
+  return {
+    getUser: (id) => components.database.query(/* ... */)
+  }
+}
+
+// ✅ Correct
+export async function createUserComponent(
+  components: Pick<AppComponents, 'database' | 'logs' | 'metrics'>
+): Promise<IUserComponent> {
+  const { database, logs, metrics } = components
+  const logger = logs.getLogger('user-component')
+  
+  return {
+    async getUser(id: string): Promise<User> {
+      const timer = metrics.startTimer('user_get_duration')
+      try {
+        logger.debug('Fetching user', { userId: id })
+        const user = await database.query('SELECT * FROM users WHERE id = $1', [id])
+        return user
+      } finally {
+        timer()
+      }
+    }
+  }
+}
+```
+
+### 6. Error Handling
+
+**SHOULD** (recommended)
+
+- Use typed error classes for domain-specific errors
+- Implement proper error logging and tracing
+- Handle component initialization failures gracefully
+- Provide meaningful error messages
+
+```typescript
+// ❌ Incorrect
+export async function createUserComponent(components: Pick<AppComponents, 'database'>): Promise<IUserComponent> {
+  return {
+    async getUser(id: string): Promise<User> {
+      const user = await components.database.query('SELECT * FROM users WHERE id = $1', [id])
+      if (!user) {
+        throw new Error('User not found')
+      }
+      return user
+    }
+  }
+}
+
+// ✅ Correct
+export async function createUserComponent(
+  components: Pick<AppComponents, 'database' | 'logs'>
+): Promise<IUserComponent> {
+  const { database, logs } = components
+  const logger = logs.getLogger('user-component')
+  
+  return {
+    async getUser(id: string): Promise<User> {
+      try {
+        const user = await database.query('SELECT * FROM users WHERE id = $1', [id])
+        if (!user) {
+          throw new UserNotFoundError(`User with id ${id} not found`)
+        }
+        return user
+      } catch (error) {
+        logger.error('Error fetching user', { userId: id, error })
+        throw error
+      }
+    }
+  }
+}
+```
+
+
+## Examples
+
+### Complete Component Implementation
+
+```typescript
+// types/components.ts
+export interface IUserComponent extends IBaseComponent {
+  getUser: (id: string) => Promise<User>
+  createUser: (data: CreateUserData) => Promise<User>
+  updateUser: (id: string, data: UpdateUserData) => Promise<User>
+  deleteUser: (id: string) => Promise<void>
+}
+
+// src/logic/user/user.ts
+import { IBaseComponent, START_COMPONENT, STOP_COMPONENT } from '@well-known-components/interfaces'
+import { IUserComponent } from './types'
+import { UserNotFoundError } from './errors'
+
+export async function createUserComponent(
+  components: Pick<AppComponents, 'database' | 'logs' | 'metrics'>
+): Promise<IUserComponent> {
+  const { database, logs, metrics } = components
+  const logger = logs.getLogger('user-component')
+  
+  return {
+    async getUser(id: string): Promise<User> {
+      const timer = metrics.startTimer('user_get_duration')
+      try {
+        logger.debug('Fetching user', { userId: id })
+        const user = await database.query('SELECT * FROM users WHERE id = $1', [id])
+        if (!user) {
+          throw new UserNotFoundError(`User with id ${id} not found`)
+        }
+        return user
+      } finally {
+        timer()
+      }
+    },
+    
+    async createUser(data: CreateUserData): Promise<User> {
+      logger.info('Creating user', { email: data.email })
+      const user = await database.query(
+        'INSERT INTO users (email, name) VALUES ($1, $2) RETURNING *',
+        [data.email, data.name]
+      )
+      return user
+    },
+    
+    async updateUser(id: string, data: UpdateUserData): Promise<User> {
+      logger.info('Updating user', { userId: id })
+      const user = await database.query(
+        'UPDATE users SET name = $1 WHERE id = $2 RETURNING *',
+        [data.name, id]
+      )
+      if (!user) {
+        throw new UserNotFoundError(`User with id ${id} not found`)
+      }
+      return user
+    },
+    
+    async deleteUser(id: string): Promise<void> {
+      logger.info('Deleting user', { userId: id })
+      await database.query('DELETE FROM users WHERE id = $1', [id])
+    }
+  }
+}
+
+// src/logic/user/index.ts
+export { createUserComponent } from './user'
+export type { IUserComponent } from './types'
+```
+
+## Validation Checklist
+
+Before submitting a WKC component, ensure each rule has clear MUST and SHOULD sections with specific code examples showing both incorrect (❌) and correct (✅) patterns. Rules must be specific and actionable while scope clearly defines file patterns. Description is concise and descriptive with glob patterns are appropriate for the established format and structure. Content is comprehensive and well-organized with examples relevant and demonstrate best practices. Rules are independent and don't share state, prefer specific outcomes over generic ones. Context is properly defined and not repeated with each section has appropriate setup and cleanup:
+
+- [ ] Component extends `IBaseComponent` interface
+- [ ] Factory function follows `create*Component` naming convention
+- [ ] Dependencies are explicitly declared using `Pick<AppComponents, ...>`
+- [ ] Component implements proper async patterns
+- [ ] Error handling includes logging and typed errors
+- [ ] Lifecycle methods (`START_COMPONENT`, `STOP_COMPONENT`) are implemented when needed
+- [ ] Component is organized in appropriate directory (`adapters/` or `logic/`)
+- [ ] Interface is defined in `types/components.ts`
+- [ ] Component has focused, single responsibility
+- [ ] Dependencies are minimal and non-circular
+- [ ] Resource cleanup is handled in stop methods
+- [ ] Metrics and logging are properly integrated
+- [ ] TypeScript types are comprehensive and accurate
+- [ ] Component follows WKC philosophy of decoupling business logic from technology decisions
+
+**Purpose**: This checklist ensures that all WKC components follow Decentraland's established patterns for dependency injection, lifecycle management, and clean architecture principles while maintaining maintainability.
