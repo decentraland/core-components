@@ -1,7 +1,7 @@
 import { IConfigComponent } from '@well-known-components/interfaces'
 import { createConfigMockedComponent } from '@dcl/core-commons'
 import { createSnsComponent } from '../src/component'
-import { IPublisherComponent } from '../src/types'
+import { CustomMessageAttributes, IPublisherComponent } from '../src/types'
 
 // Mock the AWS SDK
 jest.mock('@aws-sdk/client-sns', () => ({
@@ -71,6 +71,27 @@ describe('when publishing a single message', () => {
       expect(result.MessageId).toEqual('msg-123')
       expect(sendMock).toHaveBeenCalledTimes(1)
     })
+
+    it('should publish with only default message attributes', async () => {
+      await component.publishMessage(event)
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            MessageAttributes: {
+              type: {
+                DataType: 'String',
+                StringValue: 'user_login'
+              },
+              subType: {
+                DataType: 'String',
+                StringValue: 'web'
+              }
+            }
+          })
+        })
+      )
+    })
   })
 
   describe('and the publish fails', () => {
@@ -106,6 +127,31 @@ describe('when publishing messages', () => {
       expect(result.successfulMessageIds).toEqual(['msg-123'])
       expect(result.failedEvents).toEqual([])
       expect(sendMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('should publish with only default message attributes', async () => {
+      await component.publishMessages([event])
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: [
+              expect.objectContaining({
+                MessageAttributes: {
+                  type: {
+                    DataType: 'String',
+                    StringValue: 'user_login'
+                  },
+                  subType: {
+                    DataType: 'String',
+                    StringValue: 'web'
+                  }
+                }
+              })
+            ]
+          })
+        })
+      )
     })
   })
 
@@ -187,6 +233,379 @@ describe('when publishing messages', () => {
       expect(result.successfulMessageIds).toEqual([])
       expect(result.failedEvents).toEqual([])
       expect(sendMock).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('when publishing a single message with custom MessageAttributes', () => {
+  let event: any
+  let customAttributes: CustomMessageAttributes
+
+  beforeEach(() => {
+    event = {
+      type: 'user_login',
+      subType: 'web',
+      userId: '123',
+      timestamp: new Date().toISOString()
+    }
+    customAttributes = {
+      correlationId: {
+        DataType: 'String',
+        StringValue: 'abc-123-def'
+      },
+      priority: {
+        DataType: 'String',
+        StringValue: 'high'
+      }
+    }
+  })
+
+  afterEach(() => {
+    sendMock.mockClear()
+  })
+
+  describe('and the publish succeeds', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValue({
+        MessageId: 'msg-123'
+      })
+    })
+
+    it('should publish the message with custom attributes', async () => {
+      const result = await component.publishMessage(event, customAttributes)
+
+      expect(result.MessageId).toEqual('msg-123')
+      expect(sendMock).toHaveBeenCalledTimes(1)
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            MessageAttributes: {
+              type: {
+                DataType: 'String',
+                StringValue: 'user_login'
+              },
+              subType: {
+                DataType: 'String',
+                StringValue: 'web'
+              },
+              correlationId: {
+                DataType: 'String',
+                StringValue: 'abc-123-def'
+              },
+              priority: {
+                DataType: 'String',
+                StringValue: 'high'
+              }
+            }
+          })
+        })
+      )
+    })
+  })
+
+  describe('and custom attributes attempt to override reserved attributes', () => {
+    describe('and type attribute is included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          type: {
+            DataType: 'String',
+            StringValue: 'malicious_type'
+          }
+        }
+      })
+
+      it('should throw an error indicating type cannot be overridden', async () => {
+        await expect(component.publishMessage(event, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes: type'
+        )
+      })
+    })
+
+    describe('and subType attribute is included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          subType: {
+            DataType: 'String',
+            StringValue: 'malicious_subtype'
+          }
+        }
+      })
+
+      it('should throw an error indicating subType cannot be overridden', async () => {
+        await expect(component.publishMessage(event, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes: subType'
+        )
+      })
+    })
+
+    describe('and both type and subType attributes are included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          type: {
+            DataType: 'String',
+            StringValue: 'malicious_type'
+          },
+          subType: {
+            DataType: 'String',
+            StringValue: 'malicious_subtype'
+          }
+        }
+      })
+
+      it('should throw an error indicating both cannot be overridden', async () => {
+        await expect(component.publishMessage(event, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes'
+        )
+      })
+    })
+  })
+})
+
+describe('when publishing multiple messages with custom MessageAttributes', () => {
+  let events: any[]
+  let customAttributes: CustomMessageAttributes
+
+  beforeEach(() => {
+    customAttributes = {
+      environment: {
+        DataType: 'String',
+        StringValue: 'production'
+      },
+      version: {
+        DataType: 'String',
+        StringValue: 'v2.0.0'
+      }
+    }
+  })
+
+  afterEach(() => {
+    sendMock.mockClear()
+  })
+
+  describe('and there are less than 10 messages to be published', () => {
+    beforeEach(() => {
+      events = [
+        { type: 'user_login', subType: 'web', userId: '123' },
+        { type: 'user_logout', subType: 'mobile', userId: '456' }
+      ]
+      sendMock.mockResolvedValue({
+        Successful: [{ MessageId: 'msg-1' }, { MessageId: 'msg-2' }],
+        Failed: []
+      })
+    })
+
+    it('should include custom attributes in all batch entries', async () => {
+      await component.publishMessages(events, customAttributes)
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: [
+              expect.objectContaining({
+                MessageAttributes: {
+                  type: {
+                    DataType: 'String',
+                    StringValue: 'user_login'
+                  },
+                  subType: {
+                    DataType: 'String',
+                    StringValue: 'web'
+                  },
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                }
+              }),
+              expect.objectContaining({
+                MessageAttributes: {
+                  type: {
+                    DataType: 'String',
+                    StringValue: 'user_logout'
+                  },
+                  subType: {
+                    DataType: 'String',
+                    StringValue: 'mobile'
+                  },
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                }
+              })
+            ]
+          })
+        })
+      )
+    })
+  })
+
+  describe('and there are more than 10 messages to be published', () => {
+    beforeEach(() => {
+      events = Array.from({ length: 25 }, (_, i) => ({
+        type: 'test_event',
+        subType: 'batch',
+        index: i
+      }))
+      sendMock.mockResolvedValue({
+        Successful: Array.from({ length: 10 }, (_, i) => ({ MessageId: `msg-${i}` })),
+        Failed: []
+      })
+    })
+
+    it('should apply custom attributes to all batches', async () => {
+      await component.publishMessages(events, customAttributes)
+
+      // Should be called 3 times (10 + 10 + 5 messages)
+      expect(sendMock).toHaveBeenCalledTimes(3)
+
+      // Check each batch call has custom attributes
+      expect(sendMock).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: expect.arrayContaining([
+              expect.objectContaining({
+                MessageAttributes: expect.objectContaining({
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                })
+              })
+            ])
+          })
+        })
+      )
+
+      expect(sendMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: expect.arrayContaining([
+              expect.objectContaining({
+                MessageAttributes: expect.objectContaining({
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                })
+              })
+            ])
+          })
+        })
+      )
+
+      expect(sendMock).toHaveBeenNthCalledWith(
+        3,
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: expect.arrayContaining([
+              expect.objectContaining({
+                MessageAttributes: expect.objectContaining({
+                  environment: {
+                    DataType: 'String',
+                    StringValue: 'production'
+                  },
+                  version: {
+                    DataType: 'String',
+                    StringValue: 'v2.0.0'
+                  }
+                })
+              })
+            ])
+          })
+        })
+      )
+    })
+  })
+
+  describe('and custom attributes attempt to override reserved attributes', () => {
+    beforeEach(() => {
+      events = [{ type: 'user_login', subType: 'web', userId: '123' }]
+    })
+
+    describe('and type attribute is included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          type: {
+            DataType: 'String',
+            StringValue: 'malicious_type'
+          }
+        }
+      })
+
+      it('should throw an error indicating type cannot be overridden', async () => {
+        await expect(component.publishMessages(events, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes: type'
+        )
+      })
+    })
+
+    describe('and subType attribute is included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          subType: {
+            DataType: 'String',
+            StringValue: 'malicious_subtype'
+          }
+        }
+      })
+
+      it('should throw an error indicating subType cannot be overridden', async () => {
+        await expect(component.publishMessages(events, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes: subType'
+        )
+      })
+    })
+
+    describe('and both type and subType attributes are included', () => {
+      let invalidAttributes: CustomMessageAttributes
+
+      beforeEach(() => {
+        invalidAttributes = {
+          type: {
+            DataType: 'String',
+            StringValue: 'malicious_type'
+          },
+          subType: {
+            DataType: 'String',
+            StringValue: 'malicious_subtype'
+          }
+        }
+      })
+
+      it('should throw an error indicating both cannot be overridden', async () => {
+        await expect(component.publishMessages(events, invalidAttributes)).rejects.toThrow(
+          'Cannot override reserved message attributes'
+        )
+      })
     })
   })
 })

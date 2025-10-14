@@ -1,7 +1,7 @@
 import { PublishBatchCommand, PublishCommand, SNSClient, PublishCommandOutput } from '@aws-sdk/client-sns'
 import { IConfigComponent } from '@well-known-components/interfaces'
 
-import { IPublisherComponent } from './types'
+import { IPublisherComponent, CustomMessageAttributes } from './types'
 
 function chunk<T>(theArray: T[], size: number): T[][] {
   return theArray.reduce((acc: T[][], _, i) => {
@@ -10,6 +10,21 @@ function chunk<T>(theArray: T[], size: number): T[][] {
     }
     return acc
   }, [])
+}
+
+function validateCustomAttributes(customMessageAttributes?: CustomMessageAttributes): void {
+  if (!customMessageAttributes) {
+    return
+  }
+
+  const reservedKeys = ['type', 'subType']
+  const invalidKeys = Object.keys(customMessageAttributes).filter((key) => reservedKeys.includes(key))
+
+  if (invalidKeys.length > 0) {
+    throw new Error(
+      `Cannot override reserved message attributes: ${invalidKeys.join(', ')}. These attributes are automatically set from the event object.`
+    )
+  }
 }
 
 export async function createSnsComponent({ config }: { config: IConfigComponent }): Promise<IPublisherComponent> {
@@ -22,11 +37,16 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
     endpoint: optionalEndpoint ? optionalEndpoint : undefined
   })
 
-  async function publishMessage(event: {
-    type: string
-    subType?: string
-    [key: string]: any
-  }): Promise<PublishCommandOutput> {
+  async function publishMessage(
+    event: {
+      type: string
+      subType?: string
+      [key: string]: any
+    },
+    customMessageAttributes?: CustomMessageAttributes
+  ): Promise<PublishCommandOutput> {
+    validateCustomAttributes(customMessageAttributes)
+
     const command = new PublishCommand({
       TopicArn: snsArn,
       Message: JSON.stringify(event),
@@ -38,16 +58,22 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
         subType: {
           DataType: 'String',
           StringValue: event.subType
-        }
+        },
+        ...customMessageAttributes
       }
     })
     return client.send(command)
   }
 
-  async function publishMessages(events: Array<{ type: string; subType?: string; [key: string]: any }>): Promise<{
+  async function publishMessages(
+    events: Array<{ type: string; subType?: string; [key: string]: any }>,
+    customMessageAttributes?: CustomMessageAttributes
+  ): Promise<{
     successfulMessageIds: string[]
     failedEvents: Array<{ type: string; subType?: string; [key: string]: any }>
   }> {
+    validateCustomAttributes(customMessageAttributes)
+
     // split events into batches of 10
     const batches = chunk(events, MAX_BATCH_SIZE)
 
@@ -64,7 +90,8 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
             subType: {
               DataType: 'String',
               StringValue: event.subType || 'unknown'
-            }
+            },
+            ...customMessageAttributes
           }
         }
       })
