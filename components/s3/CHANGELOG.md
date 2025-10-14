@@ -1,5 +1,11 @@
 # @dcl/s3-component
 
+## 1.0.1
+
+### Patch Changes
+
+- 4bb9940: Trigger package publishing
+
 ## 1.0.0
 
 ### Major Changes
