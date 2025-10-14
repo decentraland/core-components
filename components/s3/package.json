@@ -1,6 +1,6 @@
 {
   "name": "@dcl/s3-component",
-  "version": "2.1.0",
+  "version": "0.0.1",
   "description": "AWS S3 component for core components library",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",

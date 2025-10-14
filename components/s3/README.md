@@ -56,7 +56,3 @@ The component requires the following environment variables:
 - Check object existence (single or multiple objects)
 - Parallel execution for multiple object checks
 - Support for local testing with LocalStack/MinIO
-
-## License
-
-MIT

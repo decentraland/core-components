@@ -36,10 +36,10 @@ export interface IS3Component {
    * @returns Promise resolving to object metadata or null if not found.
    */
   getObjectMetadata(key: string): Promise<{
-    ContentLength?: number
-    ContentType?: string
-    LastModified?: Date
-    ETag?: string
+    contentLength?: number
+    contentType?: string
+    lastModified?: Date
+    eTag?: string
   } | null>
 
   /**
