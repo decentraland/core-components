@@ -2,6 +2,7 @@ import { IConfigComponent } from '@well-known-components/interfaces'
 import { createConfigMockedComponent } from '@dcl/core-commons'
 import { createS3Component } from '../src/component'
 import { IS3Component } from '../src/types'
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
 
 // Mock the AWS SDK
 jest.mock('@aws-sdk/client-s3', () => {
@@ -155,11 +156,10 @@ describe('when downloading objects', () => {
       await component.downloadObject(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 
@@ -179,11 +179,10 @@ describe('when downloading objects', () => {
       await component.downloadObject(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 
@@ -205,10 +204,10 @@ describe('when downloading objects', () => {
 
       expect(sendMock).toHaveBeenCalledTimes(1)
       const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 
@@ -225,11 +224,10 @@ describe('when downloading objects', () => {
       await expect(component.downloadObject(key)).rejects.toThrow()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new DeleteObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 })
@@ -250,11 +248,10 @@ describe('when deleting objects', () => {
       await component.deleteObject(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new DeleteObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 
@@ -271,11 +268,10 @@ describe('when deleting objects', () => {
       await expect(component.deleteObject(key)).rejects.toThrow()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 })
@@ -298,12 +294,11 @@ describe('when listing objects', () => {
       await component.listObjects()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
         Bucket: bucketName,
         Prefix: undefined,
         MaxKeys: 1000
-      })
+      }))
     })
   })
 
@@ -324,12 +319,11 @@ describe('when listing objects', () => {
       await component.listObjects('test/')
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
         Bucket: bucketName,
         Prefix: 'test/',
         MaxKeys: 1000
-      })
+      }))
     })
   })
 
@@ -350,12 +344,11 @@ describe('when listing objects', () => {
       await component.listObjects('test/', 10)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
         Bucket: bucketName,
         Prefix: 'test/',
         MaxKeys: 10
-      })
+      }))
     })
   })
 
@@ -376,12 +369,11 @@ describe('when listing objects', () => {
       await component.listObjects()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
         Bucket: bucketName,
         Prefix: undefined,
         MaxKeys: 1000
-      })
+      }))
     })
   })
 
@@ -400,12 +392,11 @@ describe('when listing objects', () => {
       await component.listObjects()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
         Bucket: bucketName,
         Prefix: undefined,
         MaxKeys: 1000
-      })
+      }))
     })
   })
 })
@@ -445,11 +436,10 @@ describe('when getting object metadata', () => {
       await component.getObjectMetadata(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 
@@ -469,11 +459,10 @@ describe('when getting object metadata', () => {
       await component.getObjectMetadata(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 
@@ -490,11 +479,10 @@ describe('when getting object metadata', () => {
       await expect(component.getObjectMetadata(key)).rejects.toThrow()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 })
@@ -544,11 +532,10 @@ describe('when checking if object exists', () => {
       await component.objectExists(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
+      expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
         Bucket: bucketName,
         Key: key
-      })
+      }))
     })
   })
 })
@@ -622,11 +609,10 @@ describe('when checking if multiple objects exist', () => {
 
       expect(sendMock).toHaveBeenCalledTimes(3)
       keys.forEach((key, index) => {
-        const command = sendMock.mock.calls[index][0]
-        expect(command.input).toEqual({
+        expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
           Bucket: bucketName,
           Key: key
-        })
+        }))
       })
     })
   })
@@ -652,11 +638,10 @@ describe('when checking if multiple objects exist', () => {
 
       expect(sendMock).toHaveBeenCalledTimes(3)
       keys.forEach((key, index) => {
-        const command = sendMock.mock.calls[index][0]
-        expect(command.input).toEqual({
+        expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
           Bucket: bucketName,
           Key: key
-        })
+        }))
       })
     })
   })
