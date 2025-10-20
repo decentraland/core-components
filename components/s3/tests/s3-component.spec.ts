@@ -2,33 +2,16 @@ import { IConfigComponent } from '@well-known-components/interfaces'
 import { createConfigMockedComponent } from '@dcl/core-commons'
 import { createS3Component } from '../src/component'
 import { IS3Component } from '../src/types'
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+} from '@aws-sdk/client-s3'
+import { setupS3Mocks, setMockS3Client } from './mocks'
 
 // Mock the AWS SDK
-jest.mock('@aws-sdk/client-s3', () => {
-  const createMockCommand = (params: any) => ({ input: params })
-
-  return {
-    S3Client: jest.fn(),
-    PutObjectCommand: jest.fn().mockImplementation(createMockCommand),
-    GetObjectCommand: jest.fn().mockImplementation(createMockCommand),
-    DeleteObjectCommand: jest.fn().mockImplementation(createMockCommand),
-    ListObjectsV2Command: jest.fn().mockImplementation(createMockCommand),
-    HeadObjectCommand: jest.fn().mockImplementation(createMockCommand),
-    NoSuchKey: class NoSuchKey extends Error {
-      constructor(message?: string) {
-        super(message)
-        this.name = 'NoSuchKey'
-      }
-    },
-    NotFound: class NotFound extends Error {
-      constructor(message?: string) {
-        super(message)
-        this.name = 'NotFound'
-      }
-    }
-  }
-})
+jest.mock('@aws-sdk/client-s3')
 
 let config: IConfigComponent
 let component: IS3Component
@@ -36,6 +19,11 @@ let mockS3Client: any
 let sendMock: jest.Mock
 let bucketName: string
 let s3Endpoint: string
+
+beforeAll(() => {
+  // Setup S3 mocks once for all tests
+  setupS3Mocks()
+})
 
 beforeEach(async () => {
   bucketName = 'test-bucket'
@@ -46,16 +34,8 @@ beforeEach(async () => {
     send: sendMock
   }
 
-  const { S3Client } = require('@aws-sdk/client-s3')
-  S3Client.mockImplementation(() => mockS3Client)
-  
-  // Reset the command mocks to ensure they return the correct structure
-  const { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, HeadObjectCommand } = require('@aws-sdk/client-s3')
-  PutObjectCommand.mockImplementation((params: any) => ({ input: params }))
-  GetObjectCommand.mockImplementation((params: any) => ({ input: params }))
-  DeleteObjectCommand.mockImplementation((params: any) => ({ input: params }))
-  ListObjectsV2Command.mockImplementation((params: any) => ({ input: params }))
-  HeadObjectCommand.mockImplementation((params: any) => ({ input: params }))
+  // Update S3Client mock to use our new mock client
+  setMockS3Client(mockS3Client)
 
   config = createConfigMockedComponent({
     requireString: jest.fn().mockImplementation((key: string) => {
@@ -82,7 +62,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
-  jest.resetAllMocks()
+  jest.clearAllMocks()
 })
 
 describe('when uploading objects', () => {
@@ -101,10 +81,6 @@ describe('when uploading objects', () => {
       sendMock.mockResolvedValueOnce({
         ETag: '"abc123"'
       })
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should return ETag from S3', async () => {
@@ -131,10 +107,6 @@ describe('when uploading objects', () => {
   describe('and the upload fails', () => {
     beforeEach(() => {
       sendMock.mockRejectedValueOnce(new Error('S3 upload failed'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should throw error with failure message', async () => {
@@ -174,10 +146,6 @@ describe('when downloading objects as string', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return object content as string', async () => {
       const result = await component.downloadObjectAsString(key)
 
@@ -188,21 +156,20 @@ describe('when downloading objects as string', () => {
       await component.downloadObjectAsString(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 
   describe('and the object does not exist', () => {
     beforeEach(() => {
-      const { NoSuchKey } = require('@aws-sdk/client-s3')
-      sendMock.mockRejectedValueOnce(new NoSuchKey('The specified key does not exist'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
+      const error = new Error('The specified key does not exist')
+      error.name = 'NoSuchKey'
+      sendMock.mockRejectedValueOnce(error)
     })
 
     it('should return null', async () => {
@@ -215,10 +182,12 @@ describe('when downloading objects as string', () => {
       await component.downloadObjectAsString(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 
@@ -229,10 +198,6 @@ describe('when downloading objects as string', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return null', async () => {
       const result = await component.downloadObjectAsString(key)
 
@@ -243,20 +208,18 @@ describe('when downloading objects as string', () => {
       await component.downloadObjectAsString(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 
   describe('and there is an S3 error', () => {
     beforeEach(() => {
       sendMock.mockRejectedValueOnce(new Error('S3 connection error'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should throw error with failure message', async () => {
@@ -267,10 +230,12 @@ describe('when downloading objects as string', () => {
       await expect(component.downloadObjectAsString(key)).rejects.toThrow()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 })
@@ -287,43 +252,69 @@ describe('when downloading objects as JSON', () => {
   })
 
   describe('and the object exists', () => {
-    beforeEach(() => {
-      sendMock.mockResolvedValueOnce({
-        Body: {
-          transformToString: jest.fn().mockResolvedValue(jsonContent)
-        }
+    describe('and the object is valid JSON', () => {
+      beforeEach(() => {
+        sendMock.mockResolvedValueOnce({
+          Body: {
+            transformToString: jest.fn().mockResolvedValue(jsonContent)
+          }
+        })
+      })
+
+      it('should return parsed JSON object', async () => {
+        const result = await component.downloadObjectAsJson(key)
+
+        expect(result).toEqual(parsedJson)
+      })
+
+      it('should send GetObjectCommand with correct bucket and key', async () => {
+        await component.downloadObjectAsJson(key)
+
+        expect(sendMock).toHaveBeenCalledTimes(1)
+        expect(sendMock).toHaveBeenCalledWith(
+          new GetObjectCommand({
+            Bucket: bucketName,
+            Key: key
+          })
+        )
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
+    describe('and the object is not valid JSON', () => {
+      let invalidJsonContent: string
 
-    it('should return parsed JSON object', async () => {
-      const result = await component.downloadObjectAsJson(key)
+      beforeEach(() => {
+        invalidJsonContent = '{"name": "test", "value": 42, "incomplete": }' // Invalid JSON - incomplete value
+        sendMock.mockResolvedValueOnce({
+          Body: {
+            transformToString: jest.fn().mockResolvedValue(invalidJsonContent)
+          }
+        })
+      })
 
-      expect(result).toEqual(parsedJson)
-    })
+      it('should throw error with JSON parsing failure message', async () => {
+        await expect(component.downloadObjectAsJson(key)).rejects.toThrow()
+      })
 
-    it('should send GetObjectCommand with correct bucket and key', async () => {
-      await component.downloadObjectAsJson(key)
+      it('should send GetObjectCommand with correct bucket and key before failing', async () => {
+        await expect(component.downloadObjectAsJson(key)).rejects.toThrow()
 
-      expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+        expect(sendMock).toHaveBeenCalledTimes(1)
+        expect(sendMock).toHaveBeenCalledWith(
+          new GetObjectCommand({
+            Bucket: bucketName,
+            Key: key
+          })
+        )
+      })
     })
   })
 
   describe('and the object does not exist', () => {
     beforeEach(() => {
-      const { NoSuchKey } = require('@aws-sdk/client-s3')
-      sendMock.mockRejectedValueOnce(new NoSuchKey('The specified key does not exist'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
+      const error = new Error('The specified key does not exist')
+      error.name = 'NoSuchKey'
+      sendMock.mockRejectedValueOnce(error)
     })
 
     it('should return null', async () => {
@@ -352,10 +343,6 @@ describe('when downloading objects as buffer', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return object content as Buffer', async () => {
       const result = await component.downloadObjectAsBuffer(key)
 
@@ -366,21 +353,20 @@ describe('when downloading objects as buffer', () => {
       await component.downloadObjectAsBuffer(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 
   describe('and the object does not exist', () => {
     beforeEach(() => {
-      const { NoSuchKey } = require('@aws-sdk/client-s3')
-      sendMock.mockRejectedValueOnce(new NoSuchKey('The specified key does not exist'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
+      const error = new Error('The specified key does not exist')
+      error.name = 'NoSuchKey'
+      sendMock.mockRejectedValueOnce(error)
     })
 
     it('should return null', async () => {
@@ -412,10 +398,6 @@ describe('when downloading objects as stream', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return object content as stream', async () => {
       const result = await component.downloadObjectAsStream(key)
 
@@ -426,10 +408,12 @@ describe('when downloading objects as stream', () => {
       await component.downloadObjectAsStream(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 
@@ -445,30 +429,25 @@ describe('when downloading objects as stream', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should send GetObjectCommand with correct range header', async () => {
       await component.downloadObjectAsStream(key, start, end)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key,
-        Range: 'bytes=0-1023'
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key,
+          Range: 'bytes=0-1023'
+        })
+      )
     })
   })
 
   describe('and the object does not exist', () => {
     beforeEach(() => {
-      const { NoSuchKey } = require('@aws-sdk/client-s3')
-      sendMock.mockRejectedValueOnce(new NoSuchKey('The specified key does not exist'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
+      const error = new Error('The specified key does not exist')
+      error.name = 'NoSuchKey'
+      sendMock.mockRejectedValueOnce(error)
     })
 
     it('should return null', async () => {
@@ -491,10 +470,6 @@ describe('when deleting objects', () => {
       sendMock.mockResolvedValueOnce({})
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should complete without throwing', async () => {
       await expect(component.deleteObject(key)).resolves.not.toThrow()
     })
@@ -503,20 +478,18 @@ describe('when deleting objects', () => {
       await component.deleteObject(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new DeleteObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new DeleteObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 
   describe('and the delete fails', () => {
     beforeEach(() => {
       sendMock.mockRejectedValueOnce(new Error('S3 delete failed'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should throw error with failure message', async () => {
@@ -527,10 +500,12 @@ describe('when deleting objects', () => {
       await expect(component.deleteObject(key)).rejects.toThrow()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new DeleteObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new DeleteObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 })
@@ -546,10 +521,6 @@ describe('when listing objects', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return array of all object keys', async () => {
       const result = await component.listObjects()
 
@@ -560,11 +531,13 @@ describe('when listing objects', () => {
       await component.listObjects()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
-        Bucket: bucketName,
-        Prefix: undefined,
-        MaxKeys: 1000
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: undefined,
+          MaxKeys: 1000
+        })
+      )
     })
   })
 
@@ -580,10 +553,6 @@ describe('when listing objects', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return array of keys matching prefix', async () => {
       const result = await component.listObjects(prefix)
 
@@ -594,11 +563,13 @@ describe('when listing objects', () => {
       await component.listObjects(prefix)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
-        Bucket: bucketName,
-        Prefix: prefix,
-        MaxKeys: 1000
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: prefix,
+          MaxKeys: 1000
+        })
+      )
     })
   })
 
@@ -616,10 +587,6 @@ describe('when listing objects', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return array limited by max keys parameter', async () => {
       const result = await component.listObjects(prefix, maxKeys)
 
@@ -630,11 +597,13 @@ describe('when listing objects', () => {
       await component.listObjects(prefix, maxKeys)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
-        Bucket: bucketName,
-        Prefix: prefix,
-        MaxKeys: maxKeys
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: prefix,
+          MaxKeys: maxKeys
+        })
+      )
     })
   })
 
@@ -645,10 +614,6 @@ describe('when listing objects', () => {
       })
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return empty array', async () => {
       const result = await component.listObjects()
 
@@ -659,11 +624,13 @@ describe('when listing objects', () => {
       await component.listObjects()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
-        Bucket: bucketName,
-        Prefix: undefined,
-        MaxKeys: 1000
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: undefined,
+          MaxKeys: 1000
+        })
+      )
     })
   })
 
@@ -672,10 +639,6 @@ describe('when listing objects', () => {
       sendMock.mockResolvedValueOnce({})
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return empty array', async () => {
       const result = await component.listObjects()
 
@@ -686,11 +649,13 @@ describe('when listing objects', () => {
       await component.listObjects()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new ListObjectsV2Command({
-        Bucket: bucketName,
-        Prefix: undefined,
-        MaxKeys: 1000
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: undefined,
+          MaxKeys: 1000
+        })
+      )
     })
   })
 })
@@ -721,10 +686,6 @@ describe('when getting object metadata', () => {
       sendMock.mockResolvedValueOnce(s3Metadata)
     })
 
-    afterEach(() => {
-      jest.resetAllMocks()
-    })
-
     it('should return metadata with content length, type, date, and ETag', async () => {
       const result = await component.getObjectMetadata(key)
 
@@ -735,21 +696,20 @@ describe('when getting object metadata', () => {
       await component.getObjectMetadata(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new HeadObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 
   describe('and the object does not exist', () => {
     beforeEach(() => {
-      const { NotFound } = require('@aws-sdk/client-s3')
-      sendMock.mockRejectedValueOnce(new NotFound('Not Found'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
+      const error = new Error('Not Found')
+      error.name = 'NotFound'
+      sendMock.mockRejectedValueOnce(error)
     })
 
     it('should return null', async () => {
@@ -762,20 +722,18 @@ describe('when getting object metadata', () => {
       await component.getObjectMetadata(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new HeadObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 
   describe('and there is an S3 error', () => {
     beforeEach(() => {
       sendMock.mockRejectedValueOnce(new Error('S3 connection error'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should throw error with failure message', async () => {
@@ -786,10 +744,12 @@ describe('when getting object metadata', () => {
       await expect(component.getObjectMetadata(key)).rejects.toThrow()
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new HeadObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 })
@@ -807,10 +767,6 @@ describe('when checking if object exists', () => {
         ContentLength: 1024,
         ContentType: 'text/plain'
       })
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should return true', async () => {
@@ -833,12 +789,9 @@ describe('when checking if object exists', () => {
 
   describe('and the object does not exist', () => {
     beforeEach(() => {
-      const { NotFound } = require('@aws-sdk/client-s3')
-      sendMock.mockRejectedValueOnce(new NotFound('Not Found'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
+      const error = new Error('Not Found')
+      error.name = 'NotFound'
+      sendMock.mockRejectedValueOnce(error)
     })
 
     it('should return false', async () => {
@@ -851,10 +804,12 @@ describe('when checking if object exists', () => {
       await component.objectExists(key)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
-        Bucket: bucketName,
-        Key: key
-      }))
+      expect(sendMock).toHaveBeenCalledWith(
+        new HeadObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        })
+      )
     })
   })
 })
@@ -872,10 +827,6 @@ describe('when checking if multiple objects exist', () => {
         ContentLength: 1024,
         ContentType: 'text/plain'
       })
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should return all keys with true values', async () => {
@@ -904,7 +855,6 @@ describe('when checking if multiple objects exist', () => {
 
   describe('and some objects exist', () => {
     beforeEach(() => {
-      const { NotFound } = require('@aws-sdk/client-s3')
       sendMock.mockImplementation((command: any) => {
         const key = command.input.Key
         if (key === 'test/file1.txt' || key === 'test/file3.txt') {
@@ -913,12 +863,10 @@ describe('when checking if multiple objects exist', () => {
             ContentType: 'text/plain'
           })
         }
-        return Promise.reject(new NotFound('Not Found'))
+        const error = new Error('Not Found')
+        error.name = 'NotFound'
+        return Promise.reject(error)
       })
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should return mixed existence results', async () => {
@@ -936,22 +884,21 @@ describe('when checking if multiple objects exist', () => {
 
       expect(sendMock).toHaveBeenCalledTimes(3)
       keys.forEach((key, index) => {
-        expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
-          Bucket: bucketName,
-          Key: key
-        }))
+        expect(sendMock).toHaveBeenCalledWith(
+          new HeadObjectCommand({
+            Bucket: bucketName,
+            Key: key
+          })
+        )
       })
     })
   })
 
   describe('and no objects exist', () => {
     beforeEach(() => {
-      const { NotFound } = require('@aws-sdk/client-s3')
-      sendMock.mockRejectedValue(new NotFound('Not Found'))
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
+      const error = new Error('Not Found')
+      error.name = 'NotFound'
+      sendMock.mockRejectedValue(error)
     })
 
     it('should return all keys with false values', async () => {
@@ -969,10 +916,12 @@ describe('when checking if multiple objects exist', () => {
 
       expect(sendMock).toHaveBeenCalledTimes(3)
       keys.forEach((key, index) => {
-        expect(sendMock).toHaveBeenCalledWith(new HeadObjectCommand({
-          Bucket: bucketName,
-          Key: key
-        }))
+        expect(sendMock).toHaveBeenCalledWith(
+          new HeadObjectCommand({
+            Bucket: bucketName,
+            Key: key
+          })
+        )
       })
     })
   })
@@ -980,10 +929,6 @@ describe('when checking if multiple objects exist', () => {
   describe('and empty array is provided', () => {
     beforeEach(() => {
       keys = []
-    })
-
-    afterEach(() => {
-      jest.resetAllMocks()
     })
 
     it('should return empty object', async () => {
