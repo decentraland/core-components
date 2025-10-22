@@ -9,11 +9,40 @@ export interface IS3Component {
   uploadObject(key: string, body: string | Buffer, contentType?: string): Promise<{ ETag?: string }>
 
   /**
-   * Downloads an object from S3.
+   * Downloads an object from S3 as a string.
+   * Best for: JSON, text files, small content
+   * WARNING: Loads entire file into memory
    * @param key - The key (path) of the object to download.
    * @returns Promise resolving to the object content as a string, or null if not found.
    */
-  downloadObject(key: string): Promise<string | null>
+  downloadObjectAsString(key: string): Promise<string | null>
+
+  /**
+   * Downloads and parses a JSON object from S3.
+   * Best for: JSON configuration files, small JSON data
+   * @param key - The key (path) of the JSON object to download.
+   * @returns Promise resolving to the parsed JSON object, or null if not found.
+   */
+  downloadObjectAsJson<T = any>(key: string): Promise<T | null>
+
+  /**
+   * Downloads an object from S3 as a Buffer.
+   * Best for: Images, PDFs, binary files, medium-sized content
+   * WARNING: Loads entire file into memory
+   * @param key - The key (path) of the object to download.
+   * @returns Promise resolving to the object content as a Buffer, or null if not found.
+   */
+  downloadObjectAsBuffer(key: string): Promise<Buffer | null>
+
+  /**
+   * Downloads an object from S3 as a stream.
+   * Best for: Large files, memory-constrained environments, processing data incrementally
+   * @param key - The key (path) of the object to download.
+   * @param start - Optional start byte position for partial downloads.
+   * @param end - Optional end byte position for partial downloads.
+   * @returns Promise resolving to an AsyncIterable<Uint8Array> stream, or null if not found.
+   */
+  downloadObjectAsStream(key: string, start?: number, end?: number): Promise<AsyncIterable<Uint8Array> | null>
 
   /**
    * Deletes an object from S3.

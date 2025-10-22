@@ -75,7 +75,7 @@ export async function createS3Component({ config }: { config: IConfigComponent }
     return { ETag: response.ETag }
   }
 
-  async function downloadObject(key: string): Promise<string | null> {
+  async function downloadObjectAsString(key: string): Promise<string | null> {
     try {
       const command = new GetObjectCommand({
         Bucket: bucketName,
@@ -88,9 +88,81 @@ export async function createS3Component({ config }: { config: IConfigComponent }
         return null
       }
 
-      // Convert stream to string
       const bodyContents = await response.Body.transformToString()
       return bodyContents
+    } catch (error: unknown) {
+      if (isNotFoundError(error)) {
+        return null
+      }
+      throw error
+    }
+  }
+
+  async function downloadObjectAsJson<T = any>(key: string): Promise<T | null> {
+    try {
+      const command = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key
+      })
+
+      const response = await client.send(command)
+
+      if (!response.Body) {
+        return null
+      }
+
+      const bodyContents = await response.Body.transformToString()
+      return JSON.parse(bodyContents) as T
+    } catch (error: unknown) {
+      if (isNotFoundError(error)) {
+        return null
+      }
+      throw error
+    }
+  }
+
+  async function downloadObjectAsBuffer(key: string): Promise<Buffer | null> {
+    try {
+      const command = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key
+      })
+
+      const response = await client.send(command)
+
+      if (!response.Body) {
+        return null
+      }
+
+      const bodyContents = await response.Body.transformToByteArray()
+      return Buffer.from(bodyContents)
+    } catch (error: unknown) {
+      if (isNotFoundError(error)) {
+        return null
+      }
+      throw error
+    }
+  }
+
+  async function downloadObjectAsStream(
+    key: string, 
+    start?: number, 
+    end?: number
+  ): Promise<AsyncIterable<Uint8Array> | null> {
+    try {
+      const command = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+        Range: start !== undefined && end !== undefined ? `bytes=${start}-${end}` : undefined
+      })
+
+      const response = await client.send(command)
+
+      if (!response.Body) {
+        return null
+      }
+
+      return response.Body as AsyncIterable<Uint8Array>
     } catch (error: unknown) {
       if (isNotFoundError(error)) {
         return null
@@ -167,7 +239,10 @@ export async function createS3Component({ config }: { config: IConfigComponent }
 
   return {
     uploadObject,
-    downloadObject,
+    downloadObjectAsString,
+    downloadObjectAsJson,
+    downloadObjectAsBuffer,
+    downloadObjectAsStream,
     deleteObject,
     listObjects,
     getObjectMetadata,
