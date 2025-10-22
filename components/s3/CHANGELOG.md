@@ -1,5 +1,11 @@
 # @dcl/s3-component
 
+## 2.0.0
+
+### Major Changes
+
+- 4966be9: Support to download different types of objects and streaming them
+
 ## 1.0.1
 
 ### Patch Changes
