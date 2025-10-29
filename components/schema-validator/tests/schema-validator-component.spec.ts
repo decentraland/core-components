@@ -157,3 +157,85 @@ describe('when validating a request that has a valid schema that matches the JSO
     expect(next).toHaveBeenCalled()
   })
 })
+
+describe('when the option to check the Content-Type header is set to false', () => {
+  let middlewareWithoutContentTypeCheck: ReturnType<
+    ReturnType<typeof createSchemaValidatorComponent>['withSchemaValidatorMiddleware']
+  >
+
+  beforeEach(() => {
+    middlewareWithoutContentTypeCheck = createSchemaValidatorComponent({
+      checkContentType: false
+    }).withSchemaValidatorMiddleware({
+      type: 'object',
+      properties: {
+        aTestProp: {
+          type: 'string'
+        }
+      },
+      required: ['aTestProp']
+    })
+  })
+
+  describe('and the Content-Type header is set to a value other than application/json', () => {
+    it('should skip the Content-Type header validation and proceed to validate the JSON body', async () => {
+      const next = jest.fn()
+
+      await expect(
+        middlewareWithoutContentTypeCheck(
+          {
+            params: {},
+            request: {
+              clone: jest.fn().mockReturnValue({
+                json: () => ({ aTestProp: 'someValue' })
+              }),
+              headers: {
+                get: jest.fn().mockImplementationOnce((header) => {
+                  if (header === 'Content-Type') {
+                    return 'text/plain' // Not application/json
+                  }
+                  throw new Error('Error')
+                })
+              } as unknown as Headers
+            } as unknown as IHttpServerComponent.IRequest,
+            url: {} as URL
+          },
+          next
+        )
+      )
+
+      expect(next).toHaveBeenCalled()
+    })
+  })
+
+  describe('and the Content-Type header is not set', () => {
+    it('should skip the Content-Type header validation and proceed to validate the JSON body', async () => {
+      const next = jest.fn()
+
+      await expect(
+        middlewareWithoutContentTypeCheck(
+          {
+            params: {},
+            request: {
+              clone: jest.fn().mockReturnValue({
+                json: () => ({ aTestProp: 'someValue' })
+              }),
+              headers: {
+                get: jest.fn().mockImplementationOnce((header) => {
+                  if (header === 'Content-Type') {
+                    return null
+                  }
+                  throw new Error('Error')
+                })
+              } as unknown as Headers
+            } as unknown as IHttpServerComponent.IRequest,
+            url: {} as URL
+          },
+          next
+        )
+      )
+
+      expect(next).toHaveBeenCalled()
+    })
+  })
+})
