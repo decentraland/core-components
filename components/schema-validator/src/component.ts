@@ -5,9 +5,9 @@ import { IHttpServerComponent } from '@well-known-components/interfaces'
 import { ISchemaValidatorComponent, Validation } from './types'
 
 export function createSchemaValidatorComponent<T extends Object>(options?: {
-  checkContentType?: boolean
+  ensureJsonContentType?: boolean
 }): ISchemaValidatorComponent<T> {
-  const { checkContentType = true } = options ?? {}
+  const { ensureJsonContentType = true } = options ?? {}
 
   const ajv = new Ajv({ removeAdditional: true })
   addFormats(ajv)
@@ -38,7 +38,7 @@ export function createSchemaValidatorComponent<T extends Object>(options?: {
     addSchema(schema, schemaId)
 
     return async (context, next): Promise<IHttpServerComponent.IResponse> => {
-      if (checkContentType && context.request.headers.get('Content-Type') !== 'application/json') {
+      if (ensureJsonContentType && context.request.headers.get('Content-Type') !== 'application/json') {
         return {
           status: 400,
           body: {

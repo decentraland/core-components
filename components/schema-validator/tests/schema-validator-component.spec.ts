@@ -165,7 +165,7 @@ describe('when the option to check the Content-Type header is set to false', () 
 
   beforeEach(() => {
     middlewareWithoutContentTypeCheck = createSchemaValidatorComponent({
-      checkContentType: false
+      ensureJsonContentType: false
     }).withSchemaValidatorMiddleware({
       type: 'object',
       properties: {
