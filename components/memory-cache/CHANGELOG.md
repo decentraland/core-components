@@ -1,5 +1,11 @@
 # @dcl/memory-cache-component
 
+## 2.2.1
+
+### Patch Changes
+
+- 8faea85: Updates the LRU cache dependency
+
 ## 2.2.0
 
 ### Minor Changes
