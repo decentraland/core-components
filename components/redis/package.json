@@ -15,9 +15,9 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
-    "redis": "^4.7.0",
     "@dcl/core-commons": "workspace:*",
-    "@well-known-components/interfaces": "^1.5.1"
+    "@well-known-components/interfaces": "^1.5.1",
+    "redis": "^4.7.1"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
