@@ -15,15 +15,17 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
-    "lru-cache": "10.4",
     "@dcl/core-commons": "workspace:*",
-    "@well-known-components/interfaces": "^1.5.1"
+    "@well-known-components/interfaces": "^1.5.1",
+    "lru-cache": "~11.2.2"
   },
   "devDependencies": {
-    "@types/lru-cache": "^7.10.10",
     "typescript": "^5.8.3"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }
