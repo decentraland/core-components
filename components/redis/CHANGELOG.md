@@ -1,5 +1,11 @@
 # @dcl/redis-component
 
+## 2.2.1
+
+### Patch Changes
+
+- f5470e3: Update redis version
+
 ## 2.2.0
 
 ### Minor Changes

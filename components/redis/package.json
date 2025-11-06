@@ -1,6 +1,6 @@
 {
   "name": "@dcl/redis-component",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Redis cache component for core components library",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
