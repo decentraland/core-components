@@ -67,7 +67,6 @@ export async function createRedisComponent(
     try {
       const serializedValue = JSON.stringify(value)
       await client.set(key.toLowerCase(), serializedValue, { EX: ttlInSeconds as number | undefined })
-      logger.debug(`Successfully set key "${key}"`)
     } catch (err: any) {
       logger.error(`Error setting key "${key}"`, err)
       throw err
@@ -159,7 +158,6 @@ export async function createRedisComponent(
   async function remove(key: string): Promise<void> {
     try {
       await client.del(key.toLowerCase())
-      logger.debug(`Successfully removed key "${key}"`)
     } catch (err: any) {
       logger.error(`Error removing key "${key}"`, err)
       throw err
