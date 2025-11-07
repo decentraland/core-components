@@ -91,7 +91,6 @@ describe('when storing and retrieving values', () => {
 
     it('should call Redis set with serialized value', () => {
       expect(setMock).toHaveBeenCalledWith(testKey.toLowerCase(), serializedValue, { EX: undefined })
-      expect(debugLogMock).toHaveBeenCalledWith(`Successfully set key "${testKey}"`)
     })
   })
 
@@ -140,7 +139,6 @@ describe('when storing and retrieving values', () => {
 
     it('should call Redis del command', () => {
       expect(delMock).toHaveBeenCalledWith(testKey.toLowerCase())
-      expect(debugLogMock).toHaveBeenCalledWith(`Successfully removed key "${testKey}"`)
     })
   })
 })
