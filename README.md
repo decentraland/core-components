@@ -9,35 +9,43 @@ This repository is organized as a monorepo using pnpm workspaces with the follow
 ```
 core-components/
 ├── components/          # Reusable components
-│   ├── analytics/      # Analytics component for event tracking
-│   ├── job/           # Job scheduling and execution component
-│   ├── memory-cache/  # In-memory LRU cache component
-│   ├── redis/         # Redis cache component
-│   ├── s3/            # AWS S3 storage component
-│   ├── slack/         # Slack messaging component
-│   ├── sns/           # AWS SNS publisher component
-│   └── sqs/           # AWS SQS queue component
+│   ├── analytics/        # Analytics component for event tracking
+│   ├── job/              # Job scheduling and execution component
+│   ├── memory-cache/     # In-memory LRU cache component
+│   ├── redis/            # Redis cache component
+│   ├── s3/               # AWS S3 storage component
+│   ├── schema-validator/ # JSON schema validation component
+│   ├── slack/            # Slack messaging component
+│   ├── sns/              # AWS SNS publisher component
+│   ├── sqs/              # AWS SQS queue component
+│   └── traced-fetch/     # Traced fetch component with distributed tracing
 └── shared/             # Shared utilities and types
-    └── commons/       # Common utilities, types, and constants
+    └── commons/          # Common utilities, types, and constants
 ```
 
 ## 🚀 Components
 
 ### Communication & Messaging
+
 - **Analytics Component** (`@dcl/analytics-component`) - Event tracking and analytics integration
 - **Slack Component** (`@dcl/slack-component`) - Slack messaging and notifications
 - **SNS Component** (`@dcl/sns-component`) - AWS SNS message publishing
 
 ### Queue & Cache
+
 - **SQS Component** (`@dcl/sqs-component`) - AWS SQS queue management
 - **Redis Component** (`@dcl/redis-component`) - Redis distributed caching
 - **Memory Cache Component** (`@dcl/memory-cache-component`) - In-memory LRU caching
 
 ### Storage
+
 - **S3 Component** (`@dcl/s3-component`) - AWS S3 object storage operations
 
 ### Utilities
+
 - **Job Component** (`@dcl/job-component`) - Job scheduling and execution
+- **Schema Validator Component** (`@dcl/schema-validator-component`) - JSON schema validation middleware
+- **Traced Fetch Component** (`@dcl/traced-fetch-component`) - HTTP requests with distributed tracing
 - **Core Commons** (`@dcl/core-commons`) - Shared utilities, types, and constants
 
 ## 🛠️ Development
@@ -119,9 +127,11 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/memory-cache-component`
 - `@dcl/redis-component`
 - `@dcl/s3-component`
+- `@dcl/schema-validator-component`
 - `@dcl/slack-component`
 - `@dcl/sns-component`
 - `@dcl/sqs-component`
+- `@dcl/traced-fetch-component`
 - `@dcl/core-commons`
 
 ### Publishing Workflow
