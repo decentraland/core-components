@@ -42,7 +42,7 @@ export async function createRedisComponent(
     try {
       logger.debug('Disconnecting from Redis')
       if (client) {
-        await client.quit()
+        await client.close()
       }
       logger.debug('Successfully disconnected from Redis')
     } catch (err: any) {
@@ -67,7 +67,6 @@ export async function createRedisComponent(
     try {
       const serializedValue = JSON.stringify(value)
       await client.set(key.toLowerCase(), serializedValue, { EX: ttlInSeconds as number | undefined })
-      logger.debug(`Successfully set key "${key}"`)
     } catch (err: any) {
       logger.error(`Error setting key "${key}"`, err)
       throw err
@@ -159,7 +158,6 @@ export async function createRedisComponent(
   async function remove(key: string): Promise<void> {
     try {
       await client.del(key.toLowerCase())
-      logger.debug(`Successfully removed key "${key}"`)
     } catch (err: any) {
       logger.error(`Error removing key "${key}"`, err)
       throw err
@@ -169,7 +167,7 @@ export async function createRedisComponent(
   async function keys(pattern: string = '*'): Promise<string[]> {
     try {
       const allKeys: string[] = []
-      let cursor = 0
+      let cursor = '0'
 
       do {
         const reply = await client.scan(cursor, {
@@ -178,7 +176,7 @@ export async function createRedisComponent(
         })
         cursor = reply.cursor
         allKeys.push(...reply.keys)
-      } while (cursor !== 0)
+      } while (cursor !== '0')
 
       return allKeys
     } catch (err: any) {

@@ -17,7 +17,7 @@
   "dependencies": {
     "@dcl/core-commons": "workspace:*",
     "@well-known-components/interfaces": "^1.5.1",
-    "redis": "^4.7.1"
+    "redis": "^5.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

@@ -91,7 +91,6 @@ describe('when storing and retrieving values', () => {
 
     it('should call Redis set with serialized value', () => {
       expect(setMock).toHaveBeenCalledWith(testKey.toLowerCase(), serializedValue, { EX: undefined })
-      expect(debugLogMock).toHaveBeenCalledWith(`Successfully set key "${testKey}"`)
     })
   })
 
@@ -140,7 +139,6 @@ describe('when storing and retrieving values', () => {
 
     it('should call Redis del command', () => {
       expect(delMock).toHaveBeenCalledWith(testKey.toLowerCase())
-      expect(debugLogMock).toHaveBeenCalledWith(`Successfully removed key "${testKey}"`)
     })
   })
 })
@@ -149,15 +147,15 @@ describe('when scanning keys', () => {
   describe('and scanning with default pattern', () => {
     beforeEach(() => {
       scanMock
-        .mockResolvedValueOnce({ cursor: 5, keys: ['key1', 'key2'] })
-        .mockResolvedValueOnce({ cursor: 0, keys: ['key3'] })
+        .mockResolvedValueOnce({ cursor: '5', keys: ['key1', 'key2'] })
+        .mockResolvedValueOnce({ cursor: '0', keys: ['key3'] })
     })
 
     it('should return all keys from multiple scan iterations', async () => {
       const keys = await component.keys()
 
-      expect(scanMock).toHaveBeenCalledWith(0, { MATCH: '*', COUNT: 100 })
-      expect(scanMock).toHaveBeenCalledWith(5, { MATCH: '*', COUNT: 100 })
+      expect(scanMock).toHaveBeenCalledWith('0', { MATCH: '*', COUNT: 100 })
+      expect(scanMock).toHaveBeenCalledWith('5', { MATCH: '*', COUNT: 100 })
       expect(keys).toEqual(['key1', 'key2', 'key3'])
     })
   })
@@ -166,13 +164,13 @@ describe('when scanning keys', () => {
     const pattern = 'user:*'
 
     beforeEach(() => {
-      scanMock.mockResolvedValue({ cursor: 0, keys: ['user:123', 'user:456'] })
+      scanMock.mockResolvedValue({ cursor: '0', keys: ['user:123', 'user:456'] })
     })
 
     it('should use the provided pattern', async () => {
       const keys = await component.keys(pattern)
 
-      expect(scanMock).toHaveBeenCalledWith(0, { MATCH: pattern, COUNT: 100 })
+      expect(scanMock).toHaveBeenCalledWith('0', { MATCH: pattern, COUNT: 100 })
       expect(keys).toEqual(['user:123', 'user:456'])
     })
   })
