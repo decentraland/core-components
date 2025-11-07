@@ -399,3 +399,81 @@ describe('when making requests with different URL types', () => {
     })
   })
 })
+
+describe('when providing a custom fetch component', () => {
+  let customFetchComponent: IFetchComponent
+  let customMockFetch: jest.MockedFunction<IFetchComponent['fetch']>
+  let customComponent: IFetchComponent
+
+  beforeEach(async () => {
+    // Create a custom fetch component mock
+    customMockFetch = jest.fn()
+    customFetchComponent = {
+      fetch: customMockFetch
+    }
+
+    // Reset tracer mocks
+    tracerComponent.isInsideOfTraceSpan.mockReturnValue(false)
+
+    // Create traced fetch component with custom fetch component
+    customComponent = await createTracedFetcherComponent({
+      tracer: tracerComponent,
+      fetchComponent: customFetchComponent
+    })
+  })
+
+  describe('and making a request', () => {
+    beforeEach(async () => {
+      const mockResponse = { ok: true, status: 200 }
+      customMockFetch.mockResolvedValue(mockResponse as any)
+      await customComponent.fetch('https://example.com', {
+        method: 'GET',
+        headers: { 'X-Custom': 'header' }
+      })
+    })
+
+    it('should use the provided fetch component instead of creating a new one', () => {
+      expect(customMockFetch).toHaveBeenCalledTimes(1)
+      expect(customMockFetch).toHaveBeenCalledWith('https://example.com', {
+        method: 'GET',
+        headers: { 'X-Custom': 'header' }
+      })
+    })
+
+    it('should not call the default createFetchComponent', () => {
+      // The mock from beforeEach at the top should not be called since we're bypassing it
+      expect(mockBaseFetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('and making a request inside a trace span', () => {
+    const traceParent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+    const traceState = 'congo=t61rcWkgMzE'
+
+    beforeEach(async () => {
+      tracerComponent.isInsideOfTraceSpan.mockReturnValue(true)
+      tracerComponent.getTraceChildString.mockReturnValue(traceParent)
+      tracerComponent.getTraceStateString.mockReturnValue(traceState)
+
+      const mockResponse = { ok: true, status: 200 }
+      customMockFetch.mockResolvedValue(mockResponse as any)
+      await customComponent.fetch('https://example.com', {
+        headers: { Authorization: 'Bearer token' }
+      })
+    })
+
+    it('should use the custom fetch component with trace headers added', () => {
+      expect(customMockFetch).toHaveBeenCalledWith('https://example.com', {
+        headers: {
+          Authorization: 'Bearer token',
+          traceparent: traceParent,
+          tracestate: traceState
+        }
+      })
+    })
+
+    it('should not call the default createFetchComponent', () => {
+      expect(mockBaseFetch).not.toHaveBeenCalled()
+    })
+  })
+})

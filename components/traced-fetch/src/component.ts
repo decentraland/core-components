@@ -18,10 +18,13 @@ function isHeadersLike(
   )
 }
 
-export async function createTracedFetcherComponent(components: { tracer: ITracerComponent }): Promise<IFetchComponent> {
-  const { tracer } = components
+export async function createTracedFetcherComponent(components: {
+  tracer: ITracerComponent
+  fetchComponent?: IFetchComponent
+}): Promise<IFetchComponent> {
+  const { tracer, fetchComponent: fetchComponentOverride } = components
 
-  const fetchComponent = createFetchComponent()
+  const fetchComponent = fetchComponentOverride ?? createFetchComponent()
 
   const fetch: IFetchComponent = {
     async fetch(
