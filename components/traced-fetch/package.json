@@ -1,0 +1,28 @@
+{
+  "name": "@dcl/traced-fetch-component",
+  "version": "0.0.1",
+  "description": "Traced fetch component for core components library",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/core-commons": "workspace:*",
+    "@well-known-components/fetch-component": "^3.0.0",
+    "@well-known-components/interfaces": "^1.5.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
