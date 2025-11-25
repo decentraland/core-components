@@ -17,7 +17,7 @@
   "dependencies": {
     "@dcl/core-commons": "workspace:*",
     "@well-known-components/fetch-component": "^3.0.0",
-    "@well-known-components/interfaces": "^1.5.1"
+    "@well-known-components/interfaces": "^1.5.2"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

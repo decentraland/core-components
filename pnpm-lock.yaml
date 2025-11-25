@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@well-known-components/interfaces':
-        specifier: ^1.5.2
-        version: 1.5.2
     devDependencies:
       '@changesets/cli':
         specifier: ^2.27.1
@@ -39,6 +35,9 @@ importers:
       '@dcl/core-commons':
         specifier: workspace:*
         version: link:../../shared/commons
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
     devDependencies:
       typescript:
         specifier: ^5.8.3
@@ -49,6 +48,9 @@ importers:
       '@dcl/core-commons':
         specifier: workspace:*
         version: link:../../shared/commons
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
     devDependencies:
       typescript:
         specifier: ^5.8.3
@@ -76,7 +78,7 @@ importers:
         specifier: workspace:*
         version: link:../../shared/commons
       '@well-known-components/interfaces':
-        specifier: ^1.5.1
+        specifier: ^1.5.2
         version: 1.5.2
       redis:
         specifier: ^5.9.0
@@ -97,6 +99,9 @@ importers:
       '@dcl/core-commons':
         specifier: workspace:*
         version: link:../../shared/commons
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
     devDependencies:
       typescript:
         specifier: ^5.8.3
@@ -107,6 +112,9 @@ importers:
       '@dcl/core-commons':
         specifier: workspace:*
         version: link:../../shared/commons
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
       ajv:
         specifier: ^8.17.1
         version: 8.17.1
@@ -129,6 +137,9 @@ importers:
       '@slack/webhook':
         specifier: ^6.0.0
         version: 6.1.0
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
     devDependencies:
       '@types/node':
         specifier: ^24.0.4
@@ -146,7 +157,7 @@ importers:
         specifier: workspace:*
         version: link:../../shared/commons
       '@well-known-components/interfaces':
-        specifier: ^1.5.1
+        specifier: ^1.5.2
         version: 1.5.2
     devDependencies:
       typescript:
@@ -162,7 +173,7 @@ importers:
         specifier: workspace:*
         version: link:../../shared/commons
       '@well-known-components/interfaces':
-        specifier: ^1.5.1
+        specifier: ^1.5.2
         version: 1.5.2
     devDependencies:
       typescript:
@@ -178,7 +189,7 @@ importers:
         specifier: ^3.0.0
         version: 3.0.0
       '@well-known-components/interfaces':
-        specifier: ^1.5.1
+        specifier: ^1.5.2
         version: 1.5.2
     devDependencies:
       typescript:
@@ -186,6 +197,10 @@ importers:
         version: 5.8.3
 
   shared/commons:
+    dependencies:
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
     devDependencies:
       typescript:
         specifier: ^5.8.3

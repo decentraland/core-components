@@ -18,5 +18,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@well-known-components/interfaces": "^1.5.2"
   }
 }

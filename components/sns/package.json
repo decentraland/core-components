@@ -17,7 +17,7 @@
   "dependencies": {
     "@aws-sdk/client-sns": "^3.782.0",
     "@dcl/core-commons": "workspace:*",
-    "@well-known-components/interfaces": "^1.5.1"
+    "@well-known-components/interfaces": "^1.5.2"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
