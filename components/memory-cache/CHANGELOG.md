@@ -1,5 +1,13 @@
 # @dcl/memory-cache-component
 
+## 2.2.2
+
+### Patch Changes
+
+- 4a6d070: Add the interfaces dependencies
+- Updated dependencies [4a6d070]
+  - @dcl/core-commons@0.5.1
+
 ## 2.2.1
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @dcl/sqs-component
 
+## 2.0.4
+
+### Patch Changes
+
+- 4a6d070: Add the interfaces dependencies
+- Updated dependencies [4a6d070]
+  - @dcl/core-commons@0.5.1
+
 ## 2.0.3
 
 ### Patch Changes

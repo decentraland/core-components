@@ -1,5 +1,11 @@
 # @dcl/core-commons
 
+## 0.5.1
+
+### Patch Changes
+
+- 4a6d070: Add the interfaces dependencies
+
 ## 0.5.0
 
 ### Minor Changes

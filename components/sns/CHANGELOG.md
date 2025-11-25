@@ -1,5 +1,13 @@
 # @dcl/sns-component
 
+## 3.0.1
+
+### Patch Changes
+
+- 4a6d070: Add the interfaces dependencies
+- Updated dependencies [4a6d070]
+  - @dcl/core-commons@0.5.1
+
 ## 3.0.0
 
 ### Major Changes

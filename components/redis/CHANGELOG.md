@@ -1,5 +1,17 @@
 # @dcl/redis-component
 
+## 3.0.0
+
+### Major Changes
+
+- e9ac70e: Use Redis latest version, which introduces a couple of breaking changes. These breaking changes should not affect the module's interface, but as a precaution, this release will be marked as major.
+
+### Patch Changes
+
+- 4a6d070: Add the interfaces dependencies
+- Updated dependencies [4a6d070]
+  - @dcl/core-commons@0.5.1
+
 ## 2.2.1
 
 ### Patch Changes

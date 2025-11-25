@@ -1,5 +1,13 @@
 # @dcl/slack-component
 
+## 1.0.5
+
+### Patch Changes
+
+- 4a6d070: Add the interfaces dependencies
+- Updated dependencies [4a6d070]
+  - @dcl/core-commons@0.5.1
+
 ## 1.0.4
 
 ### Patch Changes

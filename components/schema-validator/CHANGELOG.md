@@ -1,5 +1,13 @@
 # @dcl/schema-validator-component
 
+## 0.2.1
+
+### Patch Changes
+
+- 4a6d070: Add the interfaces dependencies
+- Updated dependencies [4a6d070]
+  - @dcl/core-commons@0.5.1
+
 ## 0.2.0
 
 ### Minor Changes
