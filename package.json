@@ -27,8 +27,5 @@
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
   },
-  "packageManager": "pnpm@10.12.3",
-  "dependencies": {
-    "@well-known-components/interfaces": "^1.5.2"
-  }
+  "packageManager": "pnpm@10.12.3"
 }
