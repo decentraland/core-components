@@ -373,15 +373,10 @@ describe('when acquiring locks', () => {
   })
 
   describe('and the lock cannot be acquired after all retries', () => {
-    let otherComponent: ICacheStorageComponent
-
     beforeEach(async () => {
-      otherComponent = createInMemoryCacheComponent()
-      await otherComponent.acquireLock(lockKey, { ttlInMilliseconds: 10000 })
-    })
-
-    afterEach(async () => {
-      await otherComponent[STOP_COMPONENT]?.()
+      // In in-memory cache, each instance has its own lock storage
+      // So we need to acquire the lock in the same instance to test retry behavior
+      await component.acquireLock(lockKey, { ttlInMilliseconds: 10000 })
     })
 
     it('should throw LockNotAcquiredError after exhausting retries', async () => {
@@ -409,27 +404,13 @@ describe('when releasing locks', () => {
   })
 
   describe('and the lock is not owned by this instance', () => {
-    let otherComponent: ICacheStorageComponent
-
-    beforeEach(async () => {
-      otherComponent = createInMemoryCacheComponent()
-      await otherComponent.acquireLock(lockKey)
-    })
-
-    afterEach(async () => {
-      await otherComponent[STOP_COMPONENT]?.()
-    })
-
-    it('should throw LockNotReleasedError', async () => {
-      await expect(component.releaseLock(lockKey)).rejects.toThrow(LockNotReleasedError)
-    })
-  })
-
-  describe('and there is an error during release', () => {
     it('should throw LockNotReleasedError when lock does not exist', async () => {
+      // In in-memory cache, each instance has its own lock storage
+      // So a lock that doesn't exist in this instance will throw an error
       await expect(component.releaseLock(lockKey)).rejects.toThrow(LockNotReleasedError)
     })
   })
+
 })
 
 describe('when trying to acquire locks', () => {
@@ -456,15 +437,10 @@ describe('when trying to acquire locks', () => {
   })
 
   describe('and the lock cannot be acquired', () => {
-    let otherComponent: ICacheStorageComponent
-
     beforeEach(async () => {
-      otherComponent = createInMemoryCacheComponent()
-      await otherComponent.acquireLock(lockKey, { ttlInMilliseconds: 10000 })
-    })
-
-    afterEach(async () => {
-      await otherComponent[STOP_COMPONENT]?.()
+      // In in-memory cache, each instance has its own lock storage
+      // So we need to acquire the lock in the same instance to test retry behavior
+      await component.acquireLock(lockKey, { ttlInMilliseconds: 10000 })
     })
 
     it('should return false after exhausting retries', async () => {
@@ -475,17 +451,18 @@ describe('when trying to acquire locks', () => {
   })
 
   describe('and there is an error', () => {
+    beforeEach(async () => {
+      // In in-memory cache, each instance has its own lock storage
+      // So we need to acquire the lock in the same instance to test retry behavior
+      await component.acquireLock(lockKey, { ttlInMilliseconds: 10000 })
+    })
+
     it('should return false when lock cannot be acquired', async () => {
       // This test verifies that tryAcquireLock doesn't throw
-      // even when the lock is held by another instance
-      const otherComponent = createInMemoryCacheComponent()
-      await otherComponent.acquireLock(lockKey, { ttlInMilliseconds: 10000 })
-
+      // even when the lock is held in the same instance
       const result = await component.tryAcquireLock(lockKey, { retries: 1 })
 
       expect(result).toBe(false)
-
-      await otherComponent[STOP_COMPONENT]?.()
     })
   })
 })
@@ -506,30 +483,14 @@ describe('when trying to release locks', () => {
   })
 
   describe('and the lock is not owned by this instance', () => {
-    let otherComponent: ICacheStorageComponent
-
-    beforeEach(async () => {
-      otherComponent = createInMemoryCacheComponent()
-      await otherComponent.acquireLock(lockKey)
-    })
-
-    afterEach(async () => {
-      await otherComponent[STOP_COMPONENT]?.()
-    })
-
-    it('should return false', async () => {
-      const result = await component.tryReleaseLock(lockKey)
-
-      expect(result).toBe(false)
-    })
-  })
-
-  describe('and there is an error', () => {
     it('should return false when lock does not exist', async () => {
+      // In in-memory cache, each instance has its own lock storage
+      // So a lock that doesn't exist in this instance will return false
       const result = await component.tryReleaseLock(lockKey)
 
       expect(result).toBe(false)
     })
   })
+
 })
 
