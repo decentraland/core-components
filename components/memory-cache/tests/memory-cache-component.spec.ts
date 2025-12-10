@@ -1,7 +1,7 @@
 import { createInMemoryCacheComponent } from '../src/component'
 import { ICacheStorageComponent, LockNotAcquiredError, LockNotReleasedError, sleep } from '@dcl/core-commons'
 
-let component: ICacheStorageComponent
+let component: Omit<ICacheStorageComponent, 'getByPattern'>
 
 beforeEach(() => {
   component = createInMemoryCacheComponent()

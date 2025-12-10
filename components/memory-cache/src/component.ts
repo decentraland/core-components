@@ -11,7 +11,7 @@ import {
   LockNotReleasedError
 } from '@dcl/core-commons'
 
-export function createInMemoryCacheComponent(): ICacheStorageComponent {
+export function createInMemoryCacheComponent(): Omit<ICacheStorageComponent, 'getByPattern'> {
   const cache = new LRUCache<string, any>({
     max: 10000,
     ttl: 1000 * 60 * 60 // 1 hour default TTL
@@ -19,7 +19,7 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
 
   const randomValue = randomUUID()
 
-  const component: ICacheStorageComponent = {
+  const component: Omit<ICacheStorageComponent, 'getByPattern'> = {
     async get<T>(key: string): Promise<T | null> {
       const value = cache.get(key)
       return value !== undefined ? (value as T) : null
