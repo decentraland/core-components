@@ -80,6 +80,9 @@ importers:
       '@well-known-components/interfaces':
         specifier: ^1.5.2
         version: 1.5.2
+      lru-cache:
+        specifier: ^11.0.1
+        version: 11.2.2
       redis:
         specifier: ^5.9.0
         version: 5.9.0
