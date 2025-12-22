@@ -85,6 +85,9 @@ importers:
       '@types/node':
         specifier: ^20.3.2
         version: 20.19.1
+      '@types/node-fetch':
+        specifier: ^2.6.12
+        version: 2.6.12
       '@types/on-finished':
         specifier: ^2.3.4
         version: 2.3.5
