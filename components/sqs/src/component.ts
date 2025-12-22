@@ -1,5 +1,7 @@
 import { IConfigComponent } from '@well-known-components/interfaces'
 import {
+  ChangeMessageVisibilityBatchCommand,
+  ChangeMessageVisibilityCommand,
   DeleteMessageBatchCommand,
   DeleteMessageCommand,
   GetQueueAttributesCommand,
@@ -9,7 +11,7 @@ import {
   SendMessageCommand
 } from '@aws-sdk/client-sqs'
 
-import { IQueueComponent } from './types'
+import { IQueueComponent, ReceiveMessagesOptions } from './types'
 
 // Helper function to chunk arrays for batch operations
 function chunks<T>(array: T[], size: number): T[][] {
@@ -39,14 +41,16 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
     await client.send(sendCommand)
   }
 
-  async function receiveMessages(amount: number = 1): Promise<Message[]> {
+  async function receiveMessages(amount: number = 1, options?: ReceiveMessagesOptions): Promise<Message[]> {
     const receiveCommand = new ReceiveMessageCommand({
       QueueUrl: queueUrl,
       MaxNumberOfMessages: amount,
-      VisibilityTimeout: 60, // 1 minute
-      WaitTimeSeconds: 20
+      VisibilityTimeout: options?.visibilityTimeout ?? 60,
+      WaitTimeSeconds: options?.waitTimeSeconds ?? 20
     })
-    const { Messages = [] } = await client.send(receiveCommand)
+    const { Messages = [] } = await client.send(receiveCommand, {
+      abortSignal: options?.abortSignal
+    })
 
     return Messages
   }
@@ -72,6 +76,32 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
         }))
       })
       await client.send(deleteCommand)
+    }
+  }
+
+  async function changeMessageVisibility(receiptHandle: string, visibilityTimeout: number): Promise<void> {
+    const command = new ChangeMessageVisibilityCommand({
+      QueueUrl: queueUrl,
+      ReceiptHandle: receiptHandle,
+      VisibilityTimeout: visibilityTimeout
+    })
+    await client.send(command)
+  }
+
+  async function changeMessagesVisibility(receiptHandles: string[], visibilityTimeout: number): Promise<void> {
+    const batchSize = 10
+    const batches = chunks(receiptHandles, batchSize)
+
+    for (const batch of batches) {
+      const command = new ChangeMessageVisibilityBatchCommand({
+        QueueUrl: queueUrl,
+        Entries: batch.map((receiptHandle, index) => ({
+          Id: `msg_${index}`,
+          ReceiptHandle: receiptHandle,
+          VisibilityTimeout: visibilityTimeout
+        }))
+      })
+      await client.send(command)
     }
   }
 
@@ -101,6 +131,8 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
     receiveMessages,
     deleteMessage,
     deleteMessages,
+    changeMessageVisibility,
+    changeMessagesVisibility,
     getStatus
   }
 }
