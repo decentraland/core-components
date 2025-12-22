@@ -332,6 +332,7 @@ describe('when changing visibility for multiple messages', () => {
 
     beforeEach(() => {
       sendMock.mockResolvedValue({})
+      ;(ChangeMessageVisibilityBatchCommand as unknown as jest.Mock).mockClear()
     })
 
     it('should split messages into multiple batches of 10', async () => {
