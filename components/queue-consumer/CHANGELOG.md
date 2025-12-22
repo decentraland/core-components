@@ -1,5 +1,11 @@
 # @dcl/queue-consumer-component
 
+## 1.0.0
+
+### Major Changes
+
+- f930fcd: Change exported function and type names
+
 ## 0.1.0
 
 ### Minor Changes
