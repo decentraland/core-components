@@ -16,7 +16,7 @@ import { createSqsComponent } from '@dcl/sqs-component'
 import { Events } from '@dcl/schemas'
 
 // Create the component with required dependencies
-const messagesHandler = createQueueConsumerComponent(
+const queueConsumer = createQueueConsumerComponent(
   { sqs, logs },
   { releaseVisibilityTimeoutSeconds: 0 } // Optional: configure shutdown behavior
 )
