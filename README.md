@@ -12,6 +12,7 @@ core-components/
 │   ├── analytics/        # Analytics component for event tracking
 │   ├── job/              # Job scheduling and execution component
 │   ├── memory-cache/     # In-memory LRU cache component
+│   ├── queue-consumer/   # Queue message consumer and handler component
 │   ├── redis/            # Redis cache component
 │   ├── s3/               # AWS S3 storage component
 │   ├── schema-validator/ # JSON schema validation component
@@ -34,6 +35,7 @@ core-components/
 ### Queue & Cache
 
 - **SQS Component** (`@dcl/sqs-component`) - AWS SQS queue management
+- **Queue Consumer Component** (`@dcl/queue-consumer-component`) - Event-based message consumer with handler routing
 - **Redis Component** (`@dcl/redis-component`) - Redis distributed caching
 - **Memory Cache Component** (`@dcl/memory-cache-component`) - In-memory LRU caching
 
@@ -125,6 +127,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/analytics-component`
 - `@dcl/job-component`
 - `@dcl/memory-cache-component`
+- `@dcl/queue-consumer-component`
 - `@dcl/redis-component`
 - `@dcl/s3-component`
 - `@dcl/schema-validator-component`
