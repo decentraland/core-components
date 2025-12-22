@@ -102,13 +102,13 @@ testWithServer('fetch suite', ({ components, stubComponents }) => {
       ;(name == 'node-fetch' ? it : xit)('/fails?connection=keep-alive', async () => {
         const res = await fetch(await components.getUrl('/fails?connection=keep-alive'), { timeout: 1000 })
         expect(res.status).toEqual(200)
-        await expect(res.arrayBuffer()).rejects.toThrowError()
+        await expect(res.arrayBuffer()).rejects.toThrow()
       })
 
       it('/fails?connection=close', async () => {
         const res = await fetch(await components.getUrl('/fails?connection=close'), { timeout: 1000 })
         expect(res.status).toEqual(200)
-        await expect(res.arrayBuffer()).rejects.toThrowError()
+        await expect(res.arrayBuffer()).rejects.toThrow()
       })
     })
   }
