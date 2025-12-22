@@ -76,6 +76,9 @@ importers:
         specifier: ^0.2.2
         version: 0.2.2
     devDependencies:
+      '@jest/test-sequencer':
+        specifier: ^30.0.2
+        version: 30.0.2
       '@types/busboy':
         specifier: ^1.5.4
         version: 1.5.4
@@ -112,6 +115,15 @@ importers:
       busboy:
         specifier: ^1.6.0
         version: 1.6.0
+      form-data:
+        specifier: ^4.0.0
+        version: 4.0.3
+      jest:
+        specifier: ^30.0.2
+        version: 30.0.2(@types/node@20.19.1)
+      ts-jest:
+        specifier: ^29.4.0
+        version: 29.4.0(@babel/core@7.27.4)(@jest/transform@30.0.2)(@jest/types@30.2.0)(babel-jest@30.0.2(@babel/core@7.27.4))(jest-util@30.2.0)(jest@30.0.2(@types/node@20.19.1))(typescript@5.8.3)
       typescript:
         specifier: ^5.8.2
         version: 5.8.3
@@ -8137,6 +8149,25 @@ snapshots:
       - supports-color
       - ts-node
 
+  jest-cli@30.0.2(@types/node@20.19.1):
+    dependencies:
+      '@jest/core': 30.0.2
+      '@jest/test-result': 30.0.2
+      '@jest/types': 30.0.1
+      chalk: 4.1.2
+      exit-x: 0.2.2
+      import-local: 3.2.0
+      jest-config: 30.0.2(@types/node@20.19.1)
+      jest-util: 30.0.2
+      jest-validate: 30.0.2
+      yargs: 17.7.2
+    transitivePeerDependencies:
+      - '@types/node'
+      - babel-plugin-macros
+      - esbuild-register
+      - supports-color
+      - ts-node
+
   jest-cli@30.0.2(@types/node@24.0.4):
     dependencies:
       '@jest/core': 30.0.2
@@ -8212,6 +8243,38 @@ snapshots:
       strip-json-comments: 3.1.1
     optionalDependencies:
       '@types/node': 24.0.4
+    transitivePeerDependencies:
+      - babel-plugin-macros
+      - supports-color
+
+  jest-config@30.0.2(@types/node@20.19.1):
+    dependencies:
+      '@babel/core': 7.27.4
+      '@jest/get-type': 30.0.1
+      '@jest/pattern': 30.0.1
+      '@jest/test-sequencer': 30.0.2
+      '@jest/types': 30.0.1
+      babel-jest: 30.0.2(@babel/core@7.27.4)
+      chalk: 4.1.2
+      ci-info: 4.2.0
+      deepmerge: 4.3.1
+      glob: 10.4.5
+      graceful-fs: 4.2.11
+      jest-circus: 30.0.2
+      jest-docblock: 30.0.1
+      jest-environment-node: 30.0.2
+      jest-regex-util: 30.0.1
+      jest-resolve: 30.0.2
+      jest-runner: 30.0.2
+      jest-util: 30.0.2
+      jest-validate: 30.0.2
+      micromatch: 4.0.8
+      parse-json: 5.2.0
+      pretty-format: 30.0.2
+      slash: 3.0.0
+      strip-json-comments: 3.1.1
+    optionalDependencies:
+      '@types/node': 20.19.1
     transitivePeerDependencies:
       - babel-plugin-macros
       - supports-color
@@ -8697,6 +8760,19 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
       - babel-plugin-macros
+      - supports-color
+      - ts-node
+
+  jest@30.0.2(@types/node@20.19.1):
+    dependencies:
+      '@jest/core': 30.0.2
+      '@jest/types': 30.0.1
+      import-local: 3.2.0
+      jest-cli: 30.0.2(@types/node@20.19.1)
+    transitivePeerDependencies:
+      - '@types/node'
+      - babel-plugin-macros
+      - esbuild-register
       - supports-color
       - ts-node
 
@@ -9239,6 +9315,26 @@ snapshots:
       ejs: 3.1.10
       fast-json-stable-stringify: 2.1.0
       jest: 29.7.0(@types/node@22.18.0)
+      json5: 2.2.3
+      lodash.memoize: 4.1.2
+      make-error: 1.3.6
+      semver: 7.7.2
+      type-fest: 4.41.0
+      typescript: 5.8.3
+      yargs-parser: 21.1.1
+    optionalDependencies:
+      '@babel/core': 7.27.4
+      '@jest/transform': 30.0.2
+      '@jest/types': 30.2.0
+      babel-jest: 30.0.2(@babel/core@7.27.4)
+      jest-util: 30.2.0
+
+  ts-jest@29.4.0(@babel/core@7.27.4)(@jest/transform@30.0.2)(@jest/types@30.2.0)(babel-jest@30.0.2(@babel/core@7.27.4))(jest-util@30.2.0)(jest@30.0.2(@types/node@20.19.1))(typescript@5.8.3):
+    dependencies:
+      bs-logger: 0.2.6
+      ejs: 3.1.10
+      fast-json-stable-stringify: 2.1.0
+      jest: 30.0.2(@types/node@20.19.1)
       json5: 2.2.3
       lodash.memoize: 4.1.2
       make-error: 1.3.6
