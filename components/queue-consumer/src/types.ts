@@ -6,7 +6,7 @@ export type MessageHandler<T extends Event = Event> = (message: T) => Promise<vo
 /**
  * Configuration options for the Messages Handler component
  */
-export interface MessagesHandlerOptions {
+export interface IQueueConsumerOptions {
   /**
    * Visibility timeout (in seconds) to set for remaining unprocessed messages when the component stops.
    * Setting this to 0 makes messages immediately available for other consumers.
@@ -15,7 +15,7 @@ export interface MessagesHandlerOptions {
   releaseVisibilityTimeoutSeconds?: number
 }
 
-export interface IMessagesHandlerComponent extends IBaseComponent {
+export interface IQueueConsumerComponent extends IBaseComponent {
   /**
    * Registers a handler for a specific event type and subType
    *

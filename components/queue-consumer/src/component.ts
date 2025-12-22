@@ -2,10 +2,10 @@ import { START_COMPONENT, STOP_COMPONENT, ILoggerComponent } from '@well-known-c
 import { isErrorWithMessage, sleep } from '@dcl/core-commons'
 import type { BaseEvent, Event } from '@dcl/schemas'
 import { IQueueComponent } from '@dcl/sqs-component'
-import type { IMessagesHandlerComponent, MessageHandler, MessagesHandlerOptions } from './types'
+import type { IQueueConsumerComponent, MessageHandler, IQueueConsumerOptions } from './types'
 
 /**
- * Creates the Messages Handler component
+ * Creates the Queue Consumer component
  *
  * Orchestrates message consumption from a queue and handler execution:
  * 1. Polls messages from the SQS queue
@@ -15,15 +15,15 @@ import type { IMessagesHandlerComponent, MessageHandler, MessagesHandlerOptions 
  *
  * @param components Required components: sqs, logs
  * @param options Optional configuration options
- * @returns IMessagesHandlerComponent implementation
+ * @returns IQueueConsumerComponent implementation
  */
-export const createMessagesHandlerComponent = (
+export const createQueueConsumerComponent = (
   components: {
     sqs: IQueueComponent
     logs: ILoggerComponent
   },
-  options?: MessagesHandlerOptions
-): IMessagesHandlerComponent => {
+  options?: IQueueConsumerOptions
+): IQueueConsumerComponent => {
   const { sqs, logs } = components
   const releaseVisibilityTimeoutSeconds = options?.releaseVisibilityTimeoutSeconds ?? 0
 
