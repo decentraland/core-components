@@ -1,2 +1,2 @@
-export { createMessagesHandlerComponent } from './component'
-export type { IMessagesHandlerComponent, MessageHandler, MessagesHandlerOptions } from './types'
+export { createQueueConsumerComponent } from './component'
+export type { IQueueConsumerComponent, MessageHandler, IQueueConsumerOptions } from './types'

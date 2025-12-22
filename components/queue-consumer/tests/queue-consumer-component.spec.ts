@@ -1,9 +1,11 @@
 import { START_COMPONENT, STOP_COMPONENT, ILoggerComponent, IBaseComponent } from '@well-known-components/interfaces'
 import { createLoggerMockedComponent } from '@dcl/core-commons'
 import { IQueueComponent } from '@dcl/sqs-component'
-import { createMessagesHandlerComponent } from '../src/component'
-import { IMessagesHandlerComponent, MessageHandler } from '../src/types'
-import { Events, type Event } from '@dcl/schemas'
+import { createQueueConsumerComponent } from '../src/component'
+import { IQueueConsumerComponent } from '../src/types'
+import { Events } from '@dcl/schemas'
+import { createMockSqsComponent } from './mocks/sqs-mock-component'
+import { TestEvent, createTestMessage, createSqsMessage } from './mocks/sqs-messages'
 
 const mockStartOptions: IBaseComponent.ComponentStartOptions = {
   started: () => true,
@@ -11,58 +13,10 @@ const mockStartOptions: IBaseComponent.ComponentStartOptions = {
   getComponents: () => ({})
 }
 
-type TestEvent = Event & {
-  type: Events.Type.CLIENT
-  subType: Events.SubType.Client.LOGGED_IN
-  metadata: {
-    userId: string
-  }
-}
-
-function createMockSqsComponent(overrides?: Partial<jest.Mocked<IQueueComponent>>): jest.Mocked<IQueueComponent> {
-  return {
-    sendMessage: overrides?.sendMessage ?? jest.fn<Promise<void>, [any]>().mockResolvedValue(undefined),
-    receiveMessages: overrides?.receiveMessages ?? jest.fn<Promise<any[]>, [number?, any?]>().mockResolvedValue([]),
-    deleteMessage: overrides?.deleteMessage ?? jest.fn<Promise<void>, [string]>().mockResolvedValue(undefined),
-    deleteMessages: overrides?.deleteMessages ?? jest.fn<Promise<void>, [string[]]>().mockResolvedValue(undefined),
-    changeMessageVisibility:
-      overrides?.changeMessageVisibility ?? jest.fn<Promise<void>, [string, number]>().mockResolvedValue(undefined),
-    changeMessagesVisibility:
-      overrides?.changeMessagesVisibility ?? jest.fn<Promise<void>, [string[], number]>().mockResolvedValue(undefined),
-    getStatus:
-      overrides?.getStatus ??
-      jest.fn<Promise<any>, []>().mockResolvedValue({
-        ApproximateNumberOfMessages: '0',
-        ApproximateNumberOfMessagesNotVisible: '0',
-        ApproximateNumberOfMessagesDelayed: '0'
-      })
-  }
-}
-
-function createTestMessage(overrides?: { data?: string }): TestEvent {
-  return {
-    type: Events.Type.CLIENT,
-    subType: Events.SubType.Client.LOGGED_IN,
-    key: 'test-key',
-    timestamp: Date.now(),
-    metadata: {
-      userId: overrides?.data ?? 'test-user-id'
-    }
-  } as TestEvent
-}
-
-function createSqsMessage(event: Event, receiptHandle: string = 'receipt-handle-1') {
-  return {
-    MessageId: `msg-${receiptHandle}`,
-    Body: JSON.stringify(event),
-    ReceiptHandle: receiptHandle
-  }
-}
-
 describe('when processing messages', () => {
   let sqs: jest.Mocked<IQueueComponent>
   let logs: jest.Mocked<ILoggerComponent>
-  let component: IMessagesHandlerComponent
+  let component: IQueueConsumerComponent
 
   describe('and a message matches a registered handler', () => {
     let handler: jest.Mock<Promise<void>, [TestEvent]>
@@ -87,7 +41,7 @@ describe('when processing messages', () => {
           .mockResolvedValue([])
       })
       logs = createLoggerMockedComponent()
-      component = createMessagesHandlerComponent({ sqs, logs })
+      component = createQueueConsumerComponent({ sqs, logs })
 
       component.addMessageHandler<TestEvent>(Events.Type.CLIENT, Events.SubType.Client.LOGGED_IN, handler)
       await component[START_COMPONENT]!(mockStartOptions)
@@ -146,7 +100,7 @@ describe('when processing messages', () => {
           .mockResolvedValue([])
       })
       logs = createLoggerMockedComponent()
-      component = createMessagesHandlerComponent({ sqs, logs })
+      component = createQueueConsumerComponent({ sqs, logs })
 
       component.addMessageHandler<TestEvent>(Events.Type.CLIENT, Events.SubType.Client.LOGGED_IN, handler1)
       component.addMessageHandler<TestEvent>(Events.Type.CLIENT, Events.SubType.Client.LOGGED_IN, handler2)
@@ -188,7 +142,7 @@ describe('when processing messages', () => {
         })
       })
       logs = createLoggerMockedComponent()
-      component = createMessagesHandlerComponent({ sqs, logs })
+      component = createQueueConsumerComponent({ sqs, logs })
 
       await component[START_COMPONENT]!(mockStartOptions)
 
@@ -241,7 +195,7 @@ describe('when processing messages', () => {
         getLogger: jest.fn().mockReturnValue(mockLogger)
       }
 
-      component = createMessagesHandlerComponent({ sqs, logs })
+      component = createQueueConsumerComponent({ sqs, logs })
       component.addMessageHandler<TestEvent>(Events.Type.CLIENT, Events.SubType.Client.LOGGED_IN, handler)
       await component[START_COMPONENT]!(mockStartOptions)
 
@@ -304,7 +258,7 @@ describe('when processing messages', () => {
         getLogger: jest.fn().mockReturnValue(mockLogger)
       }
 
-      component = createMessagesHandlerComponent({ sqs, logs })
+      component = createQueueConsumerComponent({ sqs, logs })
       await component[START_COMPONENT]!(mockStartOptions)
 
       await messageDeleted
@@ -333,7 +287,7 @@ describe('when processing messages', () => {
 describe('when stopping the component with remaining messages', () => {
   let sqs: jest.Mocked<IQueueComponent>
   let logs: jest.Mocked<ILoggerComponent>
-  let component: IMessagesHandlerComponent
+  let component: IQueueConsumerComponent
 
   afterEach(() => {
     jest.resetAllMocks()
@@ -389,7 +343,7 @@ describe('when stopping the component with remaining messages', () => {
         getLogger: jest.fn().mockReturnValue(mockLogger)
       }
 
-      component = createMessagesHandlerComponent({ sqs, logs })
+      component = createQueueConsumerComponent({ sqs, logs })
       component.addMessageHandler<TestEvent>(Events.Type.CLIENT, Events.SubType.Client.LOGGED_IN, handler)
 
       await component[START_COMPONENT]!(mockStartOptions)
@@ -455,7 +409,7 @@ describe('when stopping the component with remaining messages', () => {
 
       logs = createLoggerMockedComponent()
 
-      component = createMessagesHandlerComponent({ sqs, logs }, { releaseVisibilityTimeoutSeconds: 30 })
+      component = createQueueConsumerComponent({ sqs, logs }, { releaseVisibilityTimeoutSeconds: 30 })
       component.addMessageHandler<TestEvent>(Events.Type.CLIENT, Events.SubType.Client.LOGGED_IN, handler)
 
       await component[START_COMPONENT]!(mockStartOptions)
@@ -517,7 +471,7 @@ describe('when stopping the component with remaining messages', () => {
         getLogger: jest.fn().mockReturnValue(mockLogger)
       }
 
-      component = createMessagesHandlerComponent({ sqs, logs })
+      component = createQueueConsumerComponent({ sqs, logs })
       component.addMessageHandler<TestEvent>(Events.Type.CLIENT, Events.SubType.Client.LOGGED_IN, handler)
 
       await component[START_COMPONENT]!(mockStartOptions)
