@@ -82,6 +82,9 @@ importers:
       '@types/destroy':
         specifier: ^1.0.0
         version: 1.0.3
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
       '@types/node':
         specifier: ^20.3.2
         version: 20.19.1

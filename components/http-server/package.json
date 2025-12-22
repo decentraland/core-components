@@ -28,6 +28,7 @@
   "devDependencies": {
     "@types/busboy": "^1.5.4",
     "@types/destroy": "^1.0.0",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.3.2",
     "@types/node-fetch": "^2.6.12",
     "@types/on-finished": "^2.3.4",
