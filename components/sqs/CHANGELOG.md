@@ -1,5 +1,11 @@
 # @dcl/sqs-component
 
+## 2.0.5
+
+### Patch Changes
+
+- c243a86: Add message receive options and new message visibility functions
+
 ## 2.0.4
 
 ### Patch Changes
