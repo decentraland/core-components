@@ -49,8 +49,8 @@ importers:
   components/http-commons:
     dependencies:
       '@dcl/http-server':
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: workspace:*
+        version: link:../http-server
       '@dcl/schemas':
         specifier: ^18.0.0
         version: 18.8.0
@@ -64,6 +64,9 @@ importers:
       '@dcl/eslint-config':
         specifier: ^2.4.3
         version: 2.4.3(@babel/core@7.27.4)(babel-plugin-module-resolver@5.0.2)(typescript@5.8.3)
+      '@types/node-fetch':
+        specifier: ^2.6.12
+        version: 2.6.12
       '@well-known-components/logger':
         specifier: ^3.1.3
         version: 3.1.3(@well-known-components/interfaces@1.5.2)
@@ -926,9 +929,6 @@ packages:
 
   '@dcl/eslint-config@2.4.3':
     resolution: {integrity: sha512-SFgQv5Fnvv1fFgXyF9VXxw4cAbJSntiID/h0qwWYDLtlxOp45KnzYDol4IqDFgnuXZOwJgU62GTmYt4/XcOqFA==}
-
-  '@dcl/http-server@1.0.0':
-    resolution: {integrity: sha512-Dq7hjrOfwUY2VztmZlk70OwOFkwiLO360BgJw4h2BFfYc0RACmw7TFI/uq/nHMJPNSs2Zi1htzuWQQsPAg1RQw==}
 
   '@dcl/schemas@18.8.0':
     resolution: {integrity: sha512-1HxbL0azB7N+kMwYyU4/Uqltc+7F8Lv8UcS3dxDNVTPn71gldIDImj58OM9Y3gIyQG5Tauacrlk5cDkXhjMkOA==}
@@ -5483,20 +5483,6 @@ snapshots:
       - eslint-plugin-import-x
       - supports-color
       - typescript
-
-  '@dcl/http-server@1.0.0':
-    dependencies:
-      '@types/http-errors': 2.0.5
-      destroy: 1.2.0
-      fp-future: 1.0.1
-      http-errors: 2.0.1
-      mitt: 3.0.1
-      node-fetch: 2.7.0
-      on-finished: 2.4.1
-      path-to-regexp: 6.3.0
-      reflect-metadata: 0.2.2
-    transitivePeerDependencies:
-      - encoding
 
   '@dcl/schemas@18.8.0':
     dependencies:

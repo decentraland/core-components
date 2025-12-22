@@ -14,7 +14,7 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
-    "@dcl/http-server": "^1.0.0",
+    "@dcl/http-server": "workspace:*",
     "@dcl/schemas": "^18.0.0",
     "@well-known-components/interfaces": "^1.4.3",
     "node-fetch": "^2.7.0"
