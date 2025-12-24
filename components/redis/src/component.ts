@@ -42,7 +42,7 @@ export async function createRedisComponent(
     try {
       logger.debug('Disconnecting from Redis')
       if (client) {
-        await client.close()
+        await client.disconnect()
       }
       logger.debug('Successfully disconnected from Redis')
     } catch (err: any) {
@@ -59,6 +59,20 @@ export async function createRedisComponent(
       return null
     } catch (err: any) {
       logger.error(`Error getting key "${key}"`, err)
+      throw err
+    }
+  }
+
+  async function getByPattern<T>(pattern: string): Promise<T[]> {
+    try {
+      const keys = await client.keys(pattern)
+      if (keys.length === 0) {
+        return []
+      }
+      const values = (await client.mGet(keys)) || []
+      return values.map((value: any) => JSON.parse(value)) as T[]
+    } catch (err: any) {
+      logger.error(`Error getting key "${pattern}"`, err)
       throw err
     }
   }
@@ -215,6 +229,7 @@ export async function createRedisComponent(
     [START_COMPONENT]: start,
     [STOP_COMPONENT]: stop,
     get,
+    getByPattern,
     set,
     remove,
     keys,

@@ -17,6 +17,7 @@
   "dependencies": {
     "@dcl/core-commons": "workspace:*",
     "@well-known-components/interfaces": "^1.5.2",
+    "lru-cache": "^11.0.1",
     "redis": "^5.9.0"
   },
   "devDependencies": {

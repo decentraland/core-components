@@ -11,7 +11,13 @@ export interface ICacheStorageComponent extends IBaseComponent {
    * @param key - The key to look up.
    * @returns Promise resolving to the cached value or null if not found.
    */
-  get<T>(key: string): Promise<T | null>
+  get<T>(key: string): Promise<T | T[] | null>
+  /**
+   * Retrieves multiple values from cache by pattern.
+   * @param pattern - The pattern to match keys.
+   * @returns Promise resolving to an array of cached values.
+   */
+  getByPattern<T>(pattern: string): Promise<T[]>
   /**
    * Stores a value in cache by key.
    * @param key - The key to store the value under.
