@@ -1,0 +1,27 @@
+{
+  "name": "@dcl/memory-queue-component",
+  "version": "1.0.0",
+  "description": "In-memory queue component for local development and testing",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/core-commons": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
+
