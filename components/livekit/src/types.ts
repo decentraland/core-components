@@ -1,12 +1,5 @@
 import { IBaseComponent } from '@well-known-components/interfaces'
-import {
-  IngressInfo,
-  IngressInput,
-  ParticipantInfo,
-  Room,
-  TrackSource,
-  WebhookEvent
-} from 'livekit-server-sdk'
+import { IngressInfo, IngressInput, ParticipantInfo, Room, TrackSource, WebhookEvent } from 'livekit-server-sdk'
 
 // Re-export livekit-server-sdk types for convenience
 export { IngressInfo, IngressInput, ParticipantInfo, Room, TrackSource, WebhookEvent }
@@ -55,24 +48,20 @@ export interface ParticipantPermissions {
  * Options for generating access credentials
  */
 export interface GenerateCredentialsOptions {
-  /** Unique identifier for the participant */
-  identity: string
-  /** Name of the room to join */
-  roomName: string
   /** Permissions to grant to the participant */
   permissions?: ParticipantPermissions
   /** Metadata to attach to the participant (will be JSON stringified) */
   metadata?: Record<string, unknown>
   /** Token time-to-live in seconds (default: 300 = 5 minutes) */
   ttlSeconds?: number
+  /** Whether to use preview environment (default: false) */
+  forPreview?: boolean
 }
 
 /**
  * Options for creating a new room
  */
 export interface CreateRoomOptions {
-  /** Name of the room to create */
-  name: string
   /** Maximum number of participants (0 = unlimited) */
   maxParticipants?: number
   /** Empty timeout in seconds (how long before empty room is destroyed) */
@@ -97,24 +86,37 @@ export interface UpdateParticipantOptions {
  * Options for creating an ingress (RTMP/WHIP input)
  */
 export interface CreateIngressOptions {
-  /** Type of ingress input */
-  inputType: IngressInput
-  /** Name for the ingress */
-  name: string
-  /** Room to stream into */
-  roomName: string
-  /** Identity for the ingress participant */
-  participantIdentity: string
   /** Display name for the ingress participant */
   participantName?: string
 }
 
 /**
- * Options for the LiveKit component factory
+ * Room type for filtering and naming
  */
-export interface LivekitComponentOptions {
-  /** LiveKit server settings */
-  settings: LivekitSettings
+export type RoomType = 'world' | 'scene' | 'island'
+
+/**
+ * Parameters for getting a room name
+ */
+export interface GetRoomNameParams {
+  /** The type of room */
+  type: RoomType
+  /** Scene ID (required for scene rooms) */
+  sceneId?: string
+}
+
+/**
+ * Metadata extracted from a room name
+ */
+export interface RoomMetadata {
+  /** The realm name (for scene rooms) */
+  realmName?: string
+  /** The scene ID (for scene rooms) */
+  sceneId?: string
+  /** The world name (for world rooms) */
+  worldName?: string
+  /** The island name (for island rooms) */
+  islandName?: string
 }
 
 /**
@@ -129,12 +131,48 @@ export interface ILivekitComponent extends IBaseComponent {
   /**
    * Generate access credentials (JWT token) for a participant
    */
-  generateCredentials(options: GenerateCredentialsOptions): Promise<LivekitCredentials>
+  generateCredentials(
+    identity: string,
+    roomName: string,
+    options?: GenerateCredentialsOptions
+  ): Promise<LivekitCredentials>
 
   /**
    * Build a connection URL string from host and token
    */
   buildConnectionUrl(url: string, token: string): string
+
+  // ============= ROOM NAMING =============
+
+  /**
+   * Get a world room name from a world name
+   */
+  getWorldRoomName(worldName: string): string
+
+  /**
+   * Get a scene room name from realm and scene ID
+   */
+  getSceneRoomName(realmName: string, sceneId: string): string
+
+  /**
+   * Get an island room name from an island name
+   */
+  getIslandRoomName(islandName: string): string
+
+  /**
+   * Get room name based on realm and params
+   */
+  getRoomName(realmName: string, params: GetRoomNameParams): string
+
+  /**
+   * Extract metadata from a room name
+   */
+  getRoomMetadataFromRoomName(roomName: string): RoomMetadata
+
+  /**
+   * List active rooms filtered by type (world, scene, or island)
+   */
+  listRoomsByType(type: RoomType): Promise<Room[]>
 
   // ============= ROOM MANAGEMENT =============
 
@@ -151,12 +189,12 @@ export interface ILivekitComponent extends IBaseComponent {
   /**
    * Get or create a room by name
    */
-  getOrCreateRoom(options: CreateRoomOptions): Promise<Room>
+  getOrCreateRoom(name: string, options?: CreateRoomOptions): Promise<Room>
 
   /**
    * Create a new room
    */
-  createRoom(options: CreateRoomOptions): Promise<Room>
+  createRoom(name: string, options?: CreateRoomOptions): Promise<Room>
 
   /**
    * Delete a room by name
@@ -205,7 +243,13 @@ export interface ILivekitComponent extends IBaseComponent {
   /**
    * Create a new ingress for streaming
    */
-  createIngress(options: CreateIngressOptions): Promise<IngressInfo>
+  createIngress(
+    inputType: IngressInput,
+    name: string,
+    roomName: string,
+    participantIdentity: string,
+    options?: CreateIngressOptions
+  ): Promise<IngressInfo>
 
   /**
    * Delete an ingress by ID
@@ -224,4 +268,3 @@ export interface ILivekitComponent extends IBaseComponent {
    */
   receiveWebhookEvent(body: string, authorization: string): Promise<WebhookEvent>
 }
-

@@ -1,8 +1,12 @@
-import { ILoggerComponent } from '@well-known-components/interfaces'
-import { createLoggerMockedComponent } from '@dcl/core-commons'
+import { ILoggerComponent, IConfigComponent } from '@well-known-components/interfaces'
+import { createLoggerMockedComponent, createConfigMockedComponent } from '@dcl/core-commons'
 import { createLivekitComponent } from '../src/component'
-import { ILivekitComponent, LivekitSettings, IngressInput } from '../src/types'
-import { LivekitIngressNotFoundError, LivekitWebhookVerificationError } from '../src/errors'
+import { ILivekitComponent, IngressInput } from '../src/types'
+import {
+  LivekitIngressNotFoundError,
+  LivekitParticipantNotFoundError,
+  LivekitWebhookVerificationError
+} from '../src/errors'
 
 // Mock livekit-server-sdk
 jest.mock('livekit-server-sdk', () => {
@@ -46,24 +50,66 @@ jest.mock('livekit-server-sdk', () => {
 })
 
 let logs: ILoggerComponent
+let config: IConfigComponent
 let component: ILivekitComponent
-let settings: LivekitSettings
 let mockRoomClient: any
 let mockIngressClient: any
 let mockWebhookReceiver: any
 
+let livekitHost: string
+let livekitApiKey: string
+let livekitApiSecret: string
+let livekitPreviewHost: string | undefined
+let livekitPreviewApiKey: string | undefined
+let livekitPreviewApiSecret: string | undefined
+
 beforeEach(async () => {
   logs = createLoggerMockedComponent()
-  settings = {
-    host: 'wss://livekit.example.com',
-    apiKey: 'test-api-key',
-    secret: 'test-api-secret'
-  }
+
+  livekitHost = 'wss://livekit.example.com'
+  livekitApiKey = 'test-api-key'
+  livekitApiSecret = 'test-api-secret'
+  livekitPreviewHost = undefined
+  livekitPreviewApiKey = undefined
+  livekitPreviewApiSecret = undefined
+
+  config = createConfigMockedComponent({
+    requireString: jest.fn().mockImplementation((key: string) => {
+      switch (key) {
+        case 'LIVEKIT_HOST':
+          return livekitHost
+        case 'LIVEKIT_API_KEY':
+          return livekitApiKey
+        case 'LIVEKIT_API_SECRET':
+          return livekitApiSecret
+        default:
+          throw new Error(`Unknown required key: ${key}`)
+      }
+    }),
+    getString: jest.fn().mockImplementation((key: string) => {
+      switch (key) {
+        case 'LIVEKIT_PREVIEW_HOST':
+          return livekitPreviewHost
+        case 'LIVEKIT_PREVIEW_API_KEY':
+          return livekitPreviewApiKey
+        case 'LIVEKIT_PREVIEW_API_SECRET':
+          return livekitPreviewApiSecret
+        case 'LIVEKIT_WORLD_ROOM_PREFIX':
+          return 'world-'
+        case 'LIVEKIT_SCENE_ROOM_PREFIX':
+          return 'scene-'
+        case 'LIVEKIT_ISLAND_ROOM_PREFIX':
+          return 'island-'
+        default:
+          return undefined
+      }
+    })
+  })
 
   // Get the mock instances
   const { RoomServiceClient, IngressClient, WebhookReceiver } = require('livekit-server-sdk')
 
-  component = await createLivekitComponent({ logs }, { settings })
+  component = await createLivekitComponent({ config, logs })
 
   // Get the mock instances that were created
   mockRoomClient = RoomServiceClient.mock.results[0].value
@@ -77,17 +123,13 @@ afterEach(() => {
 
 describe('when creating the livekit component', () => {
   describe('and the host URL does not have wss:// prefix', () => {
-    it('should normalize the host URL by adding wss:// prefix', async () => {
-      const settingsWithoutProtocol = {
-        ...settings,
-        host: 'livekit.example.com'
-      }
+    beforeEach(() => {
+      livekitHost = 'livekit.example.com'
+    })
 
-      const comp = await createLivekitComponent({ logs }, { settings: settingsWithoutProtocol })
-      const credentials = await comp.generateCredentials({
-        identity: 'test',
-        roomName: 'test-room'
-      })
+    it('should normalize the host URL by adding wss:// prefix', async () => {
+      const livekit = await createLivekitComponent({ config, logs })
+      const credentials = await livekit.generateCredentials('test', 'test-room')
 
       expect(credentials.url).toBe('wss://livekit.example.com')
     })
@@ -95,68 +137,164 @@ describe('when creating the livekit component', () => {
 
   describe('and the host URL already has wss:// prefix', () => {
     it('should keep the host URL as-is', async () => {
-      const credentials = await component.generateCredentials({
-        identity: 'test',
-        roomName: 'test-room'
-      })
+      const credentials = await component.generateCredentials('test', 'test-room')
 
       expect(credentials.url).toBe('wss://livekit.example.com')
+    })
+  })
+
+  describe('and preview environment is configured', () => {
+    beforeEach(() => {
+      livekitPreviewHost = 'preview.livekit.example.com'
+      livekitPreviewApiKey = 'preview-api-key'
+      livekitPreviewApiSecret = 'preview-api-secret'
+    })
+
+    it('should use preview settings when forPreview is true', async () => {
+      const livekit = await createLivekitComponent({ config, logs })
+      const credentials = await livekit.generateCredentials('test', 'test-room', { forPreview: true })
+
+      expect(credentials.url).toBe('wss://preview.livekit.example.com')
+    })
+
+    it('should use production settings when forPreview is false', async () => {
+      const livekit = await createLivekitComponent({ config, logs })
+      const credentials = await livekit.generateCredentials('test', 'test-room', { forPreview: false })
+
+      expect(credentials.url).toBe('wss://livekit.example.com')
+    })
+  })
+
+  describe('and room prefixes are not configured', () => {
+    beforeEach(() => {
+      config = createConfigMockedComponent({
+        requireString: jest.fn().mockImplementation((key: string) => {
+          switch (key) {
+            case 'LIVEKIT_HOST':
+              return livekitHost
+            case 'LIVEKIT_API_KEY':
+              return livekitApiKey
+            case 'LIVEKIT_API_SECRET':
+              return livekitApiSecret
+            default:
+              throw new Error(`Unknown required key: ${key}`)
+          }
+        }),
+        getString: jest.fn().mockReturnValue(undefined)
+      })
+    })
+
+    it('should use default prefixes', async () => {
+      const livekit = await createLivekitComponent({ config, logs })
+
+      expect(livekit.getWorldRoomName('test')).toBe('world-test')
+      expect(livekit.getSceneRoomName('realm', 'scene')).toBe('scene-realm:scene')
+      expect(livekit.getIslandRoomName('island')).toBe('island-island')
     })
   })
 })
 
 describe('when generating credentials', () => {
+  let mockAccessToken: any
+  let mockAddGrant: jest.Mock
+
+  beforeEach(() => {
+    const { AccessToken } = require('livekit-server-sdk')
+    mockAccessToken = AccessToken
+    mockAddGrant = mockAccessToken.mock.results[0]?.value?.addGrant || jest.fn()
+  })
+
   describe('and using default permissions', () => {
     it('should generate credentials with url and token', async () => {
-      const credentials = await component.generateCredentials({
-        identity: 'user-123',
-        roomName: 'my-room'
-      })
+      const credentials = await component.generateCredentials('user-123', 'my-room')
 
       expect(credentials).toEqual({
         url: 'wss://livekit.example.com',
         token: 'mock-jwt-token'
       })
     })
+
+    it('should create access token with correct identity', async () => {
+      await component.generateCredentials('user-123', 'my-room')
+
+      expect(mockAccessToken).toHaveBeenCalledWith(
+        'test-api-key',
+        'test-api-secret',
+        expect.objectContaining({
+          identity: 'user-123',
+          ttl: 300
+        })
+      )
+    })
   })
 
   describe('and using custom permissions', () => {
+    let permissions: { canPublish: boolean; canSubscribe: boolean; canPublishData: boolean }
+
+    beforeEach(() => {
+      permissions = {
+        canPublish: false,
+        canSubscribe: true,
+        canPublishData: false
+      }
+    })
+
     it('should generate credentials with the provided permissions', async () => {
-      const credentials = await component.generateCredentials({
-        identity: 'user-123',
-        roomName: 'my-room',
-        permissions: {
-          canPublish: false,
-          canSubscribe: true,
-          canPublishData: false
-        }
-      })
+      const credentials = await component.generateCredentials('user-123', 'my-room', { permissions })
 
       expect(credentials.token).toBe('mock-jwt-token')
     })
   })
 
   describe('and providing metadata', () => {
+    let metadata: { displayName: string; role: string }
+
+    beforeEach(() => {
+      metadata = { displayName: 'John Doe', role: 'moderator' }
+    })
+
     it('should generate credentials with the provided metadata', async () => {
-      const credentials = await component.generateCredentials({
-        identity: 'user-123',
-        roomName: 'my-room',
-        metadata: { displayName: 'John Doe', role: 'moderator' }
-      })
+      const credentials = await component.generateCredentials('user-123', 'my-room', { metadata })
 
       expect(credentials.token).toBe('mock-jwt-token')
+    })
+
+    it('should create access token with stringified metadata', async () => {
+      await component.generateCredentials('user-123', 'my-room', { metadata })
+
+      expect(mockAccessToken).toHaveBeenCalledWith(
+        'test-api-key',
+        'test-api-secret',
+        expect.objectContaining({
+          metadata: JSON.stringify(metadata)
+        })
+      )
     })
   })
 
   describe('and providing a custom TTL', () => {
+    let ttlSeconds: number
+
+    beforeEach(() => {
+      ttlSeconds = 600
+    })
+
     it('should generate credentials with the provided TTL', async () => {
-      const credentials = await component.generateCredentials({
-        identity: 'user-123',
-        roomName: 'my-room',
-        ttlSeconds: 600
-      })
+      const credentials = await component.generateCredentials('user-123', 'my-room', { ttlSeconds })
 
       expect(credentials.token).toBe('mock-jwt-token')
+    })
+
+    it('should create access token with the provided TTL', async () => {
+      await component.generateCredentials('user-123', 'my-room', { ttlSeconds })
+
+      expect(mockAccessToken).toHaveBeenCalledWith(
+        'test-api-key',
+        'test-api-secret',
+        expect.objectContaining({
+          ttl: ttlSeconds
+        })
+      )
     })
   })
 })
@@ -168,12 +306,122 @@ describe('when building connection URL', () => {
   })
 })
 
+describe('when using room naming utilities', () => {
+  describe('and getting a world room name', () => {
+    it('should return the prefixed world room name', () => {
+      const roomName = component.getWorldRoomName('my-world')
+      expect(roomName).toBe('world-my-world')
+    })
+  })
+
+  describe('and getting a scene room name', () => {
+    it('should return the prefixed scene room name', () => {
+      const roomName = component.getSceneRoomName('realm-1', 'scene-abc')
+      expect(roomName).toBe('scene-realm-1:scene-abc')
+    })
+  })
+
+  describe('and getting an island room name', () => {
+    it('should return the prefixed island room name', () => {
+      const roomName = component.getIslandRoomName('island-123')
+      expect(roomName).toBe('island-island-123')
+    })
+  })
+
+  describe('and getting a room name by type', () => {
+    it('should return a world room name for world type', () => {
+      const roomName = component.getRoomName('my-world', { type: 'world' })
+      expect(roomName).toBe('world-my-world')
+    })
+
+    it('should return a scene room name for scene type', () => {
+      const roomName = component.getRoomName('realm-1', { type: 'scene', sceneId: 'scene-abc' })
+      expect(roomName).toBe('scene-realm-1:scene-abc')
+    })
+
+    it('should return an island room name for island type', () => {
+      const roomName = component.getRoomName('island-123', { type: 'island' })
+      expect(roomName).toBe('island-island-123')
+    })
+
+    it('should throw an error if sceneId is not provided for scene type', () => {
+      expect(() => component.getRoomName('realm-1', { type: 'scene' })).toThrow('No sceneId provided for scene room')
+    })
+
+    it('should throw an error for unknown room type', () => {
+      expect(() => component.getRoomName('test', { type: 'unknown' as any })).toThrow('Unknown room type: unknown')
+    })
+  })
+
+  describe('and extracting metadata from a room name', () => {
+    it('should extract metadata from a scene room name', () => {
+      const metadata = component.getRoomMetadataFromRoomName('scene-realm-1:scene-abc')
+      expect(metadata).toEqual({
+        realmName: 'realm-1',
+        sceneId: 'scene-abc',
+        worldName: undefined,
+        islandName: undefined
+      })
+    })
+
+    it('should extract metadata from a world room name', () => {
+      const metadata = component.getRoomMetadataFromRoomName('world-my-world')
+      expect(metadata).toEqual({
+        realmName: undefined,
+        sceneId: undefined,
+        worldName: 'my-world',
+        islandName: undefined
+      })
+    })
+
+    it('should extract metadata from an island room name', () => {
+      const metadata = component.getRoomMetadataFromRoomName('island-island-123')
+      expect(metadata).toEqual({
+        realmName: undefined,
+        sceneId: undefined,
+        worldName: undefined,
+        islandName: 'island-123'
+      })
+    })
+  })
+
+  describe('and listing rooms by type', () => {
+    beforeEach(() => {
+      mockRoomClient.listRooms.mockResolvedValue([
+        { name: 'world-world-1' },
+        { name: 'world-world-2' },
+        { name: 'scene-realm-1:scene-1' },
+        { name: 'island-island-1' }
+      ])
+    })
+
+    it('should list only world rooms', async () => {
+      const rooms = await component.listRoomsByType('world')
+      expect(rooms).toEqual([{ name: 'world-world-1' }, { name: 'world-world-2' }])
+    })
+
+    it('should list only scene rooms', async () => {
+      const rooms = await component.listRoomsByType('scene')
+      expect(rooms).toEqual([{ name: 'scene-realm-1:scene-1' }])
+    })
+
+    it('should list only island rooms', async () => {
+      const rooms = await component.listRoomsByType('island')
+      expect(rooms).toEqual([{ name: 'island-island-1' }])
+    })
+  })
+})
+
 describe('when listing rooms', () => {
   describe('and no filter is provided', () => {
-    it('should list all rooms', async () => {
-      const mockRooms = [{ name: 'room-1' }, { name: 'room-2' }]
-      mockRoomClient.listRooms.mockResolvedValue(mockRooms)
+    let mockRooms: { name: string }[]
 
+    beforeEach(() => {
+      mockRooms = [{ name: 'room-1' }, { name: 'room-2' }]
+      mockRoomClient.listRooms.mockResolvedValue(mockRooms)
+    })
+
+    it('should list all rooms', async () => {
       const rooms = await component.listRooms()
 
       expect(rooms).toEqual(mockRooms)
@@ -182,10 +430,14 @@ describe('when listing rooms', () => {
   })
 
   describe('and a filter by names is provided', () => {
-    it('should list rooms filtered by the provided names', async () => {
-      const mockRooms = [{ name: 'room-1' }]
-      mockRoomClient.listRooms.mockResolvedValue(mockRooms)
+    let mockRooms: { name: string }[]
 
+    beforeEach(() => {
+      mockRooms = [{ name: 'room-1' }]
+      mockRoomClient.listRooms.mockResolvedValue(mockRooms)
+    })
+
+    it('should list rooms filtered by the provided names', async () => {
       const rooms = await component.listRooms(['room-1'])
 
       expect(rooms).toEqual(mockRooms)
@@ -194,9 +446,23 @@ describe('when listing rooms', () => {
   })
 
   describe('and an error occurs', () => {
-    it('should return an empty array', async () => {
+    beforeEach(() => {
       mockRoomClient.listRooms.mockRejectedValue(new Error('Connection failed'))
+    })
 
+    it('should return an empty array', async () => {
+      const rooms = await component.listRooms()
+
+      expect(rooms).toEqual([])
+    })
+  })
+
+  describe('and an error without message occurs', () => {
+    beforeEach(() => {
+      mockRoomClient.listRooms.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should return an empty array', async () => {
       const rooms = await component.listRooms()
 
       expect(rooms).toEqual([])
@@ -206,10 +472,14 @@ describe('when listing rooms', () => {
 
 describe('when getting a room', () => {
   describe('and the room exists', () => {
-    it('should return the room', async () => {
-      const mockRoom = { name: 'my-room', numParticipants: 5 }
-      mockRoomClient.listRooms.mockResolvedValue([mockRoom])
+    let mockRoom: { name: string; numParticipants: number }
 
+    beforeEach(() => {
+      mockRoom = { name: 'my-room', numParticipants: 5 }
+      mockRoomClient.listRooms.mockResolvedValue([mockRoom])
+    })
+
+    it('should return the room', async () => {
       const room = await component.getRoom('my-room')
 
       expect(room).toEqual(mockRoom)
@@ -218,9 +488,11 @@ describe('when getting a room', () => {
   })
 
   describe('and the room does not exist', () => {
-    it('should return null', async () => {
+    beforeEach(() => {
       mockRoomClient.listRooms.mockResolvedValue([])
+    })
 
+    it('should return null', async () => {
       const room = await component.getRoom('non-existent')
 
       expect(room).toBeNull()
@@ -228,9 +500,23 @@ describe('when getting a room', () => {
   })
 
   describe('and an error occurs', () => {
-    it('should return null', async () => {
+    beforeEach(() => {
       mockRoomClient.listRooms.mockRejectedValue(new Error('Connection failed'))
+    })
 
+    it('should return null', async () => {
+      const room = await component.getRoom('my-room')
+
+      expect(room).toBeNull()
+    })
+  })
+
+  describe('and an error without message occurs', () => {
+    beforeEach(() => {
+      mockRoomClient.listRooms.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should return null', async () => {
       const room = await component.getRoom('my-room')
 
       expect(room).toBeNull()
@@ -240,11 +526,15 @@ describe('when getting a room', () => {
 
 describe('when creating a room', () => {
   describe('and only the name is provided', () => {
-    it('should create a room with the provided name', async () => {
-      const mockRoom = { name: 'new-room' }
-      mockRoomClient.createRoom.mockResolvedValue(mockRoom)
+    let mockRoom: { name: string }
 
-      const room = await component.createRoom({ name: 'new-room' })
+    beforeEach(() => {
+      mockRoom = { name: 'new-room' }
+      mockRoomClient.createRoom.mockResolvedValue(mockRoom)
+    })
+
+    it('should create a room with the provided name', async () => {
+      const room = await component.createRoom('new-room')
 
       expect(room).toEqual(mockRoom)
       expect(mockRoomClient.createRoom).toHaveBeenCalledWith({
@@ -257,12 +547,15 @@ describe('when creating a room', () => {
   })
 
   describe('and all options are provided', () => {
-    it('should create a room with all the provided options', async () => {
-      const mockRoom = { name: 'new-room' }
-      mockRoomClient.createRoom.mockResolvedValue(mockRoom)
+    let mockRoom: { name: string }
 
-      const room = await component.createRoom({
-        name: 'new-room',
+    beforeEach(() => {
+      mockRoom = { name: 'new-room' }
+      mockRoomClient.createRoom.mockResolvedValue(mockRoom)
+    })
+
+    it('should create a room with all the provided options', async () => {
+      const room = await component.createRoom('new-room', {
         maxParticipants: 100,
         emptyTimeout: 300,
         metadata: { description: 'Test room' }
@@ -281,11 +574,15 @@ describe('when creating a room', () => {
 
 describe('when getting or creating a room', () => {
   describe('and the room already exists', () => {
-    it('should return the existing room without creating a new one', async () => {
-      const mockRoom = { name: 'existing-room' }
-      mockRoomClient.listRooms.mockResolvedValue([mockRoom])
+    let mockRoom: { name: string }
 
-      const room = await component.getOrCreateRoom({ name: 'existing-room' })
+    beforeEach(() => {
+      mockRoom = { name: 'existing-room' }
+      mockRoomClient.listRooms.mockResolvedValue([mockRoom])
+    })
+
+    it('should return the existing room without creating a new one', async () => {
+      const room = await component.getOrCreateRoom('existing-room')
 
       expect(room).toEqual(mockRoom)
       expect(mockRoomClient.createRoom).not.toHaveBeenCalled()
@@ -293,12 +590,16 @@ describe('when getting or creating a room', () => {
   })
 
   describe('and the room does not exist', () => {
-    it('should create and return a new room', async () => {
-      const mockRoom = { name: 'new-room' }
+    let mockRoom: { name: string }
+
+    beforeEach(() => {
+      mockRoom = { name: 'new-room' }
       mockRoomClient.listRooms.mockResolvedValue([])
       mockRoomClient.createRoom.mockResolvedValue(mockRoom)
+    })
 
-      const room = await component.getOrCreateRoom({ name: 'new-room' })
+    it('should create and return a new room', async () => {
+      const room = await component.getOrCreateRoom('new-room')
 
       expect(room).toEqual(mockRoom)
       expect(mockRoomClient.createRoom).toHaveBeenCalled()
@@ -308,9 +609,11 @@ describe('when getting or creating a room', () => {
 
 describe('when deleting a room', () => {
   describe('and the deletion succeeds', () => {
-    it('should delete the room successfully', async () => {
+    beforeEach(() => {
       mockRoomClient.deleteRoom.mockResolvedValue(undefined)
+    })
 
+    it('should delete the room successfully', async () => {
       await component.deleteRoom('my-room')
 
       expect(mockRoomClient.deleteRoom).toHaveBeenCalledWith('my-room')
@@ -318,9 +621,21 @@ describe('when deleting a room', () => {
   })
 
   describe('and an error occurs', () => {
-    it('should not throw an error', async () => {
+    beforeEach(() => {
       mockRoomClient.deleteRoom.mockRejectedValue(new Error('Room not found'))
+    })
 
+    it('should not throw an error', async () => {
+      await expect(component.deleteRoom('non-existent')).resolves.not.toThrow()
+    })
+  })
+
+  describe('and an error without message occurs', () => {
+    beforeEach(() => {
+      mockRoomClient.deleteRoom.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should not throw an error', async () => {
       await expect(component.deleteRoom('non-existent')).resolves.not.toThrow()
     })
   })
@@ -328,10 +643,12 @@ describe('when deleting a room', () => {
 
 describe('when updating room metadata', () => {
   describe('and the room has empty metadata', () => {
-    it('should update with the new metadata', async () => {
+    beforeEach(() => {
       mockRoomClient.listRooms.mockResolvedValue([{ name: 'my-room', metadata: '{}' }])
       mockRoomClient.updateRoomMetadata.mockResolvedValue(undefined)
+    })
 
+    it('should update with the new metadata', async () => {
       await component.updateRoomMetadata('my-room', { key: 'value' })
 
       expect(mockRoomClient.updateRoomMetadata).toHaveBeenCalledWith('my-room', '{"key":"value"}')
@@ -339,10 +656,12 @@ describe('when updating room metadata', () => {
   })
 
   describe('and the room has existing metadata', () => {
-    it('should merge with the existing metadata', async () => {
+    beforeEach(() => {
       mockRoomClient.listRooms.mockResolvedValue([{ name: 'my-room', metadata: '{"existing":"data"}' }])
       mockRoomClient.updateRoomMetadata.mockResolvedValue(undefined)
+    })
 
+    it('should merge with the existing metadata', async () => {
       await component.updateRoomMetadata('my-room', { key: 'value' })
 
       expect(mockRoomClient.updateRoomMetadata).toHaveBeenCalledWith('my-room', '{"existing":"data","key":"value"}')
@@ -350,26 +669,54 @@ describe('when updating room metadata', () => {
   })
 
   describe('and the room has invalid JSON metadata', () => {
-    it('should replace the invalid metadata with the new metadata', async () => {
+    beforeEach(() => {
       mockRoomClient.listRooms.mockResolvedValue([{ name: 'my-room', metadata: 'invalid-json' }])
       mockRoomClient.updateRoomMetadata.mockResolvedValue(undefined)
+    })
 
+    it('should replace the invalid metadata with the new metadata', async () => {
       await component.updateRoomMetadata('my-room', { key: 'value' })
 
       expect(mockRoomClient.updateRoomMetadata).toHaveBeenCalledWith('my-room', '{"key":"value"}')
+    })
+  })
+
+  describe('and the update fails', () => {
+    beforeEach(() => {
+      mockRoomClient.listRooms.mockResolvedValue([{ name: 'my-room', metadata: '{}' }])
+      mockRoomClient.updateRoomMetadata.mockRejectedValue(new Error('Update failed'))
+    })
+
+    it('should throw the error', async () => {
+      await expect(component.updateRoomMetadata('my-room', { key: 'value' })).rejects.toThrow('Update failed')
+    })
+  })
+
+  describe('and the update fails with an error without message', () => {
+    beforeEach(() => {
+      mockRoomClient.listRooms.mockResolvedValue([{ name: 'my-room', metadata: '{}' }])
+      mockRoomClient.updateRoomMetadata.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should throw the error', async () => {
+      await expect(component.updateRoomMetadata('my-room', { key: 'value' })).rejects.toEqual({ code: 'UNKNOWN' })
     })
   })
 })
 
 describe('when listing participants', () => {
   describe('and the room has participants', () => {
-    it('should return the list of participants', async () => {
-      const mockParticipants = [
+    let mockParticipants: { identity: string; name: string }[]
+
+    beforeEach(() => {
+      mockParticipants = [
         { identity: 'user-1', name: 'User 1' },
         { identity: 'user-2', name: 'User 2' }
       ]
       mockRoomClient.listParticipants.mockResolvedValue(mockParticipants)
+    })
 
+    it('should return the list of participants', async () => {
       const participants = await component.listParticipants('my-room')
 
       expect(participants).toEqual(mockParticipants)
@@ -378,9 +725,23 @@ describe('when listing participants', () => {
   })
 
   describe('and an error occurs', () => {
-    it('should return an empty array', async () => {
+    beforeEach(() => {
       mockRoomClient.listParticipants.mockRejectedValue(new Error('Room not found'))
+    })
 
+    it('should return an empty array', async () => {
+      const participants = await component.listParticipants('my-room')
+
+      expect(participants).toEqual([])
+    })
+  })
+
+  describe('and an error without message occurs', () => {
+    beforeEach(() => {
+      mockRoomClient.listParticipants.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should return an empty array', async () => {
       const participants = await component.listParticipants('my-room')
 
       expect(participants).toEqual([])
@@ -390,10 +751,14 @@ describe('when listing participants', () => {
 
 describe('when getting a participant', () => {
   describe('and the participant exists', () => {
-    it('should return the participant', async () => {
-      const mockParticipant = { identity: 'user-1', name: 'User 1' }
-      mockRoomClient.listParticipants.mockResolvedValue([mockParticipant])
+    let mockParticipant: { identity: string; name: string }
 
+    beforeEach(() => {
+      mockParticipant = { identity: 'user-1', name: 'User 1' }
+      mockRoomClient.listParticipants.mockResolvedValue([mockParticipant])
+    })
+
+    it('should return the participant', async () => {
       const participant = await component.getParticipant('my-room', 'user-1')
 
       expect(participant).toEqual(mockParticipant)
@@ -401,9 +766,11 @@ describe('when getting a participant', () => {
   })
 
   describe('and the participant does not exist', () => {
-    it('should return null', async () => {
+    beforeEach(() => {
       mockRoomClient.listParticipants.mockResolvedValue([])
+    })
 
+    it('should return null', async () => {
       const participant = await component.getParticipant('my-room', 'non-existent')
 
       expect(participant).toBeNull()
@@ -411,9 +778,23 @@ describe('when getting a participant', () => {
   })
 
   describe('and an error occurs', () => {
-    it('should return null', async () => {
+    beforeEach(() => {
       mockRoomClient.listParticipants.mockRejectedValue(new Error('Room not found'))
+    })
 
+    it('should return null', async () => {
+      const participant = await component.getParticipant('my-room', 'user-1')
+
+      expect(participant).toBeNull()
+    })
+  })
+
+  describe('and an error without message occurs', () => {
+    beforeEach(() => {
+      mockRoomClient.listParticipants.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should return null', async () => {
       const participant = await component.getParticipant('my-room', 'user-1')
 
       expect(participant).toBeNull()
@@ -422,21 +803,51 @@ describe('when getting a participant', () => {
 })
 
 describe('when removing a participant', () => {
-  it('should remove the participant from the room', async () => {
-    mockRoomClient.removeParticipant.mockResolvedValue(undefined)
+  describe('and the removal succeeds', () => {
+    beforeEach(() => {
+      mockRoomClient.removeParticipant.mockResolvedValue(undefined)
+    })
 
-    await component.removeParticipant('my-room', 'user-1')
+    it('should remove the participant from the room', async () => {
+      await component.removeParticipant('my-room', 'user-1')
 
-    expect(mockRoomClient.removeParticipant).toHaveBeenCalledWith('my-room', 'user-1')
+      expect(mockRoomClient.removeParticipant).toHaveBeenCalledWith('my-room', 'user-1')
+    })
+  })
+
+  describe('and an error occurs', () => {
+    beforeEach(() => {
+      mockRoomClient.removeParticipant.mockRejectedValue(new Error('Participant not found'))
+    })
+
+    it('should throw LivekitParticipantNotFoundError', async () => {
+      await expect(component.removeParticipant('my-room', 'non-existent')).rejects.toThrow(
+        LivekitParticipantNotFoundError
+      )
+    })
+  })
+
+  describe('and an error without message occurs', () => {
+    beforeEach(() => {
+      mockRoomClient.removeParticipant.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should throw LivekitParticipantNotFoundError', async () => {
+      await expect(component.removeParticipant('my-room', 'non-existent')).rejects.toThrow(
+        LivekitParticipantNotFoundError
+      )
+    })
   })
 })
 
 describe('when updating a participant', () => {
   describe('and updating metadata only', () => {
-    it('should update the participant metadata', async () => {
+    beforeEach(() => {
       mockRoomClient.listParticipants.mockResolvedValue([{ identity: 'user-1', metadata: '{}' }])
       mockRoomClient.updateParticipant.mockResolvedValue(undefined)
+    })
 
+    it('should update the participant metadata', async () => {
       await component.updateParticipant('my-room', 'user-1', {
         metadata: { role: 'moderator' }
       })
@@ -451,9 +862,11 @@ describe('when updating a participant', () => {
   })
 
   describe('and updating permissions only', () => {
-    it('should update the participant permissions', async () => {
+    beforeEach(() => {
       mockRoomClient.updateParticipant.mockResolvedValue(undefined)
+    })
 
+    it('should update the participant permissions', async () => {
       await component.updateParticipant('my-room', 'user-1', {
         permissions: { canPublish: false }
       })
@@ -465,10 +878,12 @@ describe('when updating a participant', () => {
   })
 
   describe('and the participant has existing metadata', () => {
-    it('should merge with the existing metadata', async () => {
+    beforeEach(() => {
       mockRoomClient.listParticipants.mockResolvedValue([{ identity: 'user-1', metadata: '{"existing":"data"}' }])
       mockRoomClient.updateParticipant.mockResolvedValue(undefined)
+    })
 
+    it('should merge with the existing metadata', async () => {
       await component.updateParticipant('my-room', 'user-1', {
         metadata: { newKey: 'newValue' }
       })
@@ -481,12 +896,60 @@ describe('when updating a participant', () => {
       )
     })
   })
+
+  describe('and the participant has invalid JSON metadata', () => {
+    beforeEach(() => {
+      mockRoomClient.listParticipants.mockResolvedValue([{ identity: 'user-1', metadata: 'invalid-json' }])
+      mockRoomClient.updateParticipant.mockResolvedValue(undefined)
+    })
+
+    it('should replace the invalid metadata with the new metadata', async () => {
+      await component.updateParticipant('my-room', 'user-1', {
+        metadata: { newKey: 'newValue' }
+      })
+
+      expect(mockRoomClient.updateParticipant).toHaveBeenCalledWith(
+        'my-room',
+        'user-1',
+        '{"newKey":"newValue"}',
+        undefined
+      )
+    })
+  })
+
+  describe('and the update fails', () => {
+    beforeEach(() => {
+      mockRoomClient.listParticipants.mockResolvedValue([{ identity: 'user-1', metadata: '{}' }])
+      mockRoomClient.updateParticipant.mockRejectedValue(new Error('Update failed'))
+    })
+
+    it('should throw the error', async () => {
+      await expect(
+        component.updateParticipant('my-room', 'user-1', { metadata: { role: 'moderator' } })
+      ).rejects.toThrow('Update failed')
+    })
+  })
+
+  describe('and the update fails with an error without message', () => {
+    beforeEach(() => {
+      mockRoomClient.listParticipants.mockResolvedValue([{ identity: 'user-1', metadata: '{}' }])
+      mockRoomClient.updateParticipant.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should throw the error', async () => {
+      await expect(
+        component.updateParticipant('my-room', 'user-1', { metadata: { role: 'moderator' } })
+      ).rejects.toEqual({ code: 'UNKNOWN' })
+    })
+  })
 })
 
 describe('when muting a participant', () => {
-  it('should mute the participant by removing publish sources', async () => {
+  beforeEach(() => {
     mockRoomClient.updateParticipant.mockResolvedValue(undefined)
+  })
 
+  it('should mute the participant by removing publish sources', async () => {
     await component.muteParticipant('my-room', 'user-1')
 
     expect(mockRoomClient.updateParticipant).toHaveBeenCalledWith('my-room', 'user-1', undefined, {
@@ -497,10 +960,14 @@ describe('when muting a participant', () => {
 
 describe('when listing ingresses', () => {
   describe('and no room filter is provided', () => {
-    it('should list all ingresses', async () => {
-      const mockIngresses = [{ ingressId: 'ing-1' }, { ingressId: 'ing-2' }]
-      mockIngressClient.listIngress.mockResolvedValue(mockIngresses)
+    let mockIngresses: { ingressId: string }[]
 
+    beforeEach(() => {
+      mockIngresses = [{ ingressId: 'ing-1' }, { ingressId: 'ing-2' }]
+      mockIngressClient.listIngress.mockResolvedValue(mockIngresses)
+    })
+
+    it('should list all ingresses', async () => {
       const ingresses = await component.listIngresses()
 
       expect(ingresses).toEqual(mockIngresses)
@@ -509,10 +976,14 @@ describe('when listing ingresses', () => {
   })
 
   describe('and a room filter is provided', () => {
-    it('should list ingresses filtered by the provided room', async () => {
-      const mockIngresses = [{ ingressId: 'ing-1' }]
-      mockIngressClient.listIngress.mockResolvedValue(mockIngresses)
+    let mockIngresses: { ingressId: string }[]
 
+    beforeEach(() => {
+      mockIngresses = [{ ingressId: 'ing-1' }]
+      mockIngressClient.listIngress.mockResolvedValue(mockIngresses)
+    })
+
+    it('should list ingresses filtered by the provided room', async () => {
       const ingresses = await component.listIngresses('my-room')
 
       expect(ingresses).toEqual(mockIngresses)
@@ -521,9 +992,23 @@ describe('when listing ingresses', () => {
   })
 
   describe('and an error occurs', () => {
-    it('should return an empty array', async () => {
+    beforeEach(() => {
       mockIngressClient.listIngress.mockRejectedValue(new Error('Connection failed'))
+    })
 
+    it('should return an empty array', async () => {
+      const ingresses = await component.listIngresses()
+
+      expect(ingresses).toEqual([])
+    })
+  })
+
+  describe('and an error without message occurs', () => {
+    beforeEach(() => {
+      mockIngressClient.listIngress.mockRejectedValue({ code: 'UNKNOWN' })
+    })
+
+    it('should return an empty array', async () => {
       const ingresses = await component.listIngresses()
 
       expect(ingresses).toEqual([])
@@ -532,16 +1017,15 @@ describe('when listing ingresses', () => {
 })
 
 describe('when creating an ingress', () => {
-  it('should create an ingress with the provided options', async () => {
-    const mockIngress = { ingressId: 'ing-1', url: 'rtmp://...' }
-    mockIngressClient.createIngress.mockResolvedValue(mockIngress)
+  let mockIngress: { ingressId: string; url: string }
 
-    const ingress = await component.createIngress({
-      inputType: IngressInput.RTMP_INPUT,
-      name: 'my-stream',
-      roomName: 'my-room',
-      participantIdentity: 'streamer-1'
-    })
+  beforeEach(() => {
+    mockIngress = { ingressId: 'ing-1', url: 'rtmp://...' }
+    mockIngressClient.createIngress.mockResolvedValue(mockIngress)
+  })
+
+  it('should create an ingress with the provided options', async () => {
+    const ingress = await component.createIngress(IngressInput.RTMP_INPUT, 'my-stream', 'my-room', 'streamer-1')
 
     expect(ingress).toEqual(mockIngress)
     expect(mockIngressClient.createIngress).toHaveBeenCalledWith(IngressInput.RTMP_INPUT, {
@@ -555,9 +1039,11 @@ describe('when creating an ingress', () => {
 
 describe('when deleting an ingress', () => {
   describe('and the deletion succeeds', () => {
-    it('should delete the ingress successfully', async () => {
+    beforeEach(() => {
       mockIngressClient.deleteIngress.mockResolvedValue(undefined)
+    })
 
+    it('should delete the ingress successfully', async () => {
       await component.deleteIngress('ing-1')
 
       expect(mockIngressClient.deleteIngress).toHaveBeenCalledWith('ing-1')
@@ -565,9 +1051,11 @@ describe('when deleting an ingress', () => {
   })
 
   describe('and an error occurs', () => {
-    it('should throw LivekitIngressNotFoundError', async () => {
+    beforeEach(() => {
       mockIngressClient.deleteIngress.mockRejectedValue(new Error('Not found'))
+    })
 
+    it('should throw LivekitIngressNotFoundError', async () => {
       await expect(component.deleteIngress('non-existent')).rejects.toThrow(LivekitIngressNotFoundError)
     })
   })
@@ -575,10 +1063,14 @@ describe('when deleting an ingress', () => {
 
 describe('when getting or creating an ingress', () => {
   describe('and the ingress already exists', () => {
-    it('should return the existing ingress without creating a new one', async () => {
-      const mockIngress = { ingressId: 'ing-1' }
-      mockIngressClient.listIngress.mockResolvedValue([mockIngress])
+    let mockIngress: { ingressId: string }
 
+    beforeEach(() => {
+      mockIngress = { ingressId: 'ing-1' }
+      mockIngressClient.listIngress.mockResolvedValue([mockIngress])
+    })
+
+    it('should return the existing ingress without creating a new one', async () => {
       const ingress = await component.getOrCreateIngress('my-room', 'streamer-1')
 
       expect(ingress).toEqual(mockIngress)
@@ -587,11 +1079,15 @@ describe('when getting or creating an ingress', () => {
   })
 
   describe('and the ingress does not exist', () => {
-    it('should create and return a new ingress', async () => {
-      const mockIngress = { ingressId: 'ing-new' }
+    let mockIngress: { ingressId: string }
+
+    beforeEach(() => {
+      mockIngress = { ingressId: 'ing-new' }
       mockIngressClient.listIngress.mockResolvedValue([])
       mockIngressClient.createIngress.mockResolvedValue(mockIngress)
+    })
 
+    it('should create and return a new ingress', async () => {
       const ingress = await component.getOrCreateIngress('my-room', 'streamer-1')
 
       expect(ingress).toEqual(mockIngress)
@@ -602,10 +1098,14 @@ describe('when getting or creating an ingress', () => {
 
 describe('when receiving a webhook event', () => {
   describe('and the webhook is valid', () => {
-    it('should parse and return the webhook event', async () => {
-      const mockEvent = { event: 'participant_joined', room: { name: 'my-room' } }
-      mockWebhookReceiver.receive.mockResolvedValue(mockEvent)
+    let mockEvent: { event: string; room: { name: string } }
 
+    beforeEach(() => {
+      mockEvent = { event: 'participant_joined', room: { name: 'my-room' } }
+      mockWebhookReceiver.receive.mockResolvedValue(mockEvent)
+    })
+
+    it('should parse and return the webhook event', async () => {
       const event = await component.receiveWebhookEvent('body', 'auth-header')
 
       expect(event).toEqual(mockEvent)
@@ -614,30 +1114,26 @@ describe('when receiving a webhook event', () => {
   })
 
   describe('and the webhook is invalid', () => {
-    it('should throw LivekitWebhookVerificationError', async () => {
+    beforeEach(() => {
       mockWebhookReceiver.receive.mockRejectedValue(new Error('Invalid signature'))
+    })
 
+    it('should throw LivekitWebhookVerificationError', async () => {
       await expect(component.receiveWebhookEvent('body', 'invalid-auth')).rejects.toThrow(
         LivekitWebhookVerificationError
       )
     })
   })
-})
 
-describe('when creating error instances', () => {
-  describe('and creating a LivekitIngressNotFoundError', () => {
-    it('should create the error with the correct message and name', () => {
-      const error = new LivekitIngressNotFoundError('ing-123')
-      expect(error.message).toBe('LiveKit ingress not found: ing-123')
-      expect(error.name).toBe('LivekitIngressNotFoundError')
+  describe('and an error without message occurs', () => {
+    beforeEach(() => {
+      mockWebhookReceiver.receive.mockRejectedValue({ code: 'UNKNOWN' })
     })
-  })
 
-  describe('and creating a LivekitWebhookVerificationError', () => {
-    it('should create the error with the correct message and name', () => {
-      const error = new LivekitWebhookVerificationError('Invalid signature')
-      expect(error.message).toBe('LiveKit webhook verification failed: Invalid signature')
-      expect(error.name).toBe('LivekitWebhookVerificationError')
+    it('should throw LivekitWebhookVerificationError with Unknown error message', async () => {
+      await expect(component.receiveWebhookEvent('body', 'invalid-auth')).rejects.toThrow(
+        'LiveKit webhook verification failed: Unknown error'
+      )
     })
   })
 })
