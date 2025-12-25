@@ -1,22 +1,31 @@
 import { createMemoryQueueComponent } from '../src/component'
+import { IQueueComponent, ReceiveMessagesOptions } from '../src/types'
 
-describe('createMemoryQueueComponent', () => {
-  describe('sendMessage', () => {
-    it('should send a message to the queue', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+let component: IQueueComponent
 
-      await queue.sendMessage({ type: 'test', data: 'hello' })
+beforeEach(() => {
+  component = createMemoryQueueComponent({ pollingDelayMs: 10 })
+})
 
-      const status = await queue.getStatus()
-      expect(status.ApproximateNumberOfMessages).toBe('1')
+describe('when sending messages', () => {
+  describe('and a message is sent', () => {
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test', data: 'hello' })
     })
 
-    it('should wrap message in SNS format by default', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+    it('should add the message to the queue', async () => {
+      const status = await component.getStatus()
+      expect(status.ApproximateNumberOfMessages).toBe('1')
+    })
+  })
 
-      await queue.sendMessage({ type: 'test' })
+  describe('and wrapInSnsFormat is enabled (default)', () => {
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test' })
+    })
 
-      const messages = await queue.receiveMessages(1)
+    it('should wrap message in SNS format', async () => {
+      const messages = await component.receiveMessages(1)
       expect(messages).toHaveLength(1)
 
       const body = JSON.parse(messages[0].Body)
@@ -25,263 +34,300 @@ describe('createMemoryQueueComponent', () => {
       const innerMessage = JSON.parse(body.Message)
       expect(innerMessage).toEqual({ type: 'test' })
     })
+  })
 
-    it('should not wrap in SNS format when wrapInSnsFormat is false', async () => {
-      const queue = createMemoryQueueComponent({
+  describe('and wrapInSnsFormat is disabled', () => {
+    beforeEach(() => {
+      component = createMemoryQueueComponent({
         pollingDelayMs: 10,
         wrapInSnsFormat: false
       })
+    })
 
-      await queue.sendMessage({ type: 'test' })
+    it('should not wrap message in SNS format', async () => {
+      await component.sendMessage({ type: 'test' })
 
-      const messages = await queue.receiveMessages(1)
+      const messages = await component.receiveMessages(1)
       expect(messages).toHaveLength(1)
 
       const body = JSON.parse(messages[0].Body)
       expect(body).toEqual({ type: 'test' })
     })
+  })
 
-    it('should generate unique MessageId and ReceiptHandle for each message', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+  describe('and multiple messages are sent', () => {
+    beforeEach(async () => {
+      await component.sendMessage({ id: 1 })
+      await component.sendMessage({ id: 2 })
+    })
 
-      await queue.sendMessage({ id: 1 })
-      await queue.sendMessage({ id: 2 })
-
-      const messages = await queue.receiveMessages(2)
+    it('should generate unique MessageId for each message', async () => {
+      const messages = await component.receiveMessages(2)
       expect(messages).toHaveLength(2)
       expect(messages[0].MessageId).not.toBe(messages[1].MessageId)
+    })
+
+    it('should generate unique ReceiptHandle for each message', async () => {
+      const messages = await component.receiveMessages(2)
+      expect(messages).toHaveLength(2)
       expect(messages[0].ReceiptHandle).not.toBe(messages[1].ReceiptHandle)
     })
   })
+})
 
-  describe('receiveMessages', () => {
+describe('when receiving messages', () => {
+  describe('and messages are available', () => {
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test1' })
+      await component.sendMessage({ type: 'test2' })
+    })
+
     it('should receive messages from the queue', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await queue.sendMessage({ type: 'test1' })
-      await queue.sendMessage({ type: 'test2' })
-
-      const messages = await queue.receiveMessages(2)
+      const messages = await component.receiveMessages(2)
       expect(messages).toHaveLength(2)
+    })
+  })
+
+  describe('and requesting more messages than available', () => {
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test1' })
+      await component.sendMessage({ type: 'test2' })
+      await component.sendMessage({ type: 'test3' })
     })
 
     it('should limit the number of messages received', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await queue.sendMessage({ type: 'test1' })
-      await queue.sendMessage({ type: 'test2' })
-      await queue.sendMessage({ type: 'test3' })
-
-      const messages = await queue.receiveMessages(2)
+      const messages = await component.receiveMessages(2)
       expect(messages).toHaveLength(2)
     })
+  })
 
-    it('should return empty array when queue is empty', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      const messages = await queue.receiveMessages(10)
+  describe('and no messages are available', () => {
+    it('should return empty array', async () => {
+      const messages = await component.receiveMessages(10)
       expect(messages).toEqual([])
     })
+  })
 
-    it('should make messages invisible after receiving', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await queue.sendMessage({ type: 'test' })
-
-      // First receive should get the message
-      const messages1 = await queue.receiveMessages(1, { visibilityTimeout: 60 })
-      expect(messages1).toHaveLength(1)
-
-      // Second receive should get nothing (message is invisible)
-      const messages2 = await queue.receiveMessages(1)
-      expect(messages2).toHaveLength(0)
-
-      // Status should show 0 visible, 1 invisible
-      const status = await queue.getStatus()
-      expect(status.ApproximateNumberOfMessages).toBe('0')
-      expect(status.ApproximateNumberOfMessagesNotVisible).toBe('1')
+  describe('and no amount is specified', () => {
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test1' })
+      await component.sendMessage({ type: 'test2' })
     })
 
-    it('should default to 1 message when amount not specified', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await queue.sendMessage({ type: 'test1' })
-      await queue.sendMessage({ type: 'test2' })
-
-      const messages = await queue.receiveMessages()
+    it('should default to 1 message', async () => {
+      const messages = await component.receiveMessages()
       expect(messages).toHaveLength(1)
     })
   })
 
-  describe('deleteMessage', () => {
-    it('should delete a message from the queue', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+  describe('and custom options are provided', () => {
+    let options: ReceiveMessagesOptions
 
-      await queue.sendMessage({ type: 'test' })
-      const messages = await queue.receiveMessages(1)
-      expect(messages).toHaveLength(1)
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test' })
+      options = {}
+    })
 
-      await queue.deleteMessage(messages[0].ReceiptHandle)
+    describe('and a custom visibility timeout is provided', () => {
+      beforeEach(() => {
+        options.visibilityTimeout = 60
+      })
 
-      const status = await queue.getStatus()
+      it('should make message invisible after receiving', async () => {
+        const messages1 = await component.receiveMessages(1, options)
+        expect(messages1).toHaveLength(1)
+
+        const messages2 = await component.receiveMessages(1)
+        expect(messages2).toHaveLength(0)
+
+        const status = await component.getStatus()
+        expect(status.ApproximateNumberOfMessages).toBe('0')
+        expect(status.ApproximateNumberOfMessagesNotVisible).toBe('1')
+      })
+    })
+
+    describe('and a custom wait time seconds is provided', () => {
+      it('should override the polling delay', async () => {
+        component = createMemoryQueueComponent({ pollingDelayMs: 1000 })
+
+        const startTime = Date.now()
+        await component.receiveMessages(1, { waitTimeSeconds: 0.05 })
+        const elapsed = Date.now() - startTime
+
+        expect(elapsed).toBeGreaterThanOrEqual(40)
+        expect(elapsed).toBeLessThan(500)
+      })
+    })
+  })
+})
+
+describe('when deleting messages', () => {
+  describe('and the message exists', () => {
+    let receiptHandle: string
+
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test' })
+      const messages = await component.receiveMessages(1)
+      receiptHandle = messages[0].ReceiptHandle
+    })
+
+    it('should delete the message successfully', async () => {
+      await component.deleteMessage(receiptHandle)
+
+      const status = await component.getStatus()
       expect(status.ApproximateNumberOfMessages).toBe('0')
       expect(status.ApproximateNumberOfMessagesNotVisible).toBe('0')
     })
-
-    it('should not throw when deleting non-existent message', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await expect(queue.deleteMessage('non-existent')).resolves.toBeUndefined()
-    })
   })
 
-  describe('deleteMessages', () => {
-    it('should delete multiple messages from the queue', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+  describe('and the message does not exist', () => {
+    it('should not throw', async () => {
+      await expect(component.deleteMessage('non-existent')).resolves.toBeUndefined()
+    })
+  })
+})
 
-      await queue.sendMessage({ type: 'test1' })
-      await queue.sendMessage({ type: 'test2' })
-      await queue.sendMessage({ type: 'test3' })
+describe('when deleting multiple messages', () => {
+  describe('and the messages exist', () => {
+    let receiptHandles: string[]
 
-      const messages = await queue.receiveMessages(3)
-      expect(messages).toHaveLength(3)
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test1' })
+      await component.sendMessage({ type: 'test2' })
+      await component.sendMessage({ type: 'test3' })
 
-      await queue.deleteMessages(messages.map((m) => m.ReceiptHandle))
+      const messages = await component.receiveMessages(3)
+      receiptHandles = messages.map((m) => m.ReceiptHandle)
+    })
 
-      const status = await queue.getStatus()
+    it('should delete all messages successfully', async () => {
+      await component.deleteMessages(receiptHandles)
+
+      const status = await component.getStatus()
       expect(status.ApproximateNumberOfMessages).toBe('0')
     })
-
-    it('should handle empty array', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await expect(queue.deleteMessages([])).resolves.toBeUndefined()
-    })
   })
 
-  describe('changeMessageVisibility', () => {
-    it('should change visibility timeout of a message', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+  describe('and an empty array is provided', () => {
+    it('should not throw', async () => {
+      await expect(component.deleteMessages([])).resolves.toBeUndefined()
+    })
+  })
+})
 
-      await queue.sendMessage({ type: 'test' })
-      const messages = await queue.receiveMessages(1, { visibilityTimeout: 300 })
+describe('when changing message visibility', () => {
+  describe('and the message exists', () => {
+    let receiptHandle: string
 
-      // Message is invisible
-      let status = await queue.getStatus()
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test' })
+      const messages = await component.receiveMessages(1, { visibilityTimeout: 300 })
+      receiptHandle = messages[0].ReceiptHandle
+    })
+
+    it('should change visibility timeout successfully', async () => {
+      let status = await component.getStatus()
       expect(status.ApproximateNumberOfMessagesNotVisible).toBe('1')
 
-      // Make it visible immediately
-      await queue.changeMessageVisibility(messages[0].ReceiptHandle, 0)
+      await component.changeMessageVisibility(receiptHandle, 0)
 
-      // Now it should be visible again
-      status = await queue.getStatus()
+      status = await component.getStatus()
       expect(status.ApproximateNumberOfMessages).toBe('1')
       expect(status.ApproximateNumberOfMessagesNotVisible).toBe('0')
     })
-
-    it('should not throw when changing visibility of non-existent message', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await expect(queue.changeMessageVisibility('non-existent', 60)).resolves.toBeUndefined()
-    })
   })
 
-  describe('changeMessagesVisibility', () => {
-    it('should change visibility timeout of multiple messages', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+  describe('and the message does not exist', () => {
+    it('should not throw', async () => {
+      await expect(component.changeMessageVisibility('non-existent', 60)).resolves.toBeUndefined()
+    })
+  })
+})
 
-      await queue.sendMessage({ type: 'test1' })
-      await queue.sendMessage({ type: 'test2' })
+describe('when changing visibility for multiple messages', () => {
+  describe('and the messages exist', () => {
+    let receiptHandles: string[]
 
-      const messages = await queue.receiveMessages(2, { visibilityTimeout: 300 })
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test1' })
+      await component.sendMessage({ type: 'test2' })
 
-      // Messages are invisible
-      let status = await queue.getStatus()
+      const messages = await component.receiveMessages(2, { visibilityTimeout: 300 })
+      receiptHandles = messages.map((m) => m.ReceiptHandle)
+    })
+
+    it('should change visibility timeout for all messages', async () => {
+      let status = await component.getStatus()
       expect(status.ApproximateNumberOfMessagesNotVisible).toBe('2')
 
-      // Make them visible immediately
-      await queue.changeMessagesVisibility(
-        messages.map((m) => m.ReceiptHandle),
-        0
-      )
+      await component.changeMessagesVisibility(receiptHandles, 0)
 
-      // Now they should be visible again
-      status = await queue.getStatus()
+      status = await component.getStatus()
       expect(status.ApproximateNumberOfMessages).toBe('2')
       expect(status.ApproximateNumberOfMessagesNotVisible).toBe('0')
     })
-
-    it('should handle empty array', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await expect(queue.changeMessagesVisibility([], 60)).resolves.toBeUndefined()
-    })
   })
 
-  describe('getStatus', () => {
-    it('should return correct counts for empty queue', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+  describe('and an empty array is provided', () => {
+    it('should not throw', async () => {
+      await expect(component.changeMessagesVisibility([], 60)).resolves.toBeUndefined()
+    })
+  })
+})
 
-      const status = await queue.getStatus()
+describe('when getting queue status', () => {
+  describe('and the queue is empty', () => {
+    it('should return correct counts', async () => {
+      const status = await component.getStatus()
       expect(status).toEqual({
         ApproximateNumberOfMessages: '0',
         ApproximateNumberOfMessagesNotVisible: '0',
         ApproximateNumberOfMessagesDelayed: '0'
       })
     })
+  })
 
-    it('should return correct counts for queue with visible messages', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
+  describe('and there are visible messages', () => {
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test1' })
+      await component.sendMessage({ type: 'test2' })
+    })
 
-      await queue.sendMessage({ type: 'test1' })
-      await queue.sendMessage({ type: 'test2' })
-
-      const status = await queue.getStatus()
+    it('should return correct visible count', async () => {
+      const status = await component.getStatus()
       expect(status.ApproximateNumberOfMessages).toBe('2')
       expect(status.ApproximateNumberOfMessagesNotVisible).toBe('0')
     })
+  })
+
+  describe('and there are both visible and invisible messages', () => {
+    beforeEach(async () => {
+      await component.sendMessage({ type: 'test1' })
+      await component.sendMessage({ type: 'test2' })
+      await component.sendMessage({ type: 'test3' })
+
+      await component.receiveMessages(2, { visibilityTimeout: 300 })
+    })
 
     it('should correctly distinguish visible and invisible messages', async () => {
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 10 })
-
-      await queue.sendMessage({ type: 'test1' })
-      await queue.sendMessage({ type: 'test2' })
-      await queue.sendMessage({ type: 'test3' })
-
-      // Receive 2 messages (they become invisible)
-      await queue.receiveMessages(2, { visibilityTimeout: 300 })
-
-      const status = await queue.getStatus()
+      const status = await component.getStatus()
       expect(status.ApproximateNumberOfMessages).toBe('1')
       expect(status.ApproximateNumberOfMessagesNotVisible).toBe('2')
     })
   })
+})
 
-  describe('options', () => {
-    it('should use custom pollingDelayMs', async () => {
+describe('when configuring the component', () => {
+  describe('and a custom pollingDelayMs is provided', () => {
+    it('should use the custom polling delay', async () => {
+      component = createMemoryQueueComponent({ pollingDelayMs: 50 })
+
       const startTime = Date.now()
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 50 })
-
-      await queue.receiveMessages(1)
+      await component.receiveMessages(1)
       const elapsed = Date.now() - startTime
 
-      // Should have waited approximately 50ms
       expect(elapsed).toBeGreaterThanOrEqual(40)
       expect(elapsed).toBeLessThan(200)
     })
-
-    it('should use waitTimeSeconds from options when provided', async () => {
-      const startTime = Date.now()
-      const queue = createMemoryQueueComponent({ pollingDelayMs: 1000 })
-
-      // waitTimeSeconds should override pollingDelayMs
-      await queue.receiveMessages(1, { waitTimeSeconds: 0.05 })
-      const elapsed = Date.now() - startTime
-
-      // Should have waited approximately 50ms (0.05 * 1000), not 1000ms
-      expect(elapsed).toBeGreaterThanOrEqual(40)
-      expect(elapsed).toBeLessThan(500)
-    })
   })
 })
-
