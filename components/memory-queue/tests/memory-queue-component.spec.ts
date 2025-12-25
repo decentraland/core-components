@@ -1,5 +1,5 @@
 import { createMemoryQueueComponent } from '../src/component'
-import { IQueueComponent, ReceiveMessagesOptions } from '../src/types'
+import type { IQueueComponent, ReceiveMessagesOptions } from '@dcl/core-commons'
 
 let component: IQueueComponent
 

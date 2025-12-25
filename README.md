@@ -134,6 +134,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/slack-component`
 - `@dcl/sns-component`
 - `@dcl/sqs-component`
+- `@dcl/memory-queue-component`
 - `@dcl/traced-fetch-component`
 - `@dcl/core-commons`
 

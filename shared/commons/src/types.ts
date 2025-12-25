@@ -96,3 +96,68 @@ export interface ICacheStorageComponent extends IBaseComponent {
    */
   tryReleaseLock(key: string): Promise<boolean>
 }
+
+// Queue component types
+
+/**
+ * Options for receiving messages from a queue.
+ */
+export type ReceiveMessagesOptions = {
+  visibilityTimeout?: number
+  waitTimeSeconds?: number
+  abortSignal?: AbortSignal
+}
+
+/**
+ * The status of a queue.
+ */
+export type QueueStatus = {
+  ApproximateNumberOfMessages: string
+  ApproximateNumberOfMessagesNotVisible: string
+  ApproximateNumberOfMessagesDelayed: string
+}
+
+/**
+ * The interface for a queue component.
+ */
+export interface IQueueComponent {
+  /**
+   * Sends a message to the queue.
+   * @param message - The message to send.
+   */
+  sendMessage(message: any): Promise<void>
+  /**
+   * Receives messages from the queue.
+   * @param amount - The number of messages to receive.
+   * @param options - The options for receiving messages.
+   * @returns A promise that resolves to an array of messages.
+   */
+  receiveMessages(amount?: number, options?: ReceiveMessagesOptions): Promise<any[]>
+  /**
+   * Deletes a message from the queue.
+   * @param receiptHandle - The receipt handle of the message to delete.
+   */
+  deleteMessage(receiptHandle: string): Promise<void>
+  /**
+   * Deletes multiple messages from the queue.
+   * @param receiptHandles - The receipt handles of the messages to delete.
+   */
+  deleteMessages(receiptHandles: string[]): Promise<void>
+  /**
+   * Changes the visibility timeout of a message.
+   * @param receiptHandle - The receipt handle of the message to change the visibility timeout of.
+   * @param visibilityTimeout - The new visibility timeout in seconds.
+   */
+  changeMessageVisibility(receiptHandle: string, visibilityTimeout: number): Promise<void>
+  /**
+   * Changes the visibility timeout of multiple messages.
+   * @param receiptHandles - The receipt handles of the messages to change the visibility timeout of.
+   * @param visibilityTimeout - The new visibility timeout in seconds.
+   */
+  changeMessagesVisibility(receiptHandles: string[], visibilityTimeout: number): Promise<void>
+  /**
+   * Gets the status of the queue.
+   * @returns A promise that resolves to the status of the queue.
+   */
+  getStatus(): Promise<QueueStatus>
+}

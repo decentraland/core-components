@@ -1,28 +1,35 @@
-export interface ReceiveMessagesOptions {
-  visibilityTimeout?: number
-  waitTimeSeconds?: number
-  abortSignal?: AbortSignal
+import { IQueueComponent, QueueStatus, ReceiveMessagesOptions } from '@dcl/core-commons'
+
+/**
+ * Options for configuring the in-memory queue component
+ */
+export type MemoryQueueOptions = {
+  /**
+   * Delay in milliseconds when polling for messages.
+   * Used to prevent blocking the main thread in a polling loop.
+   * @default 1000
+   */
+  pollingDelayMs?: number
+
+  /**
+   * Whether to wrap the message body in SNS format ({ Message: JSON.stringify(message) }).
+   * Set to true for compatibility with the SQS component message format.
+   * @default true
+   */
+  wrapInSnsFormat?: boolean
 }
 
-export interface QueueMessage {
+/**
+ * A message from a queue.
+ */
+export type QueueMessage = {
   MessageId: string
   ReceiptHandle: string
   Body: string
 }
 
-export interface QueueStatus {
-  ApproximateNumberOfMessages: string
-  ApproximateNumberOfMessagesNotVisible: string
-  ApproximateNumberOfMessagesDelayed: string
+export type StoredMessage = QueueMessage & {
+  visibleAt: number
 }
 
-export interface IQueueComponent {
-  sendMessage(message: unknown): Promise<void>
-  receiveMessages(amount?: number, options?: ReceiveMessagesOptions): Promise<QueueMessage[]>
-  deleteMessage(receiptHandle: string): Promise<void>
-  deleteMessages(receiptHandles: string[]): Promise<void>
-  changeMessageVisibility(receiptHandle: string, visibilityTimeout: number): Promise<void>
-  changeMessagesVisibility(receiptHandles: string[], visibilityTimeout: number): Promise<void>
-  getStatus(): Promise<QueueStatus>
-}
-
+export type { IQueueComponent, ReceiveMessagesOptions, QueueStatus }

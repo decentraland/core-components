@@ -1,29 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { sleep } from '@dcl/core-commons'
-import { IQueueComponent, QueueMessage, ReceiveMessagesOptions } from './types'
-
-/**
- * Options for configuring the in-memory queue component
- */
-export interface MemoryQueueOptions {
-  /**
-   * Delay in milliseconds when polling for messages.
-   * Used to prevent blocking the main thread in a polling loop.
-   * @default 1000
-   */
-  pollingDelayMs?: number
-
-  /**
-   * Whether to wrap the message body in SNS format ({ Message: JSON.stringify(message) }).
-   * Set to true for compatibility with the SQS component message format.
-   * @default true
-   */
-  wrapInSnsFormat?: boolean
-}
-
-interface StoredMessage extends QueueMessage {
-  visibleAt: number
-}
+import { IQueueComponent, ReceiveMessagesOptions } from '@dcl/core-commons'
+import { MemoryQueueOptions, StoredMessage, QueueMessage } from './types'
 
 /**
  * Creates an in-memory queue component that implements IQueueComponent.
@@ -156,4 +134,3 @@ export function createMemoryQueueComponent(options: MemoryQueueOptions = {}): IQ
     getStatus
   }
 }
-
