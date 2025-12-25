@@ -23,7 +23,13 @@ import {
   RoomType,
   UpdateParticipantOptions
 } from './types'
-import { LivekitIngressNotFoundError, LivekitParticipantNotFoundError, LivekitWebhookVerificationError } from './errors'
+import {
+  LivekitIngressNotFoundError,
+  LivekitParticipantNotFoundError,
+  LivekitParticipantUpdateError,
+  LivekitRoomMetadataUpdateError,
+  LivekitWebhookVerificationError
+} from './errors'
 
 /**
  * Normalizes a host URL to ensure it starts with wss://
@@ -481,10 +487,9 @@ export async function createLivekitComponent(components: {
       const mergedMetadata = { ...existingMetadata, ...metadata }
       await roomClient.updateRoomMetadata(roomName, JSON.stringify(mergedMetadata))
     } catch (error) {
-      logger.error(
-        `Error updating room metadata for ${roomName}: ${isErrorWithMessage(error) ? error.message : 'Unknown error'}`
-      )
-      throw error
+      const message = isErrorWithMessage(error) ? error.message : 'Unknown error'
+      logger.error(`Error updating room metadata for ${roomName}: ${message}`)
+      throw new LivekitRoomMetadataUpdateError(roomName, message)
     }
   }
 
@@ -606,12 +611,9 @@ export async function createLivekitComponent(components: {
 
       await roomClient.updateParticipant(roomName, identity, metadataStr, opts.permissions)
     } catch (error) {
-      logger.error(
-        `Error updating participant ${identity} in ${roomName}: ${
-          isErrorWithMessage(error) ? error.message : 'Unknown error'
-        }`
-      )
-      throw error
+      const message = isErrorWithMessage(error) ? error.message : 'Unknown error'
+      logger.error(`Error updating participant ${identity} in ${roomName}: ${message}`)
+      throw new LivekitParticipantUpdateError(roomName, identity, message)
     }
   }
 

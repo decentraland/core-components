@@ -38,3 +38,22 @@ export class LivekitWebhookVerificationError extends Error {
   }
 }
 
+/**
+ * Error thrown when updating room metadata fails
+ */
+export class LivekitRoomMetadataUpdateError extends Error {
+  constructor(roomName: string, message: string) {
+    super(`Failed to update metadata for room ${roomName}: ${message}`)
+    this.name = 'LivekitRoomMetadataUpdateError'
+  }
+}
+
+/**
+ * Error thrown when updating a participant fails
+ */
+export class LivekitParticipantUpdateError extends Error {
+  constructor(roomName: string, identity: string, message: string) {
+    super(`Failed to update participant ${identity} in room ${roomName}: ${message}`)
+    this.name = 'LivekitParticipantUpdateError'
+  }
+}

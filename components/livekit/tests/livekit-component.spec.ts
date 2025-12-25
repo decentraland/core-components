@@ -5,49 +5,50 @@ import { ILivekitComponent, IngressInput } from '../src/types'
 import {
   LivekitIngressNotFoundError,
   LivekitParticipantNotFoundError,
+  LivekitParticipantUpdateError,
+  LivekitRoomMetadataUpdateError,
   LivekitWebhookVerificationError
 } from '../src/errors'
 
-// Mock livekit-server-sdk
-jest.mock('livekit-server-sdk', () => {
-  const mockToJwt = jest.fn().mockResolvedValue('mock-jwt-token')
-  const mockAddGrant = jest.fn()
+// Define mocks at module level for easy access in tests
+const mockAddGrant = jest.fn()
+const mockToJwt = jest.fn().mockResolvedValue('mock-jwt-token')
 
-  return {
-    AccessToken: jest.fn().mockImplementation(() => ({
-      addGrant: mockAddGrant,
-      toJwt: mockToJwt
-    })),
-    RoomServiceClient: jest.fn().mockImplementation(() => ({
-      listRooms: jest.fn(),
-      createRoom: jest.fn(),
-      deleteRoom: jest.fn(),
-      updateRoomMetadata: jest.fn(),
-      listParticipants: jest.fn(),
-      removeParticipant: jest.fn(),
-      updateParticipant: jest.fn()
-    })),
-    IngressClient: jest.fn().mockImplementation(() => ({
-      listIngress: jest.fn(),
-      createIngress: jest.fn(),
-      deleteIngress: jest.fn()
-    })),
-    WebhookReceiver: jest.fn().mockImplementation(() => ({
-      receive: jest.fn()
-    })),
-    IngressInput: {
-      RTMP_INPUT: 0,
-      WHIP_INPUT: 1,
-      URL_INPUT: 2
-    },
-    TrackSource: {
-      CAMERA: 0,
-      MICROPHONE: 1,
-      SCREEN_SHARE: 2,
-      SCREEN_SHARE_AUDIO: 3
-    }
+// Mock livekit-server-sdk
+jest.mock('livekit-server-sdk', () => ({
+  AccessToken: jest.fn().mockImplementation(() => ({
+    addGrant: mockAddGrant,
+    toJwt: mockToJwt
+  })),
+  RoomServiceClient: jest.fn().mockImplementation(() => ({
+    listRooms: jest.fn(),
+    createRoom: jest.fn(),
+    deleteRoom: jest.fn(),
+    updateRoomMetadata: jest.fn(),
+    listParticipants: jest.fn(),
+    removeParticipant: jest.fn(),
+    updateParticipant: jest.fn()
+  })),
+  IngressClient: jest.fn().mockImplementation(() => ({
+    listIngress: jest.fn(),
+    createIngress: jest.fn(),
+    deleteIngress: jest.fn()
+  })),
+  WebhookReceiver: jest.fn().mockImplementation(() => ({
+    receive: jest.fn()
+  })),
+  IngressInput: {
+    RTMP_INPUT: 0,
+    WHIP_INPUT: 1,
+    URL_INPUT: 2
+  },
+  TrackSource: {
+    CAMERA: 0,
+    MICROPHONE: 1,
+    SCREEN_SHARE: 2,
+    SCREEN_SHARE_AUDIO: 3
   }
-})
+}))
 
 let logs: ILoggerComponent
 let config: IConfigComponent
@@ -196,12 +197,10 @@ describe('when creating the livekit component', () => {
 
 describe('when generating credentials', () => {
   let mockAccessToken: any
-  let mockAddGrant: jest.Mock
 
   beforeEach(() => {
     const { AccessToken } = require('livekit-server-sdk')
     mockAccessToken = AccessToken
-    mockAddGrant = mockAccessToken.mock.results[0]?.value?.addGrant || jest.fn()
   })
 
   describe('and using default permissions', () => {
@@ -226,6 +225,22 @@ describe('when generating credentials', () => {
         })
       )
     })
+
+    it('should grant default permissions', async () => {
+      await component.generateCredentials('user-123', 'my-room')
+
+      expect(mockAddGrant).toHaveBeenCalledWith({
+        roomJoin: true,
+        room: 'my-room',
+        roomList: false,
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: true,
+        canUpdateOwnMetadata: true,
+        canPublishSources: undefined,
+        hidden: false
+      })
+    })
   })
 
   describe('and using custom permissions', () => {
@@ -243,6 +258,22 @@ describe('when generating credentials', () => {
       const credentials = await component.generateCredentials('user-123', 'my-room', { permissions })
 
       expect(credentials.token).toBe('mock-jwt-token')
+    })
+
+    it('should grant the custom permissions', async () => {
+      await component.generateCredentials('user-123', 'my-room', { permissions })
+
+      expect(mockAddGrant).toHaveBeenCalledWith({
+        roomJoin: true,
+        room: 'my-room',
+        roomList: false,
+        canPublish: false,
+        canSubscribe: true,
+        canPublishData: false,
+        canUpdateOwnMetadata: true,
+        canPublishSources: undefined,
+        hidden: false
+      })
     })
   })
 
@@ -293,6 +324,50 @@ describe('when generating credentials', () => {
         'test-api-secret',
         expect.objectContaining({
           ttl: ttlSeconds
+        })
+      )
+    })
+  })
+
+  describe('and providing canUpdateOwnMetadata permission', () => {
+    it('should grant the canUpdateOwnMetadata permission as false when specified', async () => {
+      await component.generateCredentials('user-123', 'my-room', {
+        permissions: { canUpdateOwnMetadata: false }
+      })
+
+      expect(mockAddGrant).toHaveBeenCalledWith(
+        expect.objectContaining({
+          canUpdateOwnMetadata: false
+        })
+      )
+    })
+  })
+
+  describe('and providing canPublishSources permission', () => {
+    it('should grant the canPublishSources permission with specific sources', async () => {
+      const { TrackSource } = require('livekit-server-sdk')
+
+      await component.generateCredentials('user-123', 'my-room', {
+        permissions: { canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE] }
+      })
+
+      expect(mockAddGrant).toHaveBeenCalledWith(
+        expect.objectContaining({
+          canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE]
+        })
+      )
+    })
+  })
+
+  describe('and providing hidden permission', () => {
+    it('should grant the hidden permission as true when specified', async () => {
+      await component.generateCredentials('user-123', 'my-room', {
+        permissions: { hidden: true }
+      })
+
+      expect(mockAddGrant).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hidden: true
         })
       )
     })
@@ -381,6 +456,16 @@ describe('when using room naming utilities', () => {
         sceneId: undefined,
         worldName: undefined,
         islandName: 'island-123'
+      })
+    })
+
+    it('should return empty metadata for an unknown room name format', () => {
+      const metadata = component.getRoomMetadataFromRoomName('unknown-room-format')
+      expect(metadata).toEqual({
+        realmName: undefined,
+        sceneId: undefined,
+        worldName: undefined,
+        islandName: undefined
       })
     })
   })
@@ -604,6 +689,20 @@ describe('when getting or creating a room', () => {
       expect(room).toEqual(mockRoom)
       expect(mockRoomClient.createRoom).toHaveBeenCalled()
     })
+
+    it('should pass options to createRoom when creating', async () => {
+      await component.getOrCreateRoom('new-room', {
+        maxParticipants: 50,
+        emptyTimeout: 120
+      })
+
+      expect(mockRoomClient.createRoom).toHaveBeenCalledWith({
+        name: 'new-room',
+        maxParticipants: 50,
+        emptyTimeout: 120,
+        metadata: undefined
+      })
+    })
   })
 })
 
@@ -687,8 +786,16 @@ describe('when updating room metadata', () => {
       mockRoomClient.updateRoomMetadata.mockRejectedValue(new Error('Update failed'))
     })
 
-    it('should throw the error', async () => {
-      await expect(component.updateRoomMetadata('my-room', { key: 'value' })).rejects.toThrow('Update failed')
+    it('should throw LivekitRoomMetadataUpdateError', async () => {
+      await expect(component.updateRoomMetadata('my-room', { key: 'value' })).rejects.toThrow(
+        LivekitRoomMetadataUpdateError
+      )
+    })
+
+    it('should include the error message', async () => {
+      await expect(component.updateRoomMetadata('my-room', { key: 'value' })).rejects.toThrow(
+        'Failed to update metadata for room my-room: Update failed'
+      )
     })
   })
 
@@ -698,8 +805,10 @@ describe('when updating room metadata', () => {
       mockRoomClient.updateRoomMetadata.mockRejectedValue({ code: 'UNKNOWN' })
     })
 
-    it('should throw the error', async () => {
-      await expect(component.updateRoomMetadata('my-room', { key: 'value' })).rejects.toEqual({ code: 'UNKNOWN' })
+    it('should throw LivekitRoomMetadataUpdateError with Unknown error message', async () => {
+      await expect(component.updateRoomMetadata('my-room', { key: 'value' })).rejects.toThrow(
+        'Failed to update metadata for room my-room: Unknown error'
+      )
     })
   })
 })
@@ -917,16 +1026,43 @@ describe('when updating a participant', () => {
     })
   })
 
+  describe('and updating both metadata and permissions', () => {
+    beforeEach(() => {
+      mockRoomClient.listParticipants.mockResolvedValue([{ identity: 'user-1', metadata: '{"existing":"data"}' }])
+      mockRoomClient.updateParticipant.mockResolvedValue(undefined)
+    })
+
+    it('should update both metadata and permissions in the same call', async () => {
+      await component.updateParticipant('my-room', 'user-1', {
+        metadata: { role: 'moderator' },
+        permissions: { canPublish: false }
+      })
+
+      expect(mockRoomClient.updateParticipant).toHaveBeenCalledWith(
+        'my-room',
+        'user-1',
+        '{"existing":"data","role":"moderator"}',
+        { canPublish: false }
+      )
+    })
+  })
+
   describe('and the update fails', () => {
     beforeEach(() => {
       mockRoomClient.listParticipants.mockResolvedValue([{ identity: 'user-1', metadata: '{}' }])
       mockRoomClient.updateParticipant.mockRejectedValue(new Error('Update failed'))
     })
 
-    it('should throw the error', async () => {
+    it('should throw LivekitParticipantUpdateError', async () => {
       await expect(
         component.updateParticipant('my-room', 'user-1', { metadata: { role: 'moderator' } })
-      ).rejects.toThrow('Update failed')
+      ).rejects.toThrow(LivekitParticipantUpdateError)
+    })
+
+    it('should include the error message', async () => {
+      await expect(
+        component.updateParticipant('my-room', 'user-1', { metadata: { role: 'moderator' } })
+      ).rejects.toThrow('Failed to update participant user-1 in room my-room: Update failed')
     })
   })
 
@@ -936,10 +1072,10 @@ describe('when updating a participant', () => {
       mockRoomClient.updateParticipant.mockRejectedValue({ code: 'UNKNOWN' })
     })
 
-    it('should throw the error', async () => {
+    it('should throw LivekitParticipantUpdateError with Unknown error message', async () => {
       await expect(
         component.updateParticipant('my-room', 'user-1', { metadata: { role: 'moderator' } })
-      ).rejects.toEqual({ code: 'UNKNOWN' })
+      ).rejects.toThrow('Failed to update participant user-1 in room my-room: Unknown error')
     })
   })
 })
@@ -1024,15 +1160,33 @@ describe('when creating an ingress', () => {
     mockIngressClient.createIngress.mockResolvedValue(mockIngress)
   })
 
-  it('should create an ingress with the provided options', async () => {
-    const ingress = await component.createIngress(IngressInput.RTMP_INPUT, 'my-stream', 'my-room', 'streamer-1')
+  describe('and only required options are provided', () => {
+    it('should create an ingress with the provided options', async () => {
+      const ingress = await component.createIngress(IngressInput.RTMP_INPUT, 'my-stream', 'my-room', 'streamer-1')
 
-    expect(ingress).toEqual(mockIngress)
-    expect(mockIngressClient.createIngress).toHaveBeenCalledWith(IngressInput.RTMP_INPUT, {
-      name: 'my-stream',
-      roomName: 'my-room',
-      participantIdentity: 'streamer-1',
-      participantName: undefined
+      expect(ingress).toEqual(mockIngress)
+      expect(mockIngressClient.createIngress).toHaveBeenCalledWith(IngressInput.RTMP_INPUT, {
+        name: 'my-stream',
+        roomName: 'my-room',
+        participantIdentity: 'streamer-1',
+        participantName: undefined
+      })
+    })
+  })
+
+  describe('and participantName is provided', () => {
+    it('should create an ingress with the participantName', async () => {
+      const ingress = await component.createIngress(IngressInput.RTMP_INPUT, 'my-stream', 'my-room', 'streamer-1', {
+        participantName: 'Live Stream'
+      })
+
+      expect(ingress).toEqual(mockIngress)
+      expect(mockIngressClient.createIngress).toHaveBeenCalledWith(IngressInput.RTMP_INPUT, {
+        name: 'my-stream',
+        roomName: 'my-room',
+        participantIdentity: 'streamer-1',
+        participantName: 'Live Stream'
+      })
     })
   })
 })
@@ -1092,6 +1246,17 @@ describe('when getting or creating an ingress', () => {
 
       expect(ingress).toEqual(mockIngress)
       expect(mockIngressClient.createIngress).toHaveBeenCalled()
+    })
+
+    it('should create an RTMP ingress with default name format', async () => {
+      await component.getOrCreateIngress('my-room', 'streamer-1')
+
+      expect(mockIngressClient.createIngress).toHaveBeenCalledWith(IngressInput.RTMP_INPUT, {
+        name: 'my-room-ingress',
+        roomName: 'my-room',
+        participantIdentity: 'streamer-1',
+        participantName: undefined
+      })
     })
   })
 })
