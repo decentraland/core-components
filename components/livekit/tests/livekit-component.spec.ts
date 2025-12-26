@@ -87,24 +87,30 @@ beforeEach(async () => {
           throw new Error(`Unknown required key: ${key}`)
       }
     }),
-    getString: jest.fn().mockImplementation((key: string) => {
-      switch (key) {
-        case 'LIVEKIT_PREVIEW_HOST':
-          return livekitPreviewHost
-        case 'LIVEKIT_PREVIEW_API_KEY':
-          return livekitPreviewApiKey
-        case 'LIVEKIT_PREVIEW_API_SECRET':
-          return livekitPreviewApiSecret
-        case 'LIVEKIT_WORLD_ROOM_PREFIX':
-          return 'world-'
-        case 'LIVEKIT_SCENE_ROOM_PREFIX':
-          return 'scene-'
-        case 'LIVEKIT_ISLAND_ROOM_PREFIX':
-          return 'island-'
-        default:
-          return undefined
-      }
-    })
+        getString: jest.fn().mockImplementation((key: string) => {
+          switch (key) {
+            case 'LIVEKIT_PREVIEW_HOST':
+              return livekitPreviewHost
+            case 'LIVEKIT_PREVIEW_API_KEY':
+              return livekitPreviewApiKey
+            case 'LIVEKIT_PREVIEW_API_SECRET':
+              return livekitPreviewApiSecret
+            case 'LIVEKIT_WORLD_ROOM_PREFIX':
+              return 'world-'
+            case 'LIVEKIT_SCENE_ROOM_PREFIX':
+              return 'scene-'
+            case 'LIVEKIT_ISLAND_ROOM_PREFIX':
+              return 'island-'
+            case 'LIVEKIT_PRIVATE_VOICE_CHAT_ROOM_PREFIX':
+              return 'voice-chat-private-'
+            case 'LIVEKIT_COMMUNITY_VOICE_CHAT_ROOM_PREFIX':
+              return 'voice-chat-community-'
+            case 'LIVEKIT_PRIVATE_MESSAGES_ROOM_ID':
+              return 'private-messages'
+            default:
+              return undefined
+          }
+        })
   })
 
   // Get the mock instances
@@ -191,6 +197,8 @@ describe('when creating the livekit component', () => {
       expect(livekit.getWorldRoomName('test')).toBe('world-test')
       expect(livekit.getSceneRoomName('realm', 'scene')).toBe('scene-realm:scene')
       expect(livekit.getIslandRoomName('island')).toBe('island-island')
+      expect(livekit.getPrivateVoiceChatRoomName('call-123')).toBe('voice-chat-private-call-123')
+      expect(livekit.getCommunityVoiceChatRoomName('community-456')).toBe('voice-chat-community-community-456')
     })
   })
 })
@@ -403,6 +411,56 @@ describe('when using room naming utilities', () => {
     })
   })
 
+  describe('and getting a private voice chat room name', () => {
+    it('should return the prefixed private voice chat room name', () => {
+      const roomName = component.getPrivateVoiceChatRoomName('call-123')
+      expect(roomName).toBe('voice-chat-private-call-123')
+    })
+  })
+
+  describe('and getting a community voice chat room name', () => {
+    it('should return the prefixed community voice chat room name', () => {
+      const roomName = component.getCommunityVoiceChatRoomName('community-456')
+      expect(roomName).toBe('voice-chat-community-community-456')
+    })
+  })
+
+  describe('and extracting call ID from room name', () => {
+    it('should extract call ID from a private voice chat room name', () => {
+      const callId = component.getCallIdFromRoomName('voice-chat-private-call-123')
+      expect(callId).toBe('call-123')
+    })
+
+    it('should return undefined for non-voice-chat room names', () => {
+      const callId = component.getCallIdFromRoomName('world-my-world')
+      expect(callId).toBeUndefined()
+    })
+  })
+
+  describe('and extracting community ID from room name', () => {
+    it('should extract community ID from a community voice chat room name', () => {
+      const communityId = component.getCommunityIdFromRoomName('voice-chat-community-community-456')
+      expect(communityId).toBe('community-456')
+    })
+
+    it('should return undefined for non-community-voice-chat room names', () => {
+      const communityId = component.getCommunityIdFromRoomName('world-my-world')
+      expect(communityId).toBeUndefined()
+    })
+  })
+
+  describe('and extracting island name from room name', () => {
+    it('should extract island name from an island room name', () => {
+      const islandName = component.getIslandNameFromRoomName('island-island-123')
+      expect(islandName).toBe('island-123')
+    })
+
+    it('should return undefined for non-island room names', () => {
+      const islandName = component.getIslandNameFromRoomName('world-my-world')
+      expect(islandName).toBeUndefined()
+    })
+  })
+
   describe('and getting a room name by type', () => {
     it('should return a world room name for world type', () => {
       const roomName = component.getRoomName('my-world', { type: 'world' })
@@ -432,40 +490,55 @@ describe('when using room naming utilities', () => {
     it('should extract metadata from a scene room name', () => {
       const metadata = component.getRoomMetadataFromRoomName('scene-realm-1:scene-abc')
       expect(metadata).toEqual({
+        roomType: 'scene',
         realmName: 'realm-1',
-        sceneId: 'scene-abc',
-        worldName: undefined,
-        islandName: undefined
+        sceneId: 'scene-abc'
       })
     })
 
     it('should extract metadata from a world room name', () => {
       const metadata = component.getRoomMetadataFromRoomName('world-my-world')
       expect(metadata).toEqual({
-        realmName: undefined,
-        sceneId: undefined,
-        worldName: 'my-world',
-        islandName: undefined
+        roomType: 'world',
+        worldName: 'my-world'
       })
     })
 
     it('should extract metadata from an island room name', () => {
       const metadata = component.getRoomMetadataFromRoomName('island-island-123')
       expect(metadata).toEqual({
-        realmName: undefined,
-        sceneId: undefined,
-        worldName: undefined,
+        roomType: 'island',
         islandName: 'island-123'
       })
     })
 
-    it('should return empty metadata for an unknown room name format', () => {
+    it('should extract metadata from a private voice chat room name', () => {
+      const metadata = component.getRoomMetadataFromRoomName('voice-chat-private-call-123')
+      expect(metadata).toEqual({
+        roomType: 'voice_chat',
+        voiceChatId: 'call-123'
+      })
+    })
+
+    it('should extract metadata from a community voice chat room name', () => {
+      const metadata = component.getRoomMetadataFromRoomName('voice-chat-community-community-456')
+      expect(metadata).toEqual({
+        roomType: 'community_voice_chat',
+        communityId: 'community-456'
+      })
+    })
+
+    it('should extract metadata from a private messages room name', () => {
+      const metadata = component.getRoomMetadataFromRoomName('private-messages')
+      expect(metadata).toEqual({
+        roomType: 'private_message'
+      })
+    })
+
+    it('should return unknown room type for an unknown room name format', () => {
       const metadata = component.getRoomMetadataFromRoomName('unknown-room-format')
       expect(metadata).toEqual({
-        realmName: undefined,
-        sceneId: undefined,
-        worldName: undefined,
-        islandName: undefined
+        roomType: 'unknown'
       })
     })
   })

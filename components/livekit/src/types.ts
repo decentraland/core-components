@@ -93,7 +93,7 @@ export interface CreateIngressOptions {
 /**
  * Room type for filtering and naming
  */
-export type RoomType = 'world' | 'scene' | 'island'
+export type RoomType = 'world' | 'scene' | 'island' | 'voice_chat' | 'community_voice_chat' | 'private_message' | 'unknown'
 
 /**
  * Parameters for getting a room name
@@ -109,6 +109,8 @@ export interface GetRoomNameParams {
  * Metadata extracted from a room name
  */
 export interface RoomMetadata {
+  /** The type of room */
+  roomType: RoomType
   /** The realm name (for scene rooms) */
   realmName?: string
   /** The scene ID (for scene rooms) */
@@ -117,6 +119,10 @@ export interface RoomMetadata {
   worldName?: string
   /** The island name (for island rooms) */
   islandName?: string
+  /** The voice chat ID (for private voice chat rooms) */
+  voiceChatId?: string
+  /** The community ID (for community voice chat rooms) */
+  communityId?: string
 }
 
 /**
@@ -158,6 +164,31 @@ export interface ILivekitComponent extends IBaseComponent {
    * Get an island room name from an island name
    */
   getIslandRoomName(islandName: string): string
+
+  /**
+   * Get a private voice chat room name from a call/room ID
+   */
+  getPrivateVoiceChatRoomName(roomId: string): string
+
+  /**
+   * Get a community voice chat room name from a community ID
+   */
+  getCommunityVoiceChatRoomName(communityId: string): string
+
+  /**
+   * Extract the call ID from a private voice chat room name
+   */
+  getCallIdFromRoomName(roomName: string): string | undefined
+
+  /**
+   * Extract the community ID from a community voice chat room name
+   */
+  getCommunityIdFromRoomName(roomName: string): string | undefined
+
+  /**
+   * Extract the island name from an island room name
+   */
+  getIslandNameFromRoomName(roomName: string): string | undefined
 
   /**
    * Get room name based on realm and params

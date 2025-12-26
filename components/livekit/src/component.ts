@@ -93,7 +93,10 @@ export async function createLivekitComponent(components: {
     previewSecret,
     worldRoomPrefix,
     sceneRoomPrefix,
-    islandRoomPrefix
+    islandRoomPrefix,
+    privateVoiceChatRoomPrefix,
+    communityVoiceChatRoomPrefix,
+    privateMessagesRoomId
   ] = await Promise.all([
     config.requireString('LIVEKIT_HOST'),
     config.requireString('LIVEKIT_API_KEY'),
@@ -103,7 +106,10 @@ export async function createLivekitComponent(components: {
     config.getString('LIVEKIT_PREVIEW_API_SECRET'),
     config.getString('LIVEKIT_WORLD_ROOM_PREFIX'),
     config.getString('LIVEKIT_SCENE_ROOM_PREFIX'),
-    config.getString('LIVEKIT_ISLAND_ROOM_PREFIX')
+    config.getString('LIVEKIT_ISLAND_ROOM_PREFIX'),
+    config.getString('LIVEKIT_PRIVATE_VOICE_CHAT_ROOM_PREFIX'),
+    config.getString('LIVEKIT_COMMUNITY_VOICE_CHAT_ROOM_PREFIX'),
+    config.getString('LIVEKIT_PRIVATE_MESSAGES_ROOM_ID')
   ])
 
   // Normalize hosts
@@ -127,6 +133,9 @@ export async function createLivekitComponent(components: {
   const worldPrefix = worldRoomPrefix || 'world-'
   const scenePrefix = sceneRoomPrefix || 'scene-'
   const islandPrefix = islandRoomPrefix || 'island-'
+  const privateVoiceChatPrefix = privateVoiceChatRoomPrefix || 'voice-chat-private-'
+  const communityVoiceChatPrefix = communityVoiceChatRoomPrefix || 'voice-chat-community-'
+  const privateMessagesRoom = privateMessagesRoomId || 'private-messages'
 
   // Initialize LiveKit clients (for production - used for room/ingress management)
   const roomClient = new RoomServiceClient(normalizedProdHost, prodApiKey, prodSecret)
@@ -255,6 +264,95 @@ export async function createLivekitComponent(components: {
   }
 
   /**
+   * Gets a private voice chat room name from a call/room ID
+   *
+   * @param roomId - The unique identifier for the voice chat
+   * @returns The prefixed private voice chat room name
+   *
+   * @example
+   * ```typescript
+   * const roomName = livekit.getPrivateVoiceChatRoomName('call-123')
+   * // Returns: 'voice-chat-private-call-123'
+   * ```
+   */
+  function getPrivateVoiceChatRoomName(roomId: string): string {
+    return `${privateVoiceChatPrefix}${roomId}`
+  }
+
+  /**
+   * Gets a community voice chat room name from a community ID
+   *
+   * @param communityId - The unique identifier for the community
+   * @returns The prefixed community voice chat room name
+   *
+   * @example
+   * ```typescript
+   * const roomName = livekit.getCommunityVoiceChatRoomName('community-456')
+   * // Returns: 'voice-chat-community-community-456'
+   * ```
+   */
+  function getCommunityVoiceChatRoomName(communityId: string): string {
+    return `${communityVoiceChatPrefix}${communityId}`
+  }
+
+  /**
+   * Extracts the call ID from a private voice chat room name
+   *
+   * @param roomName - The room name to extract from
+   * @returns The call ID if the room name matches the prefix, undefined otherwise
+   *
+   * @example
+   * ```typescript
+   * const callId = livekit.getCallIdFromRoomName('voice-chat-private-call-123')
+   * // Returns: 'call-123'
+   * ```
+   */
+  function getCallIdFromRoomName(roomName: string): string | undefined {
+    if (roomName.startsWith(privateVoiceChatPrefix)) {
+      return roomName.replace(privateVoiceChatPrefix, '')
+    }
+    return undefined
+  }
+
+  /**
+   * Extracts the community ID from a community voice chat room name
+   *
+   * @param roomName - The room name to extract from
+   * @returns The community ID if the room name matches the prefix, undefined otherwise
+   *
+   * @example
+   * ```typescript
+   * const communityId = livekit.getCommunityIdFromRoomName('voice-chat-community-community-456')
+   * // Returns: 'community-456'
+   * ```
+   */
+  function getCommunityIdFromRoomName(roomName: string): string | undefined {
+    if (roomName.startsWith(communityVoiceChatPrefix)) {
+      return roomName.replace(communityVoiceChatPrefix, '')
+    }
+    return undefined
+  }
+
+  /**
+   * Extracts the island name from an island room name
+   *
+   * @param roomName - The room name to extract from
+   * @returns The island name if the room name matches the prefix, undefined otherwise
+   *
+   * @example
+   * ```typescript
+   * const islandName = livekit.getIslandNameFromRoomName('island-island-123')
+   * // Returns: 'island-123'
+   * ```
+   */
+  function getIslandNameFromRoomName(roomName: string): string | undefined {
+    if (roomName.startsWith(islandPrefix)) {
+      return roomName.replace(islandPrefix, '')
+    }
+    return undefined
+  }
+
+  /**
    * Gets a room name based on realm and parameters
    *
    * @param realmName - The name of the realm (or world/island name for those types)
@@ -295,25 +393,64 @@ export async function createLivekitComponent(components: {
    * Extracts metadata from a room name
    *
    * @param roomName - The room name to parse
-   * @returns Extracted metadata including realmName, sceneId, worldName, and islandName
+   * @returns Extracted metadata including roomType, realmName, sceneId, worldName, islandName, voiceChatId, and communityId
    *
    * @example
    * ```typescript
    * const sceneMetadata = livekit.getRoomMetadataFromRoomName('scene-realm-1:scene-abc')
-   * // Returns: { realmName: 'realm-1', sceneId: 'scene-abc', worldName: undefined, islandName: undefined }
+   * // Returns: { roomType: 'scene', realmName: 'realm-1', sceneId: 'scene-abc' }
    *
    * const worldMetadata = livekit.getRoomMetadataFromRoomName('world-my-world')
-   * // Returns: { realmName: undefined, sceneId: undefined, worldName: 'my-world', islandName: undefined }
+   * // Returns: { roomType: 'world', worldName: 'my-world' }
    *
    * const islandMetadata = livekit.getRoomMetadataFromRoomName('island-island-123')
-   * // Returns: { realmName: undefined, sceneId: undefined, worldName: undefined, islandName: 'island-123' }
+   * // Returns: { roomType: 'island', islandName: 'island-123' }
+   *
+   * const voiceChatMetadata = livekit.getRoomMetadataFromRoomName('voice-chat-private-call-123')
+   * // Returns: { roomType: 'voice_chat', voiceChatId: 'call-123' }
+   *
+   * const communityMetadata = livekit.getRoomMetadataFromRoomName('voice-chat-community-community-456')
+   * // Returns: { roomType: 'community_voice_chat', communityId: 'community-456' }
    * ```
    */
   function getRoomMetadataFromRoomName(roomName: string): RoomMetadata {
-    const [realmName, sceneId] = roomName.startsWith(scenePrefix) ? roomName.replace(scenePrefix, '').split(':') : []
-    const worldName = roomName.startsWith(worldPrefix) ? roomName.replace(worldPrefix, '') : undefined
-    const islandName = roomName.startsWith(islandPrefix) ? roomName.replace(islandPrefix, '') : undefined
-    return { realmName, sceneId, worldName, islandName }
+    // Scene room: {scenePrefix}{realmName}:{sceneId}
+    if (roomName.startsWith(scenePrefix)) {
+      const [realmName, sceneId] = roomName.replace(scenePrefix, '').split(':')
+      return { roomType: 'scene', realmName, sceneId }
+    }
+
+    // World room: {worldPrefix}{worldName}
+    if (roomName.startsWith(worldPrefix)) {
+      const worldName = roomName.replace(worldPrefix, '')
+      return { roomType: 'world', worldName }
+    }
+
+    // Island room: {islandPrefix}{islandName}
+    if (roomName.startsWith(islandPrefix)) {
+      const islandName = roomName.replace(islandPrefix, '')
+      return { roomType: 'island', islandName }
+    }
+
+    // Community voice chat: {communityVoiceChatPrefix}{communityId}
+    if (roomName.startsWith(communityVoiceChatPrefix)) {
+      const communityId = roomName.replace(communityVoiceChatPrefix, '')
+      return { roomType: 'community_voice_chat', communityId }
+    }
+
+    // Private voice chat: {privateVoiceChatPrefix}{voiceChatId}
+    if (roomName.startsWith(privateVoiceChatPrefix)) {
+      const voiceChatId = roomName.replace(privateVoiceChatPrefix, '')
+      return { roomType: 'voice_chat', voiceChatId }
+    }
+
+    // Private messages room
+    if (roomName === privateMessagesRoom) {
+      return { roomType: 'private_message' }
+    }
+
+    // Unknown room type
+    return { roomType: 'unknown' }
   }
 
   /**
@@ -780,6 +917,11 @@ export async function createLivekitComponent(components: {
     getWorldRoomName,
     getSceneRoomName,
     getIslandRoomName,
+    getPrivateVoiceChatRoomName,
+    getCommunityVoiceChatRoomName,
+    getCallIdFromRoomName,
+    getCommunityIdFromRoomName,
+    getIslandNameFromRoomName,
     getRoomName,
     getRoomMetadataFromRoomName,
     listRoomsByType,
