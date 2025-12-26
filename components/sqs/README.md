@@ -18,6 +18,18 @@ await queue.send(message)
 const messages = await queue.receiveMessages(10)
 ```
 
+## Local Development
+
+For local development and testing without AWS, use the [@dcl/memory-queue-component](../memory-queue/README.md) package which provides an in-memory implementation of `IQueueComponent`:
+
+```typescript
+import { createMemoryQueueComponent } from '@dcl/memory-queue-component'
+
+const queue = createMemoryQueueComponent()
+await queue.sendMessage(message)
+const messages = await queue.receiveMessages(10)
+```
+
 ## Features
 
 - Send messages to SQS queue

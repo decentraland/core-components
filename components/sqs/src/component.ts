@@ -11,7 +11,7 @@ import {
   SendMessageCommand
 } from '@aws-sdk/client-sqs'
 
-import { IQueueComponent, ReceiveMessagesOptions } from './types'
+import type { IQueueComponent, QueueStatus, ReceiveMessagesOptions } from '@dcl/core-commons'
 
 // Helper function to chunk arrays for batch operations
 function chunks<T>(array: T[], size: number): T[][] {
@@ -105,11 +105,7 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
     }
   }
 
-  async function getStatus(): Promise<{
-    ApproximateNumberOfMessages: string
-    ApproximateNumberOfMessagesNotVisible: string
-    ApproximateNumberOfMessagesDelayed: string
-  }> {
+  async function getStatus(): Promise<QueueStatus> {
     const command = new GetQueueAttributesCommand({
       QueueUrl: queueUrl,
       AttributeNames: [
