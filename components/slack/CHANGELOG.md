@@ -1,5 +1,12 @@
 # @dcl/slack-component
 
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies [df22de3]
+  - @dcl/core-commons@0.6.0
+
 ## 1.0.5
 
 ### Patch Changes

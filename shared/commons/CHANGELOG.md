@@ -1,5 +1,11 @@
 # @dcl/core-commons
 
+## 0.6.0
+
+### Minor Changes
+
+- df22de3: Add IQueueComponent interface
+
 ## 0.5.1
 
 ### Patch Changes

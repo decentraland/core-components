@@ -1,5 +1,16 @@
 # @dcl/sqs-component
 
+## 2.1.0
+
+### Minor Changes
+
+- df22de3: Introduce memory queue component
+
+### Patch Changes
+
+- Updated dependencies [df22de3]
+  - @dcl/core-commons@0.6.0
+
 ## 2.0.5
 
 ### Patch Changes
