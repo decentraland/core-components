@@ -1,5 +1,12 @@
 # @dcl/sns-component
 
+## 3.0.2
+
+### Patch Changes
+
+- Updated dependencies [df22de3]
+  - @dcl/core-commons@0.6.0
+
 ## 3.0.1
 
 ### Patch Changes
