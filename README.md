@@ -136,6 +136,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/sqs-component`
 - `@dcl/memory-queue-component`
 - `@dcl/traced-fetch-component`
+- `@dcl/livekit-component`
 - `@dcl/core-commons`
 
 ### Publishing Workflow
