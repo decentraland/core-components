@@ -19,12 +19,22 @@ core-components/
 │   ├── slack/            # Slack messaging component
 │   ├── sns/              # AWS SNS publisher component
 │   ├── sqs/              # AWS SQS queue component
-│   └── traced-fetch/     # Traced fetch component with distributed tracing
+│   ├── traced-fetch/     # Traced fetch component with distributed tracing
+│   ├── metrics/          # Prometheus metrics component handler
+|   └── http-server/      # HTTP server component
 └── shared/             # Shared utilities and types
     └── commons/          # Common utilities, types, and constants
 ```
 
 ## 🚀 Components
+
+### Infrastructure
+
+- **HTTP Server Component** (`@dcl/http-server`) - HTTP server with routing, middleware, CORS, and WebSocket support
+
+### Observability
+
+- **Metrics Component** (`@dcl/metrics`) - Prometheus metrics collection and instrumentation
 
 ### Communication & Messaging
 
@@ -137,6 +147,8 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/memory-queue-component`
 - `@dcl/traced-fetch-component`
 - `@dcl/core-commons`
+- `@dcl/metrics`
+- `@dcl/http-server`
 
 ### Publishing Workflow
 
