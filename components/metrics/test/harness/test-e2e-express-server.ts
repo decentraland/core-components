@@ -1,5 +1,5 @@
 import { createConfigComponent } from '@well-known-components/env-config-provider'
-import { createServerComponent, instrumentHttpServerWithPromClientRegistry } from '@well-known-components/http-server'
+import { createServerComponent, instrumentHttpServerWithPromClientRegistry } from '@dcl/http-server'
 import { createLogComponent } from '@well-known-components/logger'
 import { createRunner } from '@well-known-components/test-helpers'
 import nodeFetch from 'node-fetch'

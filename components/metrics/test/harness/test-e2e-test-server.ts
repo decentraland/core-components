@@ -6,7 +6,7 @@ import { metricDeclarations } from './defaultMetrics'
 import {
   createTestServerComponent,
   instrumentHttpServerWithPromClientRegistry
-} from '@well-known-components/http-server'
+} from '@dcl/http-server'
 import { createRunner } from '@well-known-components/test-helpers'
 import { mockedRouter } from './mockedServer'
 import { IFetchComponent } from '@well-known-components/interfaces'

@@ -1,4 +1,4 @@
-import { Router } from "@well-known-components/http-server"
+import { Router } from "@dcl/http-server"
 import { TestComponents } from "./test-helpers"
 
 // handlers arguments only type what they need, to make unit testing easier

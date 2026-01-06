@@ -1,9 +1,9 @@
-import { IFetchComponent } from "@well-known-components/http-server"
 import {
   IConfigComponent,
   IHttpServerComponent,
   ILoggerComponent,
   IMetricsComponent,
+  IFetchComponent
 } from "@well-known-components/interfaces"
 import { metricDeclarations } from "./defaultMetrics"
 
