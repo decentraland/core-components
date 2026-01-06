@@ -1,6 +1,6 @@
 {
   "name": "@dcl/metrics",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "metrics component",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
