@@ -223,6 +223,36 @@ function integrationSuite({ components }: { components: TestComponents }) {
     }
   })
 
+  it('closes socket when stream emits error during piping', async () => {
+    const { fetch, server } = components
+    server.resetMiddlewares()
+
+    const routes = new Router()
+
+    routes.get('/stream-error', async (ctx) => {
+      function* streamContent() {
+        yield 'some data'
+        // Throw error to simulate stream error during piping
+        throw new Error('Stream error during piping')
+      }
+
+      return {
+        status: 200,
+        body: Stream.Readable.from(streamContent(), { encoding: 'utf-8' })
+      }
+    })
+
+    server.use(routes.middleware())
+
+    {
+      const res = await fetch.fetch(`/stream-error`)
+      expect(res.status).toEqual(200)
+      // The stream will error during piping, and res.destroy() should be called
+      // to close the socket. The fetch should fail when trying to read the body.
+      await expect(res.text()).rejects.toThrow()
+    }
+  })
+
   // it("returns an async generator", async () => {
   //   const { fetch, server } = components
   //   server.resetMiddlewares()
