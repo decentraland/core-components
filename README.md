@@ -10,6 +10,7 @@ This repository is organized as a monorepo using pnpm workspaces with the follow
 core-components/
 ├── components/          # Reusable components
 │   ├── analytics/        # Analytics component for event tracking
+│   ├── cached-fetch/     # Cached fetch component with LRU caching
 │   ├── job/              # Job scheduling and execution component
 │   ├── memory-cache/     # In-memory LRU cache component
 │   ├── queue-consumer/   # Queue message consumer and handler component
@@ -57,6 +58,7 @@ core-components/
 
 - **Job Component** (`@dcl/job-component`) - Job scheduling and execution
 - **Schema Validator Component** (`@dcl/schema-validator-component`) - JSON schema validation middleware
+- **Cached Fetch Component** (`@dcl/cached-fetch-component`) - HTTP requests with LRU caching
 - **Traced Fetch Component** (`@dcl/traced-fetch-component`) - HTTP requests with distributed tracing
 - **Core Commons** (`@dcl/core-commons`) - Shared utilities, types, and constants
 
@@ -135,6 +137,7 @@ Testing is configured with Jest and `ts-jest` for TypeScript support. The config
 This project uses [Changesets](https://github.com/changesets/changesets) for automated version management and publishing to npm. All packages are published under the `@dcl` scope:
 
 - `@dcl/analytics-component`
+- `@dcl/cached-fetch-component`
 - `@dcl/job-component`
 - `@dcl/memory-cache-component`
 - `@dcl/queue-consumer-component`
