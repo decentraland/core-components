@@ -1,7 +1,7 @@
 import { LRUCache } from 'lru-cache'
 import { Response } from 'node-fetch'
 import { createFetchComponent } from '@well-known-components/fetch-component'
-import type { IFetchComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import type { IFetchComponent } from '@well-known-components/interfaces'
 import type { CachedFetchComponentOptions, CachedResponseData } from './types'
 
 const DEFAULT_MAX = 1000
@@ -38,26 +38,22 @@ function getCacheKey(url: Parameters<IFetchComponent['fetch']>[0], init?: Parame
  * 5. If response is ok or status is in cacheableStatusCodes, caches it for future use
  * 6. Returns the response (from cache or network)
  *
- * @param components - Required components: logs, and optionally fetchComponent
+ * @param components - Optional components: fetchComponent
  * @param options - Configuration options for cache behavior
  * @returns IFetchComponent implementation with caching
  */
 export async function createCachedFetchComponent(
-  components: {
-    logs: ILoggerComponent
+  components?: {
     fetchComponent?: IFetchComponent
   },
   options?: CachedFetchComponentOptions
 ): Promise<IFetchComponent> {
-  const { logs, fetchComponent: fetchComponentOverride } = components
-  const logger = logs.getLogger('cached-fetch-component')
-
   const max = options?.max ?? DEFAULT_MAX
   const ttl = options?.ttl ?? DEFAULT_TTL
   const cacheableMethods = options?.cacheableMethods ?? DEFAULT_CACHEABLE_METHODS
   const cacheableStatusCodes = options?.cacheableStatusCodes ?? DEFAULT_CACHEABLE_STATUS_CODES
 
-  const fetchComponent = fetchComponentOverride ?? createFetchComponent()
+  const fetchComponent = components?.fetchComponent ?? createFetchComponent()
 
   const cache = new LRUCache<string, CachedResponseData>({ max, ttl })
 
@@ -137,12 +133,10 @@ export async function createCachedFetchComponent(
       // Check cache first
       const cachedData = cache.get(key)
       if (cachedData) {
-        logger.debug(`Cache hit for ${url}`)
         return createResponseFromCache(cachedData)
       }
 
       // Cache miss - fetch from network
-      logger.debug(`Cache miss for ${url}`)
       const response = await fetchComponent.fetch(url, init)
 
       // Cache successful responses or responses with cacheable status codes

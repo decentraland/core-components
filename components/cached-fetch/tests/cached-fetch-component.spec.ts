@@ -1,19 +1,16 @@
-import { IFetchComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@well-known-components/interfaces'
 import { Response } from 'node-fetch'
 import { createCachedFetchComponent } from '../src/component'
 import { createFetchComponent } from '@well-known-components/fetch-component'
-import { createLoggerMockedComponent } from '@dcl/core-commons'
 
 jest.mock('@well-known-components/fetch-component', () => ({
   createFetchComponent: jest.fn()
 }))
 
 describe('when using the cached fetch component', () => {
-  let logs: ILoggerComponent
   let mockBaseFetch: jest.MockedFunction<IFetchComponent['fetch']>
 
   beforeEach(() => {
-    logs = createLoggerMockedComponent()
     mockBaseFetch = jest.fn()
     ;(createFetchComponent as jest.MockedFunction<typeof createFetchComponent>).mockReturnValue({
       fetch: mockBaseFetch
@@ -27,7 +24,7 @@ describe('when using the cached fetch component', () => {
   describe('and creating the component', () => {
     describe('and no custom fetch component is provided', () => {
       beforeEach(async () => {
-        await createCachedFetchComponent({ logs })
+        await createCachedFetchComponent()
       })
 
       it('should create a default fetch component', () => {
@@ -45,7 +42,6 @@ describe('when using the cached fetch component', () => {
           new Response(JSON.stringify({ data: 'test' }), { status: 200 })
         )
         component = await createCachedFetchComponent({
-          logs,
           fetchComponent: { fetch: customMockFetch }
         })
       })
@@ -65,7 +61,7 @@ describe('when using the cached fetch component', () => {
     let component: IFetchComponent
 
     beforeEach(async () => {
-      component = await createCachedFetchComponent({ logs })
+      component = await createCachedFetchComponent()
     })
 
     describe('and it is the first request', () => {
@@ -164,7 +160,7 @@ describe('when using the cached fetch component', () => {
     let component: IFetchComponent
 
     beforeEach(async () => {
-      component = await createCachedFetchComponent({ logs })
+      component = await createCachedFetchComponent()
     })
 
     describe('and there is a network error', () => {
@@ -225,7 +221,7 @@ describe('when using the cached fetch component', () => {
 
         beforeEach(async () => {
           componentWithCacheableStatusCodes = await createCachedFetchComponent(
-            { logs },
+            {},
             { cacheableStatusCodes: [404, 410] }
           )
         })
@@ -283,7 +279,7 @@ describe('when using the cached fetch component', () => {
       let component: IFetchComponent
 
       beforeEach(async () => {
-        component = await createCachedFetchComponent({ logs })
+        component = await createCachedFetchComponent()
       })
 
       describe('and making GET requests', () => {
@@ -313,7 +309,7 @@ describe('when using the cached fetch component', () => {
       let component: IFetchComponent
 
       beforeEach(async () => {
-        component = await createCachedFetchComponent({ logs }, { cacheableMethods: ['GET', 'POST'] })
+        component = await createCachedFetchComponent({}, { cacheableMethods: ['GET', 'POST'] })
       })
 
       it('should cache POST requests', async () => {
@@ -334,7 +330,7 @@ describe('when using the cached fetch component', () => {
     let component: IFetchComponent
 
     beforeEach(async () => {
-      component = await createCachedFetchComponent({ logs }, { ttl: 50 })
+      component = await createCachedFetchComponent({}, { ttl: 50 })
       mockBaseFetch.mockImplementation(async () =>
         new Response(JSON.stringify({ data: 'test' }), { status: 200 })
       )
@@ -358,7 +354,7 @@ describe('when using the cached fetch component', () => {
     let component: IFetchComponent
 
     beforeEach(async () => {
-      component = await createCachedFetchComponent({ logs })
+      component = await createCachedFetchComponent()
       mockBaseFetch.mockImplementation(async () =>
         new Response(JSON.stringify({ data: 'test' }), {
           status: 200,

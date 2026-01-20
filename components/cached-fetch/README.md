@@ -13,7 +13,7 @@ npm install @dcl/cached-fetch-component
 ```typescript
 import { createCachedFetchComponent } from '@dcl/cached-fetch-component'
 
-const fetch = await createCachedFetchComponent({ logs })
+const fetch = await createCachedFetchComponent()
 
 // Makes HTTP requests with automatic caching
 const response = await fetch.fetch('https://api.example.com/data')
@@ -41,7 +41,7 @@ const cachedResponse = await fetch.fetch('https://api.example.com/data')
 
 ```typescript
 const fetch = await createCachedFetchComponent(
-  { logs, fetchComponent },
+  { fetchComponent },
   {
     // Maximum number of entries in the cache (default: 1000)
     max: 1000,
@@ -80,7 +80,7 @@ Sometimes you want to cache specific error responses, like 404 Not Found:
 
 ```typescript
 const fetch = await createCachedFetchComponent(
-  { logs },
+  {},
   { cacheableStatusCodes: [404, 410] }
 )
 
@@ -104,9 +104,7 @@ You can provide a custom fetch component:
 import { createTracedFetcherComponent } from '@dcl/traced-fetch-component'
 
 const tracedFetch = await createTracedFetcherComponent({ tracer })
-const cachedFetch = await createCachedFetchComponent(
-  { logs, fetchComponent: tracedFetch }
-)
+const cachedFetch = await createCachedFetchComponent({ fetchComponent: tracedFetch })
 ```
 
 ## License

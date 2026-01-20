@@ -48,9 +48,6 @@ importers:
 
   components/cached-fetch:
     dependencies:
-      '@dcl/core-commons':
-        specifier: workspace:*
-        version: link:../../shared/commons
       '@well-known-components/fetch-component':
         specifier: 3.0.0
         version: 3.0.0
