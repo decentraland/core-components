@@ -18,12 +18,12 @@
     "@dcl/core-commons": "workspace:*",
     "@well-known-components/fetch-component": "3.0.0",
     "@well-known-components/interfaces": "1.5.2",
-    "lru-cache": "10.0.0",
-    "node-fetch": "2.6.7"
+    "lru-cache": "10.4.3",
+    "node-fetch": "2.7.0"
   },
   "devDependencies": {
-    "@types/node-fetch": "2.6.2",
-    "typescript": "5.8.3"
+    "@types/node-fetch": "2.6.12",
+    "typescript": "5.9.3"
   },
   "publishConfig": {
     "access": "public"

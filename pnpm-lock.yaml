@@ -52,23 +52,23 @@ importers:
         specifier: workspace:*
         version: link:../../shared/commons
       '@well-known-components/fetch-component':
-        specifier: ^3.0.0
+        specifier: 3.0.0
         version: 3.0.0
       '@well-known-components/interfaces':
-        specifier: ^1.5.2
+        specifier: 1.5.2
         version: 1.5.2
       lru-cache:
-        specifier: ^10.0.0
+        specifier: 10.4.3
         version: 10.4.3
       node-fetch:
-        specifier: ^2.6.7
+        specifier: 2.7.0
         version: 2.7.0
     devDependencies:
       '@types/node-fetch':
-        specifier: ^2.6.2
+        specifier: 2.6.12
         version: 2.6.12
       typescript:
-        specifier: ^5.8.3
+        specifier: 5.9.3
         version: 5.9.3
 
   components/http-server:
