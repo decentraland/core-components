@@ -216,17 +216,17 @@ describe('when using the cached fetch component', () => {
         })
       })
 
-      describe('and cacheableStatusCodes is configured', () => {
+      describe('and cacheableErrorStatusCodes is configured', () => {
         let componentWithCacheableStatusCodes: IFetchComponent
 
         beforeEach(async () => {
           componentWithCacheableStatusCodes = await createCachedFetchComponent(
             {},
-            { cacheableStatusCodes: [404, 410] }
+            { cacheableErrorStatusCodes: [404, 410] }
           )
         })
 
-        describe('and the status is in cacheableStatusCodes', () => {
+        describe('and the status is in cacheableErrorStatusCodes', () => {
           beforeEach(() => {
             mockBaseFetch.mockImplementation(async () =>
               new Response('Not Found', { status: 404, statusText: 'Not Found' })
@@ -251,7 +251,7 @@ describe('when using the cached fetch component', () => {
           })
         })
 
-        describe('and the status is not in cacheableStatusCodes', () => {
+        describe('and the status is not in cacheableErrorStatusCodes', () => {
           beforeEach(() => {
             mockBaseFetch.mockImplementation(async () =>
               new Response('Internal Server Error', { status: 500, statusText: 'Internal Server Error' })

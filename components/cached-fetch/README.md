@@ -34,7 +34,7 @@ const cachedResponse = await fetch.fetch('https://api.example.com/data')
 - Implements `IFetchComponent` interface for drop-in replacement
 - Transparent: always returns a Response, never throws on HTTP errors
 - Only caches successful responses (ok: true) by default
-- Error responses can be cached by specifying `cacheableStatusCodes`
+- Error responses can be cached by specifying `cacheableErrorStatusCodes`
 - Type-safe with TypeScript
 
 ## Configuration Options
@@ -54,7 +54,7 @@ const fetch = await createCachedFetchComponent(
     
     // Additional status codes to cache besides 2xx (default: [])
     // Useful for caching 404 Not Found or 410 Gone responses
-    cacheableStatusCodes: [404, 410]
+    cacheableErrorStatusCodes: [404, 410]
   }
 )
 ```
@@ -67,7 +67,7 @@ The cached fetch component wraps the standard fetch API and adds LRU caching:
 2. Generates a cache key from the URL and method
 3. If cached response exists and is not expired, returns cached response
 4. If cache miss, performs the network request
-5. If response is successful (ok: true) or status is in `cacheableStatusCodes`, caches it
+5. If response is successful (ok: true) or status is in `cacheableErrorStatusCodes`, caches it
 6. Returns the response (always a Response object, never throws on HTTP errors)
 
 Non-cacheable methods (POST, PUT, DELETE, etc.) bypass the cache entirely.
@@ -81,7 +81,7 @@ Sometimes you want to cache specific error responses, like 404 Not Found:
 ```typescript
 const fetch = await createCachedFetchComponent(
   {},
-  { cacheableStatusCodes: [404, 410] }
+  { cacheableErrorStatusCodes: [404, 410] }
 )
 
 // First call: 404 response is fetched and cached

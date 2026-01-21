@@ -18,7 +18,7 @@ All notable changes to this project will be documented in this file.
   - `max`: Maximum number of entries in the cache (default: 1000)
   - `ttl`: Time-to-live for cached entries in milliseconds (default: 5 minutes)
   - `cacheableMethods`: HTTP methods to cache (default: `['GET']`)
-  - `cacheableStatusCodes`: Additional status codes to cache besides 2xx responses
+  - `cacheableErrorStatusCodes`: Additional status codes to cache besides 2xx responses
 - Transparent Response handling - always returns a Response, never throws on HTTP errors
 - Support for custom fetch component injection
 - Full compatibility with `IFetchComponent` interface for drop-in replacement

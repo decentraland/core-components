@@ -28,14 +28,14 @@ function getCacheKey(url: Parameters<IFetchComponent['fetch']>[0], init?: Parame
  * This component wraps an existing fetch component and adds LRU caching capabilities.
  * It caches successful responses based on URL and HTTP method, reducing redundant network requests.
  * Error responses (non-ok status) are returned directly without caching, unless their status code
- * is included in the cacheableStatusCodes option.
+ * is included in the cacheableErrorStatusCodes option.
  *
  * Orchestration flow:
  * 1. Receives a fetch request with URL and options
  * 2. Checks if the request method is cacheable
  * 3. If cacheable, attempts to retrieve from cache
  * 4. If cache miss, performs the fetch
- * 5. If response is ok or status is in cacheableStatusCodes, caches it for future use
+ * 5. If response is ok or status is in cacheableErrorStatusCodes, caches it for future use
  * 6. Returns the response (from cache or network)
  *
  * @param components - Optional components: fetchComponent
@@ -51,7 +51,7 @@ export async function createCachedFetchComponent(
   const max = options?.max ?? DEFAULT_MAX
   const ttl = options?.ttl ?? DEFAULT_TTL
   const cacheableMethods = options?.cacheableMethods ?? DEFAULT_CACHEABLE_METHODS
-  const cacheableStatusCodes = options?.cacheableStatusCodes ?? DEFAULT_CACHEABLE_STATUS_CODES
+  const cacheableErrorStatusCodes = options?.cacheableErrorStatusCodes ?? DEFAULT_CACHEABLE_STATUS_CODES
 
   const fetchComponent = components?.fetchComponent ?? createFetchComponent()
 
@@ -110,7 +110,7 @@ export async function createCachedFetchComponent(
      * For cacheable methods (GET by default), this method will:
      * - Return cached response if available and not expired
      * - Perform network request on cache miss
-     * - Cache successful responses (ok: true) or responses with status in cacheableStatusCodes
+     * - Cache successful responses (ok: true) or responses with status in cacheableErrorStatusCodes
      * - Return other error responses (ok: false) without caching
      *
      * For non-cacheable methods, this method passes through to the underlying fetch.
@@ -140,7 +140,7 @@ export async function createCachedFetchComponent(
       const response = await fetchComponent.fetch(url, init)
 
       // Cache successful responses or responses with cacheable status codes
-      const shouldCache = response.ok || cacheableStatusCodes.includes(response.status)
+      const shouldCache = response.ok || cacheableErrorStatusCodes.includes(response.status)
       if (shouldCache) {
         const cacheData = await responseToCacheData(response)
         cache.set(key, cacheData)

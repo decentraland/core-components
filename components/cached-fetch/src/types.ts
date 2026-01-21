@@ -13,7 +13,7 @@ export type CachedFetchComponentOptions = {
    * Useful for caching known error states like 404 (Not Found) or 410 (Gone).
    * Defaults to [] (only cache successful responses).
    */
-  cacheableStatusCodes?: number[]
+  cacheableErrorStatusCodes?: number[]
 }
 
 /**
