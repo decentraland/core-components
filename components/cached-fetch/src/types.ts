@@ -1,11 +1,9 @@
+import type { LRUCache } from 'lru-cache'
+
 /**
- * Configuration options for the cached fetch component
+ * Custom options specific to the cached fetch component (not from lru-cache)
  */
-export type CachedFetchComponentOptions = {
-  /** Maximum number of entries in the cache. Defaults to 1000 */
-  max?: number
-  /** Time-to-live for cached entries in milliseconds. Defaults to 300000 (5 minutes) */
-  ttl?: number
+export type CachedFetchCustomOptions = {
   /** HTTP methods to cache. Defaults to ['GET'] */
   cacheableMethods?: string[]
   /**
@@ -15,6 +13,13 @@ export type CachedFetchComponentOptions = {
    */
   cacheableErrorStatusCodes?: number[]
 }
+
+/**
+ * Configuration options for the cached fetch component.
+ * Includes all lru-cache options (as partial) plus custom options.
+ */
+export type CachedFetchComponentOptions = Partial<LRUCache.OptionsBase<string, CachedResponseData, unknown>> &
+  CachedFetchCustomOptions
 
 /**
  * Cached response data structure for internal storage

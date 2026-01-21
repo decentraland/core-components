@@ -48,14 +48,20 @@ export async function createCachedFetchComponent(
   },
   options?: CachedFetchComponentOptions
 ): Promise<IFetchComponent> {
-  const max = options?.max ?? DEFAULT_MAX
-  const ttl = options?.ttl ?? DEFAULT_TTL
-  const cacheableMethods = options?.cacheableMethods ?? DEFAULT_CACHEABLE_METHODS
-  const cacheableErrorStatusCodes = options?.cacheableErrorStatusCodes ?? DEFAULT_CACHEABLE_STATUS_CODES
+  // Extract custom options
+  const { cacheableMethods, cacheableErrorStatusCodes, ...lruOptions } = options ?? {}
+
+  const resolvedCacheableMethods = cacheableMethods ?? DEFAULT_CACHEABLE_METHODS
+  const resolvedCacheableErrorStatusCodes = cacheableErrorStatusCodes ?? DEFAULT_CACHEABLE_STATUS_CODES
 
   const fetchComponent = components?.fetchComponent ?? createFetchComponent()
 
-  const cache = new LRUCache<string, CachedResponseData>({ max, ttl })
+  // Create LRU cache with defaults and user-provided options
+  const cache = new LRUCache<string, CachedResponseData>({
+    max: DEFAULT_MAX,
+    ttl: DEFAULT_TTL,
+    ...lruOptions
+  })
 
   /**
    * Checks if a request method should be cached
@@ -65,7 +71,7 @@ export async function createCachedFetchComponent(
    */
   function isCacheable(init?: Parameters<IFetchComponent['fetch']>[1]): boolean {
     const method = (init?.method ?? 'GET').toUpperCase()
-    return cacheableMethods.includes(method)
+    return resolvedCacheableMethods.includes(method)
   }
 
   /**
@@ -140,7 +146,7 @@ export async function createCachedFetchComponent(
       const response = await fetchComponent.fetch(url, init)
 
       // Cache successful responses or responses with cacheable status codes
-      const shouldCache = response.ok || cacheableErrorStatusCodes.includes(response.status)
+      const shouldCache = response.ok || resolvedCacheableErrorStatusCodes.includes(response.status)
       if (shouldCache) {
         const cacheData = await responseToCacheData(response)
         cache.set(key, cacheData)

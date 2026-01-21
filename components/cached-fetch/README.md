@@ -39,22 +39,33 @@ const cachedResponse = await fetch.fetch('https://api.example.com/data')
 
 ## Configuration Options
 
+The component accepts all [lru-cache options](https://github.com/isaacs/node-lru-cache#options) plus custom options:
+
 ```typescript
 const fetch = await createCachedFetchComponent(
   { fetchComponent },
   {
-    // Maximum number of entries in the cache (default: 1000)
-    max: 1000,
-    
-    // TTL in milliseconds (default: 300000 = 5 minutes)
-    ttl: 1000 * 60 * 5,
+    // === Custom options ===
     
     // HTTP methods to cache (default: ['GET'])
     cacheableMethods: ['GET'],
     
     // Additional status codes to cache besides 2xx (default: [])
     // Useful for caching 404 Not Found or 410 Gone responses
-    cacheableErrorStatusCodes: [404, 410]
+    cacheableErrorStatusCodes: [404, 410],
+    
+    // === LRU Cache options (all optional, see lru-cache docs) ===
+    
+    // Maximum number of entries in the cache (default: 1000)
+    max: 1000,
+    
+    // TTL in milliseconds (default: 300000 = 5 minutes)
+    ttl: 1000 * 60 * 5,
+    
+    // Any other lru-cache options...
+    ttlAutopurge: true,
+    updateAgeOnGet: true,
+    allowStale: false
   }
 )
 ```
