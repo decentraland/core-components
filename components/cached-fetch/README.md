@@ -115,8 +115,18 @@ You can provide a custom fetch component:
 import { createTracedFetcherComponent } from '@dcl/traced-fetch-component'
 
 const tracedFetch = await createTracedFetcherComponent({ tracer })
-const cachedFetch = await createCachedFetchComponent({ fetchComponent: tracedFetch })
+const cachedFetch = await createCachedFetchComponent(tracedFetch)
 ```
+
+## node-fetch Compatibility
+
+This component uses `node-fetch` internally for full compatibility with `@well-known-components/fetch-component`.
+
+**Important:** Cached responses are always returned as `node-fetch` Response objects, regardless of what fetch implementation the underlying `fetchComponent` uses. This means:
+
+- If you pass a fetch component that uses native fetch or undici, the responses will still be converted to `node-fetch` Response objects when served from cache
+- For most use cases (reading JSON, text, checking status), this is transparent
+- If your code relies on `instanceof Response` checks or fetch-implementation-specific methods, be aware of this behavior
 
 ## License
 

@@ -1,20 +1,13 @@
 import { IFetchComponent } from '@well-known-components/interfaces'
 import { Response } from 'node-fetch'
 import { createCachedFetchComponent } from '../src/component'
-import { createFetchComponent } from '@well-known-components/fetch-component'
-
-jest.mock('@well-known-components/fetch-component', () => ({
-  createFetchComponent: jest.fn()
-}))
+import { createMockFetchComponent, MockFetchComponent } from './mocks/fetch'
 
 describe('when using the cached fetch component', () => {
-  let mockBaseFetch: jest.MockedFunction<IFetchComponent['fetch']>
+  let mockFetchComponent: MockFetchComponent
 
   beforeEach(() => {
-    mockBaseFetch = jest.fn()
-    ;(createFetchComponent as jest.MockedFunction<typeof createFetchComponent>).mockReturnValue({
-      fetch: mockBaseFetch
-    })
+    mockFetchComponent = createMockFetchComponent()
   })
 
   afterEach(() => {
@@ -23,36 +16,24 @@ describe('when using the cached fetch component', () => {
 
   describe('and creating the component', () => {
     describe('and no custom fetch component is provided', () => {
-      beforeEach(async () => {
-        await createCachedFetchComponent()
-      })
-
-      it('should create a default fetch component', () => {
-        expect(createFetchComponent).toHaveBeenCalledTimes(1)
+      it('should create the component without errors', async () => {
+        await expect(createCachedFetchComponent()).resolves.toBeDefined()
       })
     })
 
     describe('and a custom fetch component is provided', () => {
-      let customMockFetch: jest.MockedFunction<IFetchComponent['fetch']>
       let component: IFetchComponent
 
       beforeEach(async () => {
-        customMockFetch = jest.fn()
-        customMockFetch.mockResolvedValue(
+        mockFetchComponent.fetch.mockResolvedValue(
           new Response(JSON.stringify({ data: 'test' }), { status: 200 })
         )
-        component = await createCachedFetchComponent({
-          fetchComponent: { fetch: customMockFetch }
-        })
-      })
-
-      it('should not create a default fetch component', () => {
-        expect(createFetchComponent).not.toHaveBeenCalled()
+        component = await createCachedFetchComponent(mockFetchComponent)
       })
 
       it('should use the custom fetch component for requests', async () => {
         await component.fetch('https://example.com/api')
-        expect(customMockFetch).toHaveBeenCalledWith('https://example.com/api', undefined)
+        expect(mockFetchComponent.fetch).toHaveBeenCalledWith('https://example.com/api', undefined)
       })
     })
   })
@@ -61,7 +42,7 @@ describe('when using the cached fetch component', () => {
     let component: IFetchComponent
 
     beforeEach(async () => {
-      component = await createCachedFetchComponent()
+      component = await createCachedFetchComponent(mockFetchComponent)
     })
 
     describe('and it is the first request', () => {
@@ -69,7 +50,7 @@ describe('when using the cached fetch component', () => {
 
       beforeEach(() => {
         responseBody = { data: 'test data' }
-        mockBaseFetch.mockResolvedValue(
+        mockFetchComponent.fetch.mockResolvedValue(
           new Response(JSON.stringify(responseBody), {
             status: 200,
             headers: { 'Content-Type': 'application/json' }
@@ -79,7 +60,7 @@ describe('when using the cached fetch component', () => {
 
       it('should call the underlying fetch function with the URL', async () => {
         await component.fetch('https://example.com/api')
-        expect(mockBaseFetch).toHaveBeenCalledWith('https://example.com/api', undefined)
+        expect(mockFetchComponent.fetch).toHaveBeenCalledWith('https://example.com/api', undefined)
       })
 
       it('should return a response that can be parsed as JSON', async () => {
@@ -89,10 +70,11 @@ describe('when using the cached fetch component', () => {
     })
 
     describe('and the same URL is requested multiple times', () => {
-      const responseBody = { data: 'test data' }
+      let responseBody: { data: string }
 
       beforeEach(() => {
-        mockBaseFetch.mockResolvedValue(
+        responseBody = { data: 'test data' }
+        mockFetchComponent.fetch.mockResolvedValue(
           new Response(JSON.stringify(responseBody), { status: 200 })
         )
       })
@@ -101,7 +83,7 @@ describe('when using the cached fetch component', () => {
         await component.fetch('https://example.com/api')
         await component.fetch('https://example.com/api')
         await component.fetch('https://example.com/api')
-        expect(mockBaseFetch).toHaveBeenCalledTimes(1)
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
       })
 
       it('should return the same data for all requests', async () => {
@@ -114,7 +96,7 @@ describe('when using the cached fetch component', () => {
 
     describe('and different URLs are requested', () => {
       beforeEach(() => {
-        mockBaseFetch.mockImplementation(async (url) => {
+        mockFetchComponent.fetch.mockImplementation(async (url) => {
           const urlStr = typeof url === 'string' ? url : url.toString()
           return new Response(JSON.stringify({ url: urlStr }), { status: 200 })
         })
@@ -124,7 +106,7 @@ describe('when using the cached fetch component', () => {
         await component.fetch('https://example.com/api/1')
         await component.fetch('https://example.com/api/2')
         await component.fetch('https://example.com/api/3')
-        expect(mockBaseFetch).toHaveBeenCalledTimes(3)
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(3)
       })
 
       it('should return different data for different URLs', async () => {
@@ -137,7 +119,7 @@ describe('when using the cached fetch component', () => {
 
     describe('and using URL objects', () => {
       beforeEach(() => {
-        mockBaseFetch.mockResolvedValue(
+        mockFetchComponent.fetch.mockResolvedValue(
           new Response(JSON.stringify({ data: 'test' }), { status: 200 })
         )
       })
@@ -145,13 +127,13 @@ describe('when using the cached fetch component', () => {
       it('should pass the URL object to the underlying fetch', async () => {
         const url = new URL('https://example.com/api/endpoint')
         await component.fetch(url)
-        expect(mockBaseFetch).toHaveBeenCalledWith(url, undefined)
+        expect(mockFetchComponent.fetch).toHaveBeenCalledWith(url, undefined)
       })
 
       it('should cache requests based on URL string representation', async () => {
         await component.fetch(new URL('https://example.com/api/endpoint'))
         await component.fetch(new URL('https://example.com/api/endpoint'))
-        expect(mockBaseFetch).toHaveBeenCalledTimes(1)
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
       })
     })
   })
@@ -160,12 +142,12 @@ describe('when using the cached fetch component', () => {
     let component: IFetchComponent
 
     beforeEach(async () => {
-      component = await createCachedFetchComponent()
+      component = await createCachedFetchComponent(mockFetchComponent)
     })
 
     describe('and there is a network error', () => {
       beforeEach(() => {
-        mockBaseFetch.mockRejectedValue(new Error('Network error'))
+        mockFetchComponent.fetch.mockRejectedValue(new Error('Network error'))
       })
 
       it('should propagate the error to the caller', async () => {
@@ -176,7 +158,7 @@ describe('when using the cached fetch component', () => {
     describe('and the response is not ok', () => {
       describe('and the status is 404', () => {
         beforeEach(() => {
-          mockBaseFetch.mockResolvedValue(
+          mockFetchComponent.fetch.mockResolvedValue(
             new Response('Not Found', { status: 404, statusText: 'Not Found' })
           )
         })
@@ -194,13 +176,13 @@ describe('when using the cached fetch component', () => {
         it('should not cache the error response', async () => {
           await component.fetch('https://example.com/api')
           await component.fetch('https://example.com/api')
-          expect(mockBaseFetch).toHaveBeenCalledTimes(2)
+          expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(2)
         })
       })
 
       describe('and the status is 500', () => {
         beforeEach(() => {
-          mockBaseFetch.mockResolvedValue(
+          mockFetchComponent.fetch.mockResolvedValue(
             new Response('Internal Server Error', { status: 500, statusText: 'Internal Server Error' })
           )
         })
@@ -221,14 +203,14 @@ describe('when using the cached fetch component', () => {
 
         beforeEach(async () => {
           componentWithCacheableStatusCodes = await createCachedFetchComponent(
-            {},
+            mockFetchComponent,
             { cacheableErrorStatusCodes: [404, 410] }
           )
         })
 
         describe('and the status is in cacheableErrorStatusCodes', () => {
           beforeEach(() => {
-            mockBaseFetch.mockImplementation(async () =>
+            mockFetchComponent.fetch.mockImplementation(async () =>
               new Response('Not Found', { status: 404, statusText: 'Not Found' })
             )
           })
@@ -241,7 +223,7 @@ describe('when using the cached fetch component', () => {
           it('should cache the error response', async () => {
             await componentWithCacheableStatusCodes.fetch('https://example.com/api')
             await componentWithCacheableStatusCodes.fetch('https://example.com/api')
-            expect(mockBaseFetch).toHaveBeenCalledTimes(1)
+            expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
           })
 
           it('should return the cached error response with correct status', async () => {
@@ -253,7 +235,7 @@ describe('when using the cached fetch component', () => {
 
         describe('and the status is not in cacheableErrorStatusCodes', () => {
           beforeEach(() => {
-            mockBaseFetch.mockImplementation(async () =>
+            mockFetchComponent.fetch.mockImplementation(async () =>
               new Response('Internal Server Error', { status: 500, statusText: 'Internal Server Error' })
             )
           })
@@ -261,7 +243,7 @@ describe('when using the cached fetch component', () => {
           it('should not cache the error response', async () => {
             await componentWithCacheableStatusCodes.fetch('https://example.com/api')
             await componentWithCacheableStatusCodes.fetch('https://example.com/api')
-            expect(mockBaseFetch).toHaveBeenCalledTimes(2)
+            expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(2)
           })
         })
       })
@@ -270,7 +252,7 @@ describe('when using the cached fetch component', () => {
 
   describe('and using different HTTP methods', () => {
     beforeEach(() => {
-      mockBaseFetch.mockResolvedValue(
+      mockFetchComponent.fetch.mockResolvedValue(
         new Response(JSON.stringify({ success: true }), { status: 200 })
       )
     })
@@ -279,20 +261,20 @@ describe('when using the cached fetch component', () => {
       let component: IFetchComponent
 
       beforeEach(async () => {
-        component = await createCachedFetchComponent()
+        component = await createCachedFetchComponent(mockFetchComponent)
       })
 
       describe('and making GET requests', () => {
         it('should cache GET requests with explicit method', async () => {
           await component.fetch('https://example.com/api', { method: 'GET' })
           await component.fetch('https://example.com/api', { method: 'GET' })
-          expect(mockBaseFetch).toHaveBeenCalledTimes(1)
+          expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
         })
 
         it('should cache requests without explicit method as GET', async () => {
           await component.fetch('https://example.com/api')
           await component.fetch('https://example.com/api')
-          expect(mockBaseFetch).toHaveBeenCalledTimes(1)
+          expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
         })
       })
 
@@ -300,7 +282,7 @@ describe('when using the cached fetch component', () => {
         it('should not cache POST requests', async () => {
           await component.fetch('https://example.com/api', { method: 'POST' })
           await component.fetch('https://example.com/api', { method: 'POST' })
-          expect(mockBaseFetch).toHaveBeenCalledTimes(2)
+          expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(2)
         })
       })
     })
@@ -309,19 +291,19 @@ describe('when using the cached fetch component', () => {
       let component: IFetchComponent
 
       beforeEach(async () => {
-        component = await createCachedFetchComponent({}, { cacheableMethods: ['GET', 'POST'] })
+        component = await createCachedFetchComponent(mockFetchComponent, { cacheableMethods: ['GET', 'POST'] })
       })
 
       it('should cache POST requests', async () => {
         await component.fetch('https://example.com/api', { method: 'POST' })
         await component.fetch('https://example.com/api', { method: 'POST' })
-        expect(mockBaseFetch).toHaveBeenCalledTimes(1)
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
       })
 
       it('should still cache GET requests', async () => {
         await component.fetch('https://example.com/api', { method: 'GET' })
         await component.fetch('https://example.com/api', { method: 'GET' })
-        expect(mockBaseFetch).toHaveBeenCalledTimes(1)
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
       })
     })
   })
@@ -330,8 +312,8 @@ describe('when using the cached fetch component', () => {
     let component: IFetchComponent
 
     beforeEach(async () => {
-      component = await createCachedFetchComponent({}, { ttl: 50 })
-      mockBaseFetch.mockImplementation(async () =>
+      component = await createCachedFetchComponent(mockFetchComponent, { ttl: 50 })
+      mockFetchComponent.fetch.mockImplementation(async () =>
         new Response(JSON.stringify({ data: 'test' }), { status: 200 })
       )
     })
@@ -339,14 +321,14 @@ describe('when using the cached fetch component', () => {
     it('should cache responses within TTL', async () => {
       await component.fetch('https://example.com/api')
       await component.fetch('https://example.com/api')
-      expect(mockBaseFetch).toHaveBeenCalledTimes(1)
+      expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
     })
 
     it('should refetch after TTL expires', async () => {
       await component.fetch('https://example.com/api')
       await new Promise((resolve) => setTimeout(resolve, 100))
       await component.fetch('https://example.com/api')
-      expect(mockBaseFetch).toHaveBeenCalledTimes(2)
+      expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(2)
     })
   })
 
@@ -354,8 +336,8 @@ describe('when using the cached fetch component', () => {
     let component: IFetchComponent
 
     beforeEach(async () => {
-      component = await createCachedFetchComponent()
-      mockBaseFetch.mockImplementation(async () =>
+      component = await createCachedFetchComponent(mockFetchComponent)
+      mockFetchComponent.fetch.mockImplementation(async () =>
         new Response(JSON.stringify({ data: 'test' }), {
           status: 200,
           headers: {
@@ -377,6 +359,136 @@ describe('when using the cached fetch component', () => {
       const cachedResult = await component.fetch('https://example.com/api')
       expect(cachedResult.headers.get('Content-Type')).toBe('application/json')
       expect(cachedResult.headers.get('X-Custom-Header')).toBe('custom-value')
+    })
+  })
+
+  describe('and using cacheKeyHeaders', () => {
+    describe('and Authorization header is included in cache key', () => {
+      let component: IFetchComponent
+
+      beforeEach(async () => {
+        component = await createCachedFetchComponent(mockFetchComponent, {
+          cacheKeyHeaders: ['Authorization']
+        })
+        mockFetchComponent.fetch.mockImplementation(async (_url, init) => {
+          const headers = init?.headers as Record<string, string> | undefined
+          const auth = headers?.Authorization ?? 'none'
+          return new Response(JSON.stringify({ user: auth }), { status: 200 })
+        })
+      })
+
+      it('should cache separately for different Authorization headers', async () => {
+        await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user1' }
+        })
+        await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user2' }
+        })
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(2)
+      })
+
+      it('should return cached response for same Authorization header', async () => {
+        await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user1' }
+        })
+        await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user1' }
+        })
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
+      })
+
+      it('should return correct data for each user', async () => {
+        const result1 = await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user1' }
+        })
+        const result2 = await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user2' }
+        })
+        expect((await result1.json()).user).toBe('Bearer user1')
+        expect((await result2.json()).user).toBe('Bearer user2')
+      })
+    })
+
+    describe('and no cacheKeyHeaders is configured', () => {
+      let component: IFetchComponent
+
+      beforeEach(async () => {
+        component = await createCachedFetchComponent(mockFetchComponent)
+        mockFetchComponent.fetch.mockResolvedValue(
+          new Response(JSON.stringify({ data: 'test' }), { status: 200 })
+        )
+      })
+
+      it('should share cache for different headers', async () => {
+        await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user1' }
+        })
+        await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user2' }
+        })
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
+      })
+    })
+
+    describe('and header names have different casing', () => {
+      let component: IFetchComponent
+
+      beforeEach(async () => {
+        component = await createCachedFetchComponent(mockFetchComponent, {
+          cacheKeyHeaders: ['authorization']
+        })
+        mockFetchComponent.fetch.mockResolvedValue(
+          new Response(JSON.stringify({ data: 'test' }), { status: 200 })
+        )
+      })
+
+      it('should match headers regardless of case', async () => {
+        await component.fetch('https://example.com/api', {
+          headers: { Authorization: 'Bearer user1' }
+        })
+        await component.fetch('https://example.com/api', {
+          headers: { AUTHORIZATION: 'Bearer user1' }
+        })
+        expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
+      })
+    })
+  })
+
+  describe('and caching requests with body', () => {
+    let component: IFetchComponent
+
+    beforeEach(async () => {
+      component = await createCachedFetchComponent(mockFetchComponent, {
+        cacheableMethods: ['POST']
+      })
+      mockFetchComponent.fetch.mockImplementation(async (_url, init) => {
+        const body = init?.body ?? 'no body'
+        return new Response(JSON.stringify({ received: body }), { status: 200 })
+      })
+    })
+
+    it('should cache separately for different request bodies', async () => {
+      await component.fetch('https://example.com/api', {
+        method: 'POST',
+        body: JSON.stringify({ id: 1 })
+      })
+      await component.fetch('https://example.com/api', {
+        method: 'POST',
+        body: JSON.stringify({ id: 2 })
+      })
+      expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('should return cached response for same request body', async () => {
+      await component.fetch('https://example.com/api', {
+        method: 'POST',
+        body: JSON.stringify({ id: 1 })
+      })
+      await component.fetch('https://example.com/api', {
+        method: 'POST',
+        body: JSON.stringify({ id: 1 })
+      })
+      expect(mockFetchComponent.fetch).toHaveBeenCalledTimes(1)
     })
   })
 })

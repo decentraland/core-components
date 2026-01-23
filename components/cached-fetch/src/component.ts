@@ -2,25 +2,14 @@ import { LRUCache } from 'lru-cache'
 import { Response } from 'node-fetch'
 import { createFetchComponent } from '@well-known-components/fetch-component'
 import type { IFetchComponent } from '@well-known-components/interfaces'
-import type { CachedFetchComponentOptions, CachedResponseData } from './types'
+import type { CachedFetchComponentOptions, CachedResponseData, Request, RequestInit } from './types'
+import { getMethod, getUrlString, hashBody, extractHeadersForCacheKey } from './utils'
 
 const DEFAULT_MAX = 1000
 const DEFAULT_TTL = 1000 * 60 * 5 // 5 minutes
 const DEFAULT_CACHEABLE_METHODS = ['GET']
-const DEFAULT_CACHEABLE_STATUS_CODES: number[] = []
-
-/**
- * Generates a cache key from URL and request init options
- *
- * @param url - The request URL
- * @param init - Optional request initialization options
- * @returns A string key for cache lookup
- */
-function getCacheKey(url: Parameters<IFetchComponent['fetch']>[0], init?: Parameters<IFetchComponent['fetch']>[1]): string {
-  const urlString = typeof url === 'string' ? url : url.toString()
-  const method = (init?.method ?? 'GET').toUpperCase()
-  return `${method}:${urlString}`
-}
+const DEFAULT_CACHEABLE_ERROR_STATUS_CODES: number[] = []
+const DEFAULT_CACHE_KEY_HEADERS: string[] = []
 
 /**
  * Creates a cached fetch component
@@ -38,23 +27,25 @@ function getCacheKey(url: Parameters<IFetchComponent['fetch']>[0], init?: Parame
  * 5. If response is ok or status is in cacheableErrorStatusCodes, caches it for future use
  * 6. Returns the response (from cache or network)
  *
- * @param components - Optional components: fetchComponent
+ * @remarks
+ * This component uses node-fetch internally. Cached responses are always returned as node-fetch
+ * Response objects, regardless of what fetch implementation the underlying fetchComponent uses.
+ * This ensures full compatibility with @well-known-components/fetch-component.
+ *
+ * @param fetchComponent - The fetch component to wrap (defaults to @well-known-components/fetch-component)
  * @param options - Configuration options for cache behavior
  * @returns IFetchComponent implementation with caching
  */
 export async function createCachedFetchComponent(
-  components?: {
-    fetchComponent?: IFetchComponent
-  },
+  fetchComponent: IFetchComponent = createFetchComponent(),
   options?: CachedFetchComponentOptions
 ): Promise<IFetchComponent> {
   // Extract custom options
-  const { cacheableMethods, cacheableErrorStatusCodes, ...lruOptions } = options ?? {}
+  const { cacheableMethods, cacheableErrorStatusCodes, cacheKeyHeaders, ...lruOptions } = options ?? {}
 
   const resolvedCacheableMethods = cacheableMethods ?? DEFAULT_CACHEABLE_METHODS
-  const resolvedCacheableErrorStatusCodes = cacheableErrorStatusCodes ?? DEFAULT_CACHEABLE_STATUS_CODES
-
-  const fetchComponent = components?.fetchComponent ?? createFetchComponent()
+  const resolvedCacheableErrorStatusCodes = cacheableErrorStatusCodes ?? DEFAULT_CACHEABLE_ERROR_STATUS_CODES
+  const resolvedCacheKeyHeaders = cacheKeyHeaders ?? DEFAULT_CACHE_KEY_HEADERS
 
   // Create LRU cache with defaults and user-provided options
   const cache = new LRUCache<string, CachedResponseData>({
@@ -66,36 +57,24 @@ export async function createCachedFetchComponent(
   /**
    * Checks if a request method should be cached
    *
+   * @param url - The request URL or Request object
    * @param init - Request initialization options
    * @returns True if the method is cacheable
    */
-  function isCacheable(init?: Parameters<IFetchComponent['fetch']>[1]): boolean {
-    const method = (init?.method ?? 'GET').toUpperCase()
+  function isCacheable(url: Request, init?: RequestInit): boolean {
+    const method = getMethod(url, init)
     return resolvedCacheableMethods.includes(method)
   }
 
   /**
-   * Creates a Response from cached data
-   *
-   * @param cachedData - The cached response data
-   * @returns A new Response object
-   */
-  function createResponseFromCache(cachedData: CachedResponseData): Response {
-    return new Response(cachedData.body, {
-      status: cachedData.status,
-      statusText: cachedData.statusText,
-      headers: cachedData.headers
-    })
-  }
-
-  /**
    * Converts a Response to cacheable data
+   * Uses arrayBuffer() for cross-platform compatibility
    *
    * @param response - The response to convert
    * @returns The cached response data
    */
-  async function responseToCacheData(response: Response): Promise<CachedResponseData> {
-    const body = await response.buffer()
+  async function responseToCachedData(response: Response): Promise<CachedResponseData> {
+    const body = new Uint8Array(await response.arrayBuffer());
     const headers: Record<string, string> = {}
     response.headers.forEach((value: string, key: string) => {
       headers[key] = value
@@ -107,6 +86,43 @@ export async function createCachedFetchComponent(
       statusText: response.statusText,
       headers
     }
+  }
+
+  /**
+   * Converts cached data back to a Response
+   *
+   * @param cachedData - The cached response data
+   * @returns A new Response object
+   */
+  function cachedDataToResponse(cachedData: CachedResponseData): Response {
+    return new Response(Buffer.from(cachedData.body), {
+      status: cachedData.status,
+      statusText: cachedData.statusText,
+      headers: cachedData.headers
+    })
+  }
+
+  /**
+   * Generates a cache key from URL, method, headers, and body
+   *
+   * @param url - The request URL or Request object
+   * @param init - Optional request initialization options
+   * @returns A string key for cache lookup
+   */
+  function getCacheKey(url: Request, init?: RequestInit): string {
+    const method = getMethod(url, init)
+    const urlString = getUrlString(url)
+    const headersKey = extractHeadersForCacheKey(init, resolvedCacheKeyHeaders)
+    const bodyHash = hashBody(init?.body)
+
+    let key = `${method}:${urlString}`
+    if (headersKey) {
+      key += `|h:${headersKey}`
+    }
+    if (bodyHash) {
+      key += `|b:${bodyHash}`
+    }
+    return key
   }
 
   return {
@@ -125,12 +141,9 @@ export async function createCachedFetchComponent(
      * @param init - Optional request initialization options
      * @returns Promise resolving to the Response
      */
-    async fetch(
-      url: Parameters<IFetchComponent['fetch']>[0],
-      init?: Parameters<IFetchComponent['fetch']>[1]
-    ): ReturnType<IFetchComponent['fetch']> {
+    async fetch(url: Request, init?: RequestInit): Promise<Response> {
       // Non-cacheable methods bypass the cache
-      if (!isCacheable(init)) {
+      if (!isCacheable(url, init)) {
         return fetchComponent.fetch(url, init)
       }
 
@@ -139,7 +152,7 @@ export async function createCachedFetchComponent(
       // Check cache first
       const cachedData = cache.get(key)
       if (cachedData) {
-        return createResponseFromCache(cachedData)
+        return cachedDataToResponse(cachedData)
       }
 
       // Cache miss - fetch from network
@@ -148,9 +161,9 @@ export async function createCachedFetchComponent(
       // Cache successful responses or responses with cacheable status codes
       const shouldCache = response.ok || resolvedCacheableErrorStatusCodes.includes(response.status)
       if (shouldCache) {
-        const cacheData = await responseToCacheData(response)
+        const cacheData = await responseToCachedData(response)
         cache.set(key, cacheData)
-        return createResponseFromCache(cacheData)
+        return cachedDataToResponse(cacheData)
       }
 
       // Return other error responses without caching
