@@ -1,7 +1,7 @@
 {
-  "name": "@dcl/queue-consumer-component",
+  "name": "@dcl/pg-component",
   "version": "2.0.0",
-  "description": "Queue consumer component for core components library",
+  "description": "PG component for core components library",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "files": [
@@ -11,20 +11,27 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
-    "test": "jest",
+    "test": "jest --forceExit",
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
     "@dcl/core-commons": "workspace:*",
+    "@dcl/sqs-component": "workspace:*",
     "@well-known-components/interfaces": "^1.5.2",
-    "@dcl/sqs-component": "workspace:*"
+    "node-pg-migrate": "^7.9.1",
+    "pg": "8.17.2",
+    "pg-protocol": "^1.11.0",
+    "pg-query-stream": "4.11.2",
+    "sql-template-strings": "2.2.2"
   },
   "peerDependencies": {
-    "@dcl/sqs-component": "workspace:*",
     "@dcl/schemas": "*",
+    "@dcl/sqs-component": "workspace:*",
     "@well-known-components/interfaces": "^1.5.2"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^10.18.0",
+    "@types/pg": "^8.16.0",
     "typescript": "^5.8.3"
   },
   "publishConfig": {

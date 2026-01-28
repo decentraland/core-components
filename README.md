@@ -10,8 +10,11 @@ This repository is organized as a monorepo using pnpm workspaces with the follow
 core-components/
 ├── components/          # Reusable components
 │   ├── analytics/        # Analytics component for event tracking
+│   ├── http-server/      # HTTP server component
 │   ├── job/              # Job scheduling and execution component
 │   ├── memory-cache/     # In-memory LRU cache component
+│   ├── metrics/          # Prometheus metrics component handler
+│   ├── pg/               # PostgreSQL database component
 │   ├── queue-consumer/   # Queue message consumer and handler component
 │   ├── redis/            # Redis cache component
 │   ├── s3/               # AWS S3 storage component
@@ -19,9 +22,7 @@ core-components/
 │   ├── slack/            # Slack messaging component
 │   ├── sns/              # AWS SNS publisher component
 │   ├── sqs/              # AWS SQS queue component
-│   ├── traced-fetch/     # Traced fetch component with distributed tracing
-│   ├── metrics/          # Prometheus metrics component handler
-|   └── http-server/      # HTTP server component
+│   └── traced-fetch/     # Traced fetch component with distributed tracing
 └── shared/             # Shared utilities and types
     └── commons/          # Common utilities, types, and constants
 ```
@@ -52,6 +53,10 @@ core-components/
 ### Storage
 
 - **S3 Component** (`@dcl/s3-component`) - AWS S3 object storage operations
+
+### Database
+
+- **PG Component** (`@dcl/pg-component`) - PostgreSQL database with connection pooling, transactions, and migrations
 
 ### Utilities
 
@@ -135,8 +140,12 @@ Testing is configured with Jest and `ts-jest` for TypeScript support. The config
 This project uses [Changesets](https://github.com/changesets/changesets) for automated version management and publishing to npm. All packages are published under the `@dcl` scope:
 
 - `@dcl/analytics-component`
+- `@dcl/http-server`
 - `@dcl/job-component`
 - `@dcl/memory-cache-component`
+- `@dcl/memory-queue-component`
+- `@dcl/metrics`
+- `@dcl/pg-component`
 - `@dcl/queue-consumer-component`
 - `@dcl/redis-component`
 - `@dcl/s3-component`
@@ -144,11 +153,8 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/slack-component`
 - `@dcl/sns-component`
 - `@dcl/sqs-component`
-- `@dcl/memory-queue-component`
 - `@dcl/traced-fetch-component`
 - `@dcl/core-commons`
-- `@dcl/metrics`
-- `@dcl/http-server`
 
 ### Publishing Workflow
 

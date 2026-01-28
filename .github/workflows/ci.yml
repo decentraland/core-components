@@ -41,5 +41,6 @@ jobs:
       - name: Build packages
         run: pnpm build
 
-      - name: Run tests
-        run: pnpm test
+      # Run tests only for packages that changed (and their dependents)
+      - name: Run tests for changed packages
+        run: pnpm --filter "...[origin/main]" test --if-present
