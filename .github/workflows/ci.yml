@@ -43,4 +43,4 @@ jobs:
 
       # Run tests only for packages that changed (and their dependents)
       - name: Run tests for changed packages
-        run: pnpm --filter "...[origin/main]" test --if-present
+        run: pnpm --filter "...[origin/main]" run --if-present test
