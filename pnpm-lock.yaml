@@ -203,15 +203,9 @@ importers:
 
   components/pg:
     dependencies:
-      '@dcl/core-commons':
-        specifier: workspace:*
-        version: link:../../shared/commons
       '@dcl/schemas':
         specifier: '*'
         version: 20.5.0
-      '@dcl/sqs-component':
-        specifier: workspace:*
-        version: link:../sqs
       '@well-known-components/interfaces':
         specifier: ^1.5.2
         version: 1.5.2
