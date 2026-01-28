@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'async_hooks'
-import { IBaseComponent, IConfigComponent, ILoggerComponent, IDatabase } from '@well-known-components/interfaces'
+import { IBaseComponent, IConfigComponent, ILoggerComponent } from '@well-known-components/interfaces'
 import { Client, Pool, PoolClient, PoolConfig } from 'pg'
 import { NoticeMessage } from 'pg-protocol/dist/messages'
 import QueryStream from 'pg-query-stream'

@@ -1,6 +1,6 @@
 {
   "name": "@dcl/pg-component",
-  "version": "2.0.0",
+  "version": "0.0.1",
   "description": "PG component for core components library",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -15,8 +15,6 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
-    "@dcl/core-commons": "workspace:*",
-    "@dcl/sqs-component": "workspace:*",
     "@well-known-components/interfaces": "^1.5.2",
     "node-pg-migrate": "^7.9.1",
     "pg": "8.17.2",
@@ -25,8 +23,6 @@
     "sql-template-strings": "2.2.2"
   },
   "peerDependencies": {
-    "@dcl/schemas": "*",
-    "@dcl/sqs-component": "workspace:*",
     "@well-known-components/interfaces": "^1.5.2"
   },
   "devDependencies": {
