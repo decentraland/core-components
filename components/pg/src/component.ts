@@ -192,31 +192,29 @@ export async function createPgComponent(
     })
     await client.connect()
 
+    // https://github.com/brianc/node-postgres/issues/1860
+    // Uncaught TypeError: queryCallback is not a function
+    // finish - OK, this call is necessary to finish the query when we configure query_timeout due to a bug in pg
+    // finish - with error, this call is necessary to finish the query when we configure query_timeout due to a bug in pg
+    const stream = new QueryStream(sql.text, sql.values, config) as QueryStreamWithCallback
+
+    stream.callback = function () {
+      // noop
+    }
+
     try {
-      // https://github.com/brianc/node-postgres/issues/1860
-      // Uncaught TypeError: queryCallback is not a function
-      // finish - OK, this call is necessary to finish the query when we configure query_timeout due to a bug in pg
-      // finish - with error, this call is necessary to finish the query when we configure query_timeout due to a bug in pg
-      const stream = new QueryStream(sql.text, sql.values, config) as QueryStreamWithCallback
+      client.query(stream)
 
-      stream.callback = function () {
-        // noop
+      for await (const row of stream) {
+        yield row
       }
 
-      try {
-        client.query(stream)
-
-        for await (const row of stream) {
-          yield row
-        }
-
-        stream.destroy()
-        stream.callback(undefined, undefined)
-      } catch (err) {
-        stream.callback(err, undefined)
-        throw err
-      }
+      stream.callback(undefined, undefined)
+    } catch (err) {
+      stream.callback(err, undefined)
+      throw err
     } finally {
+      stream.destroy()
       await client.end()
     }
   }
