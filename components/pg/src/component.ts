@@ -1,0 +1,276 @@
+import { AsyncLocalStorage } from 'async_hooks'
+import { IBaseComponent, IConfigComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { Client, Pool, PoolClient, PoolConfig } from 'pg'
+import { NoticeMessage } from 'pg-protocol/dist/messages'
+import QueryStream from 'pg-query-stream'
+import runner, { RunnerOption } from 'node-pg-migrate'
+import { SQLStatement } from 'sql-template-strings'
+import { setTimeout } from 'timers/promises'
+import { Options, IPgComponent, IMetricsComponent, QueryStreamWithCallback, QueryResult } from './types'
+
+export * from './types'
+export * from './metrics'
+
+export async function runReportingQueryDurationMetric<T>(
+  components: { metrics: IMetricsComponent },
+  queryNameLabel: string,
+  functionToRun: () => Promise<T>
+): Promise<T> {
+  const { metrics } = components
+
+  const { end: endTimer } = metrics.startTimer('dcl_db_query_duration_seconds', {
+    query: queryNameLabel
+  })
+  try {
+    const res = await functionToRun()
+    endTimer({ status: 'success' })
+    return res
+  } catch (err) {
+    endTimer({ status: 'error' })
+    throw err
+  }
+}
+
+/**
+ * Query a Postgres (https://www.postgresql.org) database with ease.
+ * It uses a pool behind the scenes and will try to gracefully close it after finishing the connection.
+ * @public
+ */
+export async function createPgComponent(
+  components: { logs: ILoggerComponent; config: IConfigComponent; metrics?: IMetricsComponent },
+  options: Options = {}
+): Promise<IPgComponent & IBaseComponent> {
+  const { config, logs } = components
+  const logger = logs.getLogger('pg-component')
+
+  // Environment
+  const [connectionString, port, host, database, user, password, idleTimeoutMillis, query_timeout] = await Promise.all([
+    config.getString('PG_COMPONENT_PSQL_CONNECTION_STRING'),
+    config.getNumber('PG_COMPONENT_PSQL_PORT'),
+    config.getString('PG_COMPONENT_PSQL_HOST'),
+    config.getString('PG_COMPONENT_PSQL_DATABASE'),
+    config.getString('PG_COMPONENT_PSQL_USER'),
+    config.getString('PG_COMPONENT_PSQL_PASSWORD'),
+    config.getNumber('PG_COMPONENT_IDLE_TIMEOUT'),
+    config.getNumber('PG_COMPONENT_QUERY_TIMEOUT')
+  ])
+  const defaultOptions: PoolConfig = {
+    connectionString,
+    port,
+    host,
+    database,
+    user,
+    password,
+    idleTimeoutMillis,
+    query_timeout
+  }
+
+  const STREAM_QUERY_TIMEOUT = await config.getNumber('PG_COMPONENT_STREAM_QUERY_TIMEOUT')
+  const GRACE_PERIODS = (await config.getNumber('PG_COMPONENT_GRACE_PERIODS')) || 10
+
+  const finalOptions: PoolConfig = { ...defaultOptions, ...options.pool }
+
+  if (!finalOptions.log) {
+    finalOptions.log = logger.debug.bind(logger)
+  }
+
+  // Config
+  const pool: Pool = new Pool(finalOptions)
+
+  // Async context for transaction client
+  const transactionContext = new AsyncLocalStorage<PoolClient>()
+
+  // Methods
+  async function start() {
+    try {
+      const db = await pool.connect()
+
+      try {
+        if (options.migration) {
+          logger.debug('Running migrations:')
+
+          const opt: RunnerOption = {
+            ...options.migration,
+            dbClient: db
+          }
+
+          if (!opt.logger) {
+            opt.logger = logger
+          }
+          await runner(opt)
+        }
+      } catch (err: any) {
+        logger.error(err)
+        throw err
+      } finally {
+        db.release()
+      }
+    } catch (error: any) {
+      logger.warn('Error starting pg-component:')
+      logger.error(error)
+      throw error
+    }
+  }
+
+  async function withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await pool.connect()
+
+    try {
+      await client.query('BEGIN')
+      const result = await callback(client)
+      await client.query('COMMIT')
+
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  async function withAsyncContextTransaction<T>(callback: () => Promise<T>): Promise<T> {
+    const client = await pool.connect()
+
+    try {
+      await client.query('BEGIN')
+
+      const result = await transactionContext.run(client, callback)
+
+      await client.query('COMMIT')
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  async function defaultQuery<T extends Record<string, any>>(sql: string | SQLStatement): Promise<QueryResult<T>> {
+    const notices: NoticeMessage[] = []
+
+    // Get the transaction's context client or connect a new one
+    const transactionClient = transactionContext.getStore()
+    const client = transactionClient ?? (await pool.connect())
+
+    function listenNotice(notice: NoticeMessage) {
+      notices.push(notice)
+    }
+
+    try {
+      client.on('notice', listenNotice)
+
+      const result = await client.query<T>(sql)
+      return { ...result, rowCount: result.rowCount ?? 0, notices }
+    } finally {
+      client.off('notice', listenNotice)
+      // Only release if we created a new connection (not from transaction context)
+      if (!transactionClient) {
+        client.release()
+      }
+    }
+  }
+
+  async function measuredQuery<T extends Record<string, any>>(
+    sql: string | SQLStatement,
+    durationQueryNameLabel?: string
+  ): Promise<QueryResult<T>> {
+    const result = durationQueryNameLabel
+      ? await runReportingQueryDurationMetric({ metrics: components.metrics! }, durationQueryNameLabel, () =>
+          defaultQuery<T>(sql)
+        )
+      : await defaultQuery<T>(sql)
+
+    return result
+  }
+
+  async function* streamQuery<T>(sql: SQLStatement, config?: { batchSize?: number }): AsyncGenerator<T> {
+    const client = new Client({
+      ...finalOptions,
+      query_timeout: STREAM_QUERY_TIMEOUT
+    })
+    await client.connect()
+
+    // https://github.com/brianc/node-postgres/issues/1860
+    // Uncaught TypeError: queryCallback is not a function
+    // finish - OK, this call is necessary to finish the query when we configure query_timeout due to a bug in pg
+    // finish - with error, this call is necessary to finish the query when we configure query_timeout due to a bug in pg
+    const stream = new QueryStream(sql.text, sql.values, config) as QueryStreamWithCallback
+
+    stream.callback = function () {
+      // noop
+    }
+
+    try {
+      client.query(stream)
+
+      for await (const row of stream) {
+        yield row
+      }
+
+      stream.callback(undefined, undefined)
+    } catch (err) {
+      stream.callback(err, undefined)
+      throw err
+    } finally {
+      stream.destroy()
+      await client.end()
+    }
+  }
+
+  let didStop = false
+
+  async function stop() {
+    if (didStop) {
+      logger.error('Stop called more than once')
+      return
+    }
+    didStop = true
+
+    let gracePeriods = GRACE_PERIODS
+
+    while (gracePeriods > 0 && pool.waitingCount > 0) {
+      logger.debug('Draining connections', {
+        waitingCount: pool.waitingCount,
+        gracePeriods
+      })
+      await setTimeout(200)
+      gracePeriods -= 1
+    }
+
+    const promise = pool.end()
+    let finished = false
+
+    promise.finally(() => {
+      finished = true
+    })
+
+    while (!finished && (pool.totalCount > 0 || pool.idleCount > 0 || pool.waitingCount > 0)) {
+      if (pool.totalCount) {
+        logger.log('Draining connections', {
+          totalCount: pool.totalCount,
+          idleCount: pool.idleCount,
+          waitingCount: pool.waitingCount
+        })
+        await setTimeout(1000)
+      }
+    }
+
+    await promise
+  }
+
+  function getPool(): Pool {
+    return pool
+  }
+
+  return {
+    query: components.metrics ? measuredQuery : defaultQuery,
+    withTransaction,
+    withAsyncContextTransaction,
+    streamQuery,
+    getPool,
+    start,
+    stop
+  }
+}
