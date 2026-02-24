@@ -70,10 +70,6 @@ export async function createPgComponent(
 
   const finalOptions: PoolConfig = { ...defaultOptions, ...options.pool }
 
-  if (!finalOptions.log) {
-    finalOptions.log = logger.debug.bind(logger)
-  }
-
   // Config
   const pool: Pool = new Pool(finalOptions)
 
