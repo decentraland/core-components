@@ -949,19 +949,29 @@ describe('when a retrying acquireLock observes a contested slot', () => {
   // pressure from other writes can't silently LRU-evict it during
   // contention.
   let smallCache: ICacheStorageComponent
-  const lockKey = 'contested-lock'
+  let lockKey: string
 
   beforeEach(async () => {
+    lockKey = 'contested-lock'
     smallCache = createInMemoryCacheComponent({ max: 3 })
     await smallCache.acquireLock(lockKey, { ttlInMilliseconds: 60_000 })
   })
 
-  it('should see the held lock on every retry and ultimately reject with LockNotAcquiredError', async () => {
+  afterEach(async () => {
+    await smallCache.tryReleaseLock(lockKey)
+  })
+
+  it('should reject with LockNotAcquiredError', async () => {
     await expect(
       smallCache.acquireLock(lockKey, { retries: 5, retryDelayInMilliseconds: 1 })
     ).rejects.toThrow(LockNotAcquiredError)
+  })
 
-    // The original lock is still present afterwards.
+  it('should leave the original lock in place for the owner to release', async () => {
+    await smallCache
+      .acquireLock(lockKey, { retries: 5, retryDelayInMilliseconds: 1 })
+      .catch(() => undefined)
+
     await expect(smallCache.releaseLock(lockKey)).resolves.not.toThrow()
   })
 })
@@ -972,14 +982,26 @@ describe('when setInHash is called with an undefined value', () => {
   // reports as null (absent). Redis's HSET rejects undefined at the
   // wire, so aligning the two implementations avoids a silent write-
   // vs-read disagreement.
-  it('should reject instead of silently storing the field as undefined', async () => {
-    await expect(
-      component.setInHash('hash', 'field', undefined as unknown as string)
-    ).rejects.toThrow(/undefined value/)
+  let hashKey: string
+  let field: string
 
-    // And the hash is still absent, since the rejected write created no
-    // side effect.
-    expect(await component.getFromHash('hash', 'field')).toBeNull()
+  beforeEach(() => {
+    hashKey = 'undefined-field-hash'
+    field = 'target-field'
+  })
+
+  it('should reject with an error that mentions the undefined value', async () => {
+    await expect(
+      component.setInHash(hashKey, field, undefined as unknown as string)
+    ).rejects.toThrow(/undefined value/)
+  })
+
+  it('should leave the hash untouched so getFromHash still reports the field as absent', async () => {
+    await component
+      .setInHash(hashKey, field, undefined as unknown as string)
+      .catch(() => undefined)
+
+    expect(await component.getFromHash(hashKey, field)).toBeNull()
   })
 })
 
@@ -988,50 +1010,74 @@ describe('when getAllHashFields is used for subsequent mutation', () => {
   // reference directly. A caller could then mutate the returned object
   // and those mutations would silently leak into the cache. Now we
   // return a shallow clone.
-  const key = 'h'
+  let hashKey: string
 
   beforeEach(async () => {
-    await component.setInHash(key, 'a', 1)
+    hashKey = 'clone-on-read-hash'
+    await component.setInHash(hashKey, 'a', 1)
   })
 
-  it('should return a shallow clone so caller-side mutations do not alter the cache', async () => {
-    const fields = (await component.getAllHashFields(key)) as Record<string, unknown>
-    ;(fields as Record<string, unknown>).injected = 'sneaky'
+  it('should return a clone so caller-side mutations do not alter the cache', async () => {
+    const fields = (await component.getAllHashFields(hashKey)) as Record<string, unknown>
+    fields.injected = 'sneaky'
 
-    const fresh = await component.getAllHashFields(key)
-    expect(fresh).toEqual({ a: 1 })
+    expect(await component.getAllHashFields(hashKey)).toEqual({ a: 1 })
   })
 })
 
-describe('when setInHash is used repeatedly on a key with a prototype-shaped field name', () => {
+describe('when setInHash is used on a key with a prototype-shaped field name', () => {
   // Regression guard for in-place mutation. `target['__proto__'] = v`
   // on a plain object triggers the Object.prototype __proto__ setter,
   // overwriting the prototype instead of storing an own property. The
   // component now stores hashes on a null-prototype object so bracket
   // assignment is a plain own-property write regardless of field name.
-  const key = 'proto-safe'
+  let hashKey: string
 
-  it('should store "__proto__" as an own field and not corrupt the prototype', async () => {
-    await component.setInHash(key, '__proto__', 'first')
-    await component.setInHash(key, 'other', 2)
-    await component.setInHash(key, '__proto__', 'second')
-
-    expect(await component.getFromHash<string>(key, '__proto__')).toBe('second')
-    expect(await component.getFromHash<number>(key, 'other')).toBe(2)
-    // NB: using a computed key in the expected literal — `{ __proto__: v }`
-    // as a non-computed literal tries to SET the prototype, not create
-    // an own property.
-    expect(await component.getAllHashFields(key)).toEqual({ ['__proto__']: 'second', other: 2 })
+  beforeEach(() => {
+    hashKey = 'proto-safe-hash'
   })
 
-  it('should migrate an Object.prototype-chained hash to null-proto on first write so __proto__ assignment is safe', async () => {
-    // Seed the key the hard way: write a plain-literal hash via set(),
-    // which preserves Object.prototype. Then try setInHash with the
-    // dangerous field name — it must still be stored as an own field.
-    await component.set(key, { preexisting: 'stays' })
-    await component.setInHash(key, '__proto__', 'added')
+  describe('and the hash is built entirely through setInHash', () => {
+    beforeEach(async () => {
+      await component.setInHash(hashKey, '__proto__', 'first')
+      await component.setInHash(hashKey, 'other', 2)
+      await component.setInHash(hashKey, '__proto__', 'second')
+    })
 
-    expect(await component.getFromHash<string>(key, '__proto__')).toBe('added')
-    expect(await component.getFromHash<string>(key, 'preexisting')).toBe('stays')
+    it('should return the most recently stored "__proto__" value from getFromHash', async () => {
+      expect(await component.getFromHash<string>(hashKey, '__proto__')).toBe('second')
+    })
+
+    it('should keep sibling fields readable alongside the "__proto__" field', async () => {
+      expect(await component.getFromHash<number>(hashKey, 'other')).toBe(2)
+    })
+
+    it('should expose "__proto__" as an own property in getAllHashFields, not as the prototype', async () => {
+      // NB: using a computed key in the expected literal — `{ __proto__: v }`
+      // as a non-computed literal tries to SET the prototype, not create
+      // an own property.
+      expect(await component.getAllHashFields(hashKey)).toEqual({
+        ['__proto__']: 'second',
+        other: 2
+      })
+    })
+  })
+
+  describe('and the key was seeded via set() with a plain-literal hash', () => {
+    // Starts life as an Object.prototype-chained object; the first
+    // setInHash must migrate it to null-proto so a subsequent
+    // '__proto__' assignment stays an own-property write.
+    beforeEach(async () => {
+      await component.set(hashKey, { preexisting: 'stays' })
+      await component.setInHash(hashKey, '__proto__', 'added')
+    })
+
+    it('should store the "__proto__" write as an own field readable by getFromHash', async () => {
+      expect(await component.getFromHash<string>(hashKey, '__proto__')).toBe('added')
+    })
+
+    it('should preserve the pre-existing field after the null-proto migration', async () => {
+      expect(await component.getFromHash<string>(hashKey, 'preexisting')).toBe('stays')
+    })
   })
 })
