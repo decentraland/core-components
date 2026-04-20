@@ -1151,6 +1151,35 @@ describe('when keys matches a Redis-style glob with a `[...]` character class', 
       expect(result.sort()).toEqual(['user:3', 'user:x'])
     })
   })
+
+  describe('and the class starts with a literal `]` (POSIX shorthand for "include ]")', () => {
+    beforeEach(async () => {
+      await component.set('user:]', 'literal-bracket')
+      await component.set('user:a', 'letter')
+    })
+
+    it('should match both the `]` member and other enumerated members', async () => {
+      const result = await component.keys('user:[]a]')
+      expect(result.sort()).toEqual(['user:]', 'user:a'])
+    })
+  })
+
+  describe('and the class starts with a literal `]` under negation (`[!]…]`)', () => {
+    beforeEach(async () => {
+      await component.set('user:]', 'literal-bracket')
+      await component.set('user:a', 'letter')
+      await component.set('user:z', 'other-letter')
+    })
+
+    it('should exclude both the `]` and the other listed members from the match', async () => {
+      const result = await component.keys('user:[!]a]')
+
+      // user:] and user:a are excluded by the class; every other
+      // single-character suffix from the outer beforeEach (1/2/3/x)
+      // plus the newly added 'z' still matches.
+      expect(result.sort()).toEqual(['user:1', 'user:2', 'user:3', 'user:x', 'user:z'])
+    })
+  })
 })
 
 describe('when keys contains a `\\` escape before a wildcard character', () => {

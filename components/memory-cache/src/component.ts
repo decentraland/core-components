@@ -100,7 +100,16 @@ function compileGlob(pattern: string): RegExp {
         continue
       }
       const raw = pattern.slice(i + 1, j)
-      const classBody = raw.startsWith('!') ? '^' + raw.slice(1) : raw
+      let classBody = raw.startsWith('!') ? '^' + raw.slice(1) : raw
+      // POSIX glob allows a leading ']' as a literal class member
+      // (e.g. '[]abc]' is the class {']', 'a', 'b', 'c'}). JS regex
+      // would otherwise read the ']' as the class terminator, so
+      // escape it explicitly — both for unnegated and negated forms.
+      if (classBody.startsWith('^]')) {
+        classBody = '^\\]' + classBody.slice(2)
+      } else if (classBody.startsWith(']')) {
+        classBody = '\\]' + classBody.slice(1)
+      }
       out += '[' + classBody + ']'
       i = j + 1
       continue
