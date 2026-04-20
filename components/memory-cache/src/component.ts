@@ -1,8 +1,10 @@
 import { LRUCache } from 'lru-cache'
 import { randomUUID } from 'crypto'
+import { setTimeout as sleepWithSignal } from 'timers/promises'
+import { ILoggerComponent } from '@well-known-components/interfaces'
 import {
+  AcquireLockOptions,
   ICacheStorageComponent,
-  sleep,
   fromSecondsToMilliseconds,
   DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS,
   DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS,
@@ -21,6 +23,99 @@ export interface InMemoryCacheOptions {
    * 10 000 keys. Defaults to 10 000.
    */
   max?: number
+  /**
+   * Optional logger component. If provided, lock acquire / release
+   * debug lines are emitted alongside the Redis component's, so a
+   * memory-backed drop-in is symmetric on observability.
+   */
+  logs?: ILoggerComponent
+}
+
+// Throws the AbortSignal's reason (or a fresh AbortError) if the signal
+// is already aborted. Used at the top of the retry loop and before each
+// attempt so a caller that cancels mid-contention doesn't have to wait
+// for the next wake-up tick.
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
+  }
+}
+
+function validateLockOptions(options?: AcquireLockOptions): void {
+  if (options?.retries !== undefined) {
+    if (!Number.isInteger(options.retries) || options.retries < 0) {
+      throw new TypeError(
+        `acquireLock 'retries' must be a non-negative integer, got ${String(options.retries)}`
+      )
+    }
+  }
+  if (options?.retryDelayInMilliseconds !== undefined) {
+    if (!Number.isFinite(options.retryDelayInMilliseconds) || options.retryDelayInMilliseconds < 0) {
+      throw new TypeError(
+        `acquireLock 'retryDelayInMilliseconds' must be a non-negative finite number, got ${String(
+          options.retryDelayInMilliseconds
+        )}`
+      )
+    }
+  }
+  if (options?.ttlInMilliseconds !== undefined && !Number.isFinite(options.ttlInMilliseconds)) {
+    throw new TypeError(
+      `acquireLock 'ttlInMilliseconds' must be a finite number, got ${String(options.ttlInMilliseconds)}`
+    )
+  }
+}
+
+// Translate a Redis-style glob pattern into an anchored regex. Supports
+// `*` (any run), `?` (any single char), `[...]` character classes with
+// `!` negation, and `\` as a literal escape for the next character.
+// Everything else is regex-escaped so it matches literally.
+function compileGlob(pattern: string): RegExp {
+  const regexMetas = '.+^${}()|\\/'
+  const escapables = regexMetas + '*?[]-'
+  let out = '^'
+  for (let i = 0; i < pattern.length; ) {
+    const ch = pattern[i]
+    if (ch === '*') {
+      out += '.*'
+      i++
+      continue
+    }
+    if (ch === '?') {
+      out += '.'
+      i++
+      continue
+    }
+    if (ch === '[') {
+      // Scan ahead for the closing ']'. A ']' immediately after '[' or
+      // '[!' is treated as a literal member of the class (POSIX-style),
+      // so start the search one position later in that case.
+      let j = i + 1
+      if (j < pattern.length && (pattern[j] === '!' || pattern[j] === '^')) j++
+      if (j < pattern.length && pattern[j] === ']') j++
+      while (j < pattern.length && pattern[j] !== ']') j++
+      if (j >= pattern.length) {
+        // Unclosed '[' — treat as literal bracket.
+        out += '\\['
+        i++
+        continue
+      }
+      const raw = pattern.slice(i + 1, j)
+      const classBody = raw.startsWith('!') ? '^' + raw.slice(1) : raw
+      out += '[' + classBody + ']'
+      i = j + 1
+      continue
+    }
+    if (ch === '\\' && i + 1 < pattern.length) {
+      const next = pattern[i + 1]
+      out += escapables.includes(next) ? '\\' + next : next
+      i += 2
+      continue
+    }
+    out += regexMetas.includes(ch) ? '\\' + ch : ch
+    i++
+  }
+  out += '$'
+  return new RegExp(out)
 }
 
 export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {}): ICacheStorageComponent {
@@ -31,6 +126,7 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
     max: options.max ?? DEFAULT_MAX_ENTRIES
   })
 
+  const logger = options.logs?.getLogger('memory-cache-component')
   const randomValue = randomUUID()
 
   // Accepts only plain JS objects (no arrays, Maps, Sets, Dates, class
@@ -112,14 +208,11 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
         return Array.from(cache.keys()) as string[]
       }
 
-      // Convert a Redis-style glob pattern to an anchored regex:
-      //  1. Escape every regex metacharacter so `user.id:*` doesn't let `.`
-      //     match an arbitrary character.
-      //  2. Turn `\*` (escaped glob star) back into `.*`.
-      //  3. Anchor with ^…$ so the pattern must match the whole key, not a
-      //     substring (previously `user:*` also matched `admin_user:123`).
-      const regexSource = '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'
-      const regex = new RegExp(regexSource)
+      // Full Redis-style glob: `*`, `?`, `[...]` (with `!`/`^`
+      // negation), and `\` as a literal escape. Everything else is
+      // regex-escaped. Anchored with ^…$ so `user:*` only matches
+      // keys that actually start with `user:`.
+      const regex = compileGlob(pattern)
       // One-pass filter over the iterator — no intermediate Array.from
       // allocation for a cache whose size can run into the tens of
       // thousands when the pattern only matches a handful of keys.
@@ -214,14 +307,10 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
       return isPlainObject(value) ? { ...(value as Record<string, T>) } : {}
     },
 
-    async acquireLock(
-      key: string,
-      options?: {
-        ttlInMilliseconds?: number
-        retryDelayInMilliseconds?: number
-        retries?: number
-      }
-    ): Promise<void> {
+    async acquireLock(key: string, options?: AcquireLockOptions): Promise<void> {
+      validateLockOptions(options)
+      throwIfAborted(options?.signal)
+
       // Clamp non-positive TTL to the default. With `{ ttl: 0 }`, lru-cache
       // creates a never-expiring entry — here that would mean a lock that
       // silently leaks forever, which is never what the caller meant.
@@ -239,10 +328,15 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
         //    null"; `cache.get` returns undefined only for the former.
         if (cache.get(key) === undefined) {
           cache.set(key, randomValue, { ttl })
+          logger?.debug('Successfully acquired lock', { key })
           return
         }
+        logger?.debug('Could not acquire lock', { key })
         if (i < retries - 1) {
-          await sleep(retryDelay)
+          // Interruptible sleep: `timers/promises#setTimeout` rejects
+          // with the signal's reason the moment abort fires, so the
+          // caller doesn't have to wait for the next wake-up tick.
+          await sleepWithSignal(retryDelay, undefined, { signal: options?.signal })
         }
       }
 
@@ -257,14 +351,7 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
       throw new LockNotReleasedError(key)
     },
 
-    async tryAcquireLock(
-      key: string,
-      options?: {
-        ttlInMilliseconds?: number
-        retryDelayInMilliseconds?: number
-        retries?: number
-      }
-    ): Promise<boolean> {
+    async tryAcquireLock(key: string, options?: AcquireLockOptions): Promise<boolean> {
       try {
         await component.acquireLock(key, options)
         return true

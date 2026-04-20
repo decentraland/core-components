@@ -1109,3 +1109,192 @@ describe('when setInHash is used on a key with a prototype-shaped field name', (
     })
   })
 })
+
+describe('when keys matches a Redis-style glob with a `?` wildcard', () => {
+  beforeEach(async () => {
+    await component.set('user:1', 'a')
+    await component.set('user:12', 'b')
+    await component.set('user:abc', 'c')
+  })
+
+  it('should match keys of the exact wildcard length', async () => {
+    const result = await component.keys('user:?')
+    expect(result.sort()).toEqual(['user:1'])
+  })
+})
+
+describe('when keys matches a Redis-style glob with a `[...]` character class', () => {
+  beforeEach(async () => {
+    await component.set('user:1', 'a')
+    await component.set('user:2', 'b')
+    await component.set('user:3', 'c')
+    await component.set('user:x', 'd')
+  })
+
+  describe('and the class is a simple enumeration', () => {
+    it('should match only the enumerated members', async () => {
+      const result = await component.keys('user:[12]')
+      expect(result.sort()).toEqual(['user:1', 'user:2'])
+    })
+  })
+
+  describe('and the class is a range', () => {
+    it('should match every member of the range', async () => {
+      const result = await component.keys('user:[1-3]')
+      expect(result.sort()).toEqual(['user:1', 'user:2', 'user:3'])
+    })
+  })
+
+  describe('and the class is negated with `!`', () => {
+    it('should match members not listed in the class', async () => {
+      const result = await component.keys('user:[!12]')
+      expect(result.sort()).toEqual(['user:3', 'user:x'])
+    })
+  })
+})
+
+describe('when keys contains a `\\` escape before a wildcard character', () => {
+  beforeEach(async () => {
+    await component.set('literal*key', 'yes')
+    await component.set('literalXkey', 'no')
+  })
+
+  it('should treat the escaped wildcard as a literal character', async () => {
+    const result = await component.keys('literal\\*key')
+    expect(result.sort()).toEqual(['literal*key'])
+  })
+})
+
+describe('when acquireLock receives invalid lock options', () => {
+  describe('and retries is negative', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: -1 })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retries is not an integer', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: 1.5 })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retries is NaN', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: NaN })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retryDelayInMilliseconds is negative', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { retryDelayInMilliseconds: -5 })
+      ).rejects.toThrow(/'retryDelayInMilliseconds' must be a non-negative finite number/)
+    })
+  })
+
+  describe('and retryDelayInMilliseconds is Infinity', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { retryDelayInMilliseconds: Infinity })
+      ).rejects.toThrow(/'retryDelayInMilliseconds' must be a non-negative finite number/)
+    })
+  })
+
+  describe('and ttlInMilliseconds is NaN', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { ttlInMilliseconds: NaN })
+      ).rejects.toThrow(/'ttlInMilliseconds' must be a finite number/)
+    })
+  })
+})
+
+describe('when acquireLock is handed an AbortSignal', () => {
+  let contendedKey: string
+
+  beforeEach(async () => {
+    contendedKey = 'abortable-lock'
+    await component.acquireLock(contendedKey, { ttlInMilliseconds: 60_000 })
+  })
+
+  afterEach(async () => {
+    await component.tryReleaseLock(contendedKey)
+  })
+
+  describe('and the signal is already aborted at the call site', () => {
+    let controller: AbortController
+
+    beforeEach(() => {
+      controller = new AbortController()
+      controller.abort(new Error('cancelled before call'))
+    })
+
+    it('should reject with the abort reason without ever attempting to acquire', async () => {
+      await expect(
+        component.acquireLock(contendedKey, { signal: controller.signal, retries: 50 })
+      ).rejects.toThrow('cancelled before call')
+    })
+  })
+
+  describe('and the signal is aborted mid-contention', () => {
+    let controller: AbortController
+
+    beforeEach(() => {
+      controller = new AbortController()
+    })
+
+    it('should reject promptly rather than wait out the remaining retries', async () => {
+      const pending = component
+        .acquireLock(contendedKey, {
+          signal: controller.signal,
+          retries: 100,
+          retryDelayInMilliseconds: 100
+        })
+        .catch((err) => err)
+
+      // Let the loop reach its first sleep, then abort.
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      controller.abort()
+
+      const result = await pending
+      // Node's AbortError is a DOMException (not a plain Error
+      // subclass in every environment), so we inspect the portable
+      // `.name` invariant instead of instanceof.
+      expect((result as { name: string }).name).toBe('AbortError')
+    })
+  })
+})
+
+describe('when a logger is supplied to the component', () => {
+  let loggerComponent: { getLogger: jest.Mock }
+  let loggerInstance: { debug: jest.Mock; info: jest.Mock; warn: jest.Mock; error: jest.Mock; log: jest.Mock }
+  let loggedComponent: ICacheStorageComponent
+
+  beforeEach(async () => {
+    loggerInstance = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      log: jest.fn()
+    }
+    loggerComponent = { getLogger: jest.fn().mockReturnValue(loggerInstance) }
+    loggedComponent = createInMemoryCacheComponent({ logs: loggerComponent as any })
+  })
+
+  it('should request a logger scoped to the memory-cache component', () => {
+    expect(loggerComponent.getLogger).toHaveBeenCalledWith('memory-cache-component')
+  })
+
+  it('should emit a debug line when a lock is successfully acquired', async () => {
+    await loggedComponent.acquireLock('some-lock')
+
+    expect(loggerInstance.debug).toHaveBeenCalledWith('Successfully acquired lock', { key: 'some-lock' })
+  })
+})
