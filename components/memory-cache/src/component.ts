@@ -32,9 +32,10 @@ export interface InMemoryCacheOptions {
 }
 
 // Throws the AbortSignal's reason (or a fresh AbortError) if the signal
-// is already aborted. Used at the top of the retry loop and before each
-// attempt so a caller that cancels mid-contention doesn't have to wait
-// for the next wake-up tick.
+// is already aborted. Used before the first attempt so a caller that
+// cancels pre-call never even enters the retry loop. Mid-retry aborts
+// are surfaced by `timers/promises#setTimeout` (rejects with the
+// signal's reason the moment abort fires).
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
