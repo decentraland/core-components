@@ -1,10 +1,11 @@
 import { ILoggerComponent, START_COMPONENT, STOP_COMPONENT } from '@well-known-components/interfaces'
 import { createClient, RedisClientType } from 'redis'
 import { randomUUID } from 'crypto'
+import { setTimeout as sleepWithSignal } from 'timers/promises'
 import {
+  AcquireLockOptions,
   ICacheStorageComponent,
   isErrorWithMessage,
-  sleep,
   DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS,
   DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS,
   DEFAULT_ACQUIRE_LOCK_RETRIES,
@@ -14,6 +15,39 @@ import {
 
 function errorMessageOf(err: unknown): string {
   return isErrorWithMessage(err) ? err.message : 'Unknown error'
+}
+
+// Throws the AbortSignal's reason (or a fresh AbortError) if the signal
+// is already aborted. Used before the first attempt so a caller that
+// cancels before calling acquireLock doesn't even round-trip to Redis.
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
+  }
+}
+
+function validateLockOptions(options?: AcquireLockOptions): void {
+  if (options?.retries !== undefined) {
+    if (!Number.isInteger(options.retries) || options.retries < 0) {
+      throw new TypeError(
+        `acquireLock 'retries' must be a non-negative integer, got ${String(options.retries)}`
+      )
+    }
+  }
+  if (options?.retryDelayInMilliseconds !== undefined) {
+    if (!Number.isFinite(options.retryDelayInMilliseconds) || options.retryDelayInMilliseconds < 0) {
+      throw new TypeError(
+        `acquireLock 'retryDelayInMilliseconds' must be a non-negative finite number, got ${String(
+          options.retryDelayInMilliseconds
+        )}`
+      )
+    }
+  }
+  if (options?.ttlInMilliseconds !== undefined && !Number.isFinite(options.ttlInMilliseconds)) {
+    throw new TypeError(
+      `acquireLock 'ttlInMilliseconds' must be a finite number, got ${String(options.ttlInMilliseconds)}`
+    )
+  }
 }
 
 function errorLogPayload(err: unknown): { error: string; stack?: string } {
@@ -167,10 +201,10 @@ export async function createRedisComponent(
     }
   }
 
-  async function acquireLock(
-    key: string,
-    options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
-  ): Promise<void> {
+  async function acquireLock(key: string, options?: AcquireLockOptions): Promise<void> {
+    validateLockOptions(options)
+    throwIfAborted(options?.signal)
+
     // Clamp non-positive TTL to the default. Redis would reject `PX: 0`
     // at the wire with "invalid expire time in set", but surfacing that
     // as a LockNotAcquiredError further down the line is confusing —
@@ -197,7 +231,10 @@ export async function createRedisComponent(
         // over the whole sum keeps the result an integer ms even when
         // retryDelay is odd.
         const jitteredDelay = Math.floor(retryDelay / 2 + Math.random() * (retryDelay / 2))
-        await sleep(jitteredDelay)
+        // Interruptible sleep: rejects with the abort reason the moment
+        // the signal fires, so a caller cancelling mid-contention
+        // doesn't have to wait for the next wake-up tick.
+        await sleepWithSignal(jitteredDelay, undefined, { signal: options?.signal })
       }
     }
 
@@ -259,10 +296,7 @@ export async function createRedisComponent(
     }
   }
 
-  async function tryAcquireLock(
-    key: string,
-    options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
-  ): Promise<boolean> {
+  async function tryAcquireLock(key: string, options?: AcquireLockOptions): Promise<boolean> {
     try {
       await acquireLock(key, options)
       return true

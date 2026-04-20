@@ -5,6 +5,26 @@ export interface ASharedType {
   a: string
 }
 
+/**
+ * Options accepted by the lock-acquisition methods on
+ * {@link ICacheStorageComponent}.
+ */
+export interface AcquireLockOptions {
+  /** Time-to-live for the lock in milliseconds. Default: 10_000. */
+  ttlInMilliseconds?: number
+  /** Delay between retries in milliseconds. Default: 200. */
+  retryDelayInMilliseconds?: number
+  /** Number of retry attempts. Default: 10. */
+  retries?: number
+  /**
+   * Optional AbortSignal that cancels the retry loop. The promise
+   * rejects with the signal's `reason` (or an `AbortError` if none
+   * was set) as soon as the abort is observed — between retries, or
+   * before the first attempt if the signal is already aborted.
+   */
+  signal?: AbortSignal
+}
+
 export interface ICacheStorageComponent extends IBaseComponent {
   /**
    * Retrieves a value from cache by key.
@@ -68,7 +88,7 @@ export interface ICacheStorageComponent extends IBaseComponent {
    */
   acquireLock(
     key: string,
-    options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
+    options?: AcquireLockOptions
   ): Promise<void>
   /**
    * Releases a lock for a key. Throws LockNotReleasedError if lock cannot be released.
@@ -87,7 +107,7 @@ export interface ICacheStorageComponent extends IBaseComponent {
    */
   tryAcquireLock(
     key: string,
-    options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
+    options?: AcquireLockOptions
   ): Promise<boolean>
   /**
    * Attempts to release a lock for a key without throwing errors.

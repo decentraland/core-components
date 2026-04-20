@@ -1079,3 +1079,111 @@ describe('when releaseLock caches the Lua script via EVALSHA', () => {
     })
   })
 })
+
+describe('when acquireLock receives invalid lock options', () => {
+  describe('and retries is negative', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: -1 })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retries is not an integer', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: 1.5 })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retries is NaN', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: NaN })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retryDelayInMilliseconds is negative', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { retryDelayInMilliseconds: -5 })
+      ).rejects.toThrow(/'retryDelayInMilliseconds' must be a non-negative finite number/)
+    })
+  })
+
+  describe('and retryDelayInMilliseconds is Infinity', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { retryDelayInMilliseconds: Infinity })
+      ).rejects.toThrow(/'retryDelayInMilliseconds' must be a non-negative finite number/)
+    })
+  })
+
+  describe('and ttlInMilliseconds is NaN', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { ttlInMilliseconds: NaN })
+      ).rejects.toThrow(/'ttlInMilliseconds' must be a finite number/)
+    })
+  })
+})
+
+describe('when acquireLock is handed an AbortSignal', () => {
+  let lockKey: string
+
+  beforeEach(() => {
+    lockKey = 'abortable-lock'
+  })
+
+  describe('and the signal is already aborted at the call site', () => {
+    let controller: AbortController
+
+    beforeEach(() => {
+      controller = new AbortController()
+      controller.abort(new Error('cancelled before call'))
+    })
+
+    it('should reject with the abort reason without ever round-tripping to Redis', async () => {
+      await expect(
+        component.acquireLock(lockKey, { signal: controller.signal, retries: 50 })
+      ).rejects.toThrow('cancelled before call')
+    })
+
+    it('should not issue a SET command when the signal was pre-aborted', async () => {
+      await component
+        .acquireLock(lockKey, { signal: controller.signal, retries: 50 })
+        .catch(() => undefined)
+
+      expect(setMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('and the signal is aborted mid-contention', () => {
+    let controller: AbortController
+
+    beforeEach(() => {
+      controller = new AbortController()
+      // Always report "lock already held" so the loop proceeds into
+      // the retry-sleep where the abort can take effect.
+      setMock.mockResolvedValue(null)
+    })
+
+    it('should reject with an AbortError rather than wait out the remaining retries', async () => {
+      const pending = component
+        .acquireLock(lockKey, {
+          signal: controller.signal,
+          retries: 100,
+          retryDelayInMilliseconds: 100
+        })
+        .catch((err) => err)
+
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      controller.abort()
+
+      const result = await pending
+      expect((result as { name: string }).name).toBe('AbortError')
+    })
+  })
+})
