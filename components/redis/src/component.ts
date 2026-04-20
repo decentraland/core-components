@@ -12,6 +12,10 @@ import {
   LockNotReleasedError
 } from '@dcl/core-commons'
 
+function errorMessageOf(err: unknown): string {
+  return isErrorWithMessage(err) ? err.message : 'Unknown error'
+}
+
 export async function createRedisComponent(
   hostUrl: string,
   components: { logs: ILoggerComponent }
@@ -20,7 +24,6 @@ export async function createRedisComponent(
   const logger = logs.getLogger('redis-component')
   const randomValue = randomUUID()
 
-  // Initialize client immediately for testing
   const client: RedisClientType = createClient({ url: hostUrl })
 
   client.on('error', (err: Error) => {
@@ -32,33 +35,33 @@ export async function createRedisComponent(
       logger.debug('Connecting to Redis', { hostUrl })
       await client.connect()
       logger.debug('Successfully connected to Redis')
-    } catch (err: any) {
-      logger.error('Error connecting to Redis', err)
+    } catch (err) {
+      logger.error('Error connecting to Redis', { error: errorMessageOf(err) })
       throw err
     }
   }
 
   async function stop() {
+    // Stop is best-effort: a disconnect failure should not prevent the
+    // lifecycle manager from moving on with the rest of the shutdown.
     try {
       logger.debug('Disconnecting from Redis')
-      if (client) {
-        await client.close()
-      }
+      await client.close()
       logger.debug('Successfully disconnected from Redis')
-    } catch (err: any) {
-      logger.error('Error disconnecting from Redis', err)
+    } catch (err) {
+      logger.error('Error disconnecting from Redis', { error: errorMessageOf(err) })
     }
   }
 
   async function get<T>(key: string): Promise<T | null> {
     try {
-      const serializedValue = await client.get(key.toLowerCase())
+      const serializedValue = await client.get(key)
       if (serializedValue) {
         return JSON.parse(serializedValue) as T
       }
       return null
-    } catch (err: any) {
-      logger.error(`Error getting key "${key}"`, err)
+    } catch (err) {
+      logger.error('Error getting key', { key, error: errorMessageOf(err) })
       throw err
     }
   }
@@ -66,9 +69,13 @@ export async function createRedisComponent(
   async function set<T>(key: string, value: T, ttlInSeconds?: number): Promise<void> {
     try {
       const serializedValue = JSON.stringify(value)
-      await client.set(key.toLowerCase(), serializedValue, { EX: ttlInSeconds as number | undefined })
-    } catch (err: any) {
-      logger.error(`Error setting key "${key}"`, err)
+      // Only include EX when a positive TTL was provided. Passing
+      // `{ EX: undefined }` is interpreted inconsistently across
+      // node-redis versions.
+      const options = ttlInSeconds && ttlInSeconds > 0 ? { EX: ttlInSeconds } : undefined
+      await client.set(key, serializedValue, options)
+    } catch (err) {
+      logger.error('Error setting key', { key, error: errorMessageOf(err) })
       throw err
     }
   }
@@ -77,20 +84,21 @@ export async function createRedisComponent(
     key: string,
     options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
   ): Promise<void> {
-    const ttl = options?.ttlInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
+    const ttlInMilliseconds = options?.ttlInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
     const retryDelay = options?.retryDelayInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS
     const retries = options?.retries ?? DEFAULT_ACQUIRE_LOCK_RETRIES
 
     for (let i = 0; i < retries; i++) {
-      const lock = await client.set(key.toLowerCase(), randomValue, { NX: true, EX: ttl })
+      // PX takes milliseconds; the previous code used EX (seconds), which
+      // made every default-10s lock actually last 10_000s.
+      const lock = await client.set(key, randomValue, { NX: true, PX: ttlInMilliseconds })
       if (lock) {
-        logger.debug(`Successfully acquired lock for key "${key}"`)
+        logger.debug('Successfully acquired lock', { key })
         return
-      } else {
-        logger.debug(`Could not acquire lock for key "${key}"`)
-        if (i < retries - 1) {
-          await sleep(retryDelay)
-        }
+      }
+      logger.debug('Could not acquire lock', { key })
+      if (i < retries - 1) {
+        await sleep(retryDelay)
       }
     }
 
@@ -107,23 +115,20 @@ export async function createRedisComponent(
           return 0
         end`,
         {
-          keys: [key.toLowerCase()],
+          keys: [key],
           arguments: [randomValue]
         }
       )) as number
 
       if (result === 1) {
         return
-      } else {
-        throw new LockNotReleasedError(key)
       }
+      throw new LockNotReleasedError(key)
     } catch (error) {
       if (error instanceof LockNotReleasedError) {
         throw error
       }
-      logger.error(
-        `Error releasing lock for key "${key}": ${isErrorWithMessage(error) ? error.message : 'Unknown error'}`
-      )
+      logger.error('Error releasing lock', { key, error: errorMessageOf(error) })
       throw error
     }
   }
@@ -157,9 +162,9 @@ export async function createRedisComponent(
 
   async function remove(key: string): Promise<void> {
     try {
-      await client.del(key.toLowerCase())
-    } catch (err: any) {
-      logger.error(`Error removing key "${key}"`, err)
+      await client.del(key)
+    } catch (err) {
+      logger.error('Error removing key', { key, error: errorMessageOf(err) })
       throw err
     }
   }
@@ -172,23 +177,25 @@ export async function createRedisComponent(
       do {
         const reply = await client.scan(cursor, {
           MATCH: pattern,
-          COUNT: 100 // Process in batches of 100
+          COUNT: 100
         })
         cursor = reply.cursor
         allKeys.push(...reply.keys)
       } while (cursor !== '0')
 
       return allKeys
-    } catch (err: any) {
-      logger.error('Error scanning keys', err)
+    } catch (err) {
+      logger.error('Error scanning keys', { pattern, error: errorMessageOf(err) })
       throw err
     }
   }
 
   async function setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
-    const multi = await client.multi()
+    // client.multi() is synchronous in node-redis v5 and returns a builder;
+    // the previous `await client.multi()` was a no-op.
+    const multi = client.multi()
     multi.hSet(key, field, JSON.stringify(value))
-    if (ttlInSecondsForHash) {
+    if (ttlInSecondsForHash && ttlInSecondsForHash > 0) {
       multi.expire(key, ttlInSecondsForHash)
     }
     await multi.exec()

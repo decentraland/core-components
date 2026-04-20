@@ -12,7 +12,7 @@ let logs: ILoggerComponent
 let component: ICacheStorageComponent
 let mockRedisClient: any
 let connectMock: jest.Mock
-let quitMock: jest.Mock
+let closeMock: jest.Mock
 let getMock: jest.Mock
 let setMock: jest.Mock
 let delMock: jest.Mock
@@ -32,7 +32,7 @@ const hostUrl = 'redis://localhost:6379'
 
 beforeEach(async () => {
   connectMock = jest.fn().mockResolvedValue(undefined)
-  quitMock = jest.fn().mockResolvedValue(undefined)
+  closeMock = jest.fn().mockResolvedValue(undefined)
   getMock = jest.fn()
   setMock = jest.fn().mockResolvedValue('OK')
   delMock = jest.fn().mockResolvedValue(1)
@@ -54,7 +54,7 @@ beforeEach(async () => {
 
   mockRedisClient = {
     connect: connectMock,
-    quit: quitMock,
+    close: closeMock,
     get: getMock,
     set: setMock,
     del: delMock,
@@ -79,6 +79,37 @@ beforeEach(async () => {
   component = await createRedisComponent(hostUrl, { logs })
 })
 
+describe('when working with mixed-case keys', () => {
+  // Redis is case-sensitive. This suite guards against regressing back to
+  // the previous behavior that silently lower-cased keys only on some
+  // methods, which made `set(K)`/`setInHash(K,…)`/`keys(K*)` refer to
+  // different underlying Redis keys.
+  const mixedCaseKey = 'MixedCase:Key'
+  const serializedValue = JSON.stringify({ ok: true })
+
+  beforeEach(() => {
+    getMock.mockResolvedValue(serializedValue)
+    hGetAllMock.mockResolvedValue({})
+  })
+
+  it('should preserve the original case in get/set/remove/keys/acquireLock/releaseLock/setInHash', async () => {
+    await component.set(mixedCaseKey, { ok: true })
+    await component.get(mixedCaseKey)
+    await component.remove(mixedCaseKey)
+    await component.setInHash(mixedCaseKey, 'Field', { ok: true })
+    evalMock.mockResolvedValueOnce(1)
+    await component.acquireLock(mixedCaseKey, { retries: 1 })
+    await component.releaseLock(mixedCaseKey)
+
+    expect(setMock).toHaveBeenCalledWith(mixedCaseKey, serializedValue, undefined)
+    expect(getMock).toHaveBeenCalledWith(mixedCaseKey)
+    expect(delMock).toHaveBeenCalledWith(mixedCaseKey)
+    expect(hSetMock).toHaveBeenCalledWith(mixedCaseKey, 'Field', serializedValue)
+    expect(setMock).toHaveBeenCalledWith(mixedCaseKey, expect.any(String), expect.objectContaining({ NX: true }))
+    expect(evalMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ keys: [mixedCaseKey] }))
+  })
+})
+
 describe('when storing and retrieving values', () => {
   const testKey = 'test-key'
   const testValue = { id: 123, name: 'test' }
@@ -89,8 +120,8 @@ describe('when storing and retrieving values', () => {
       await component.set(testKey, testValue)
     })
 
-    it('should call Redis set with serialized value', () => {
-      expect(setMock).toHaveBeenCalledWith(testKey.toLowerCase(), serializedValue, { EX: undefined })
+    it('should call Redis set with the serialized value and no EX option', () => {
+      expect(setMock).toHaveBeenCalledWith(testKey, serializedValue, undefined)
     })
   })
 
@@ -102,7 +133,7 @@ describe('when storing and retrieving values', () => {
     })
 
     it('should call Redis set with TTL', () => {
-      expect(setMock).toHaveBeenCalledWith(testKey.toLowerCase(), serializedValue, { EX: ttl })
+      expect(setMock).toHaveBeenCalledWith(testKey, serializedValue, { EX: ttl })
     })
   })
 
@@ -114,7 +145,7 @@ describe('when storing and retrieving values', () => {
     it('should retrieve and deserialize the value', async () => {
       const result = await component.get(testKey)
 
-      expect(getMock).toHaveBeenCalledWith(testKey.toLowerCase())
+      expect(getMock).toHaveBeenCalledWith(testKey)
       expect(result).toEqual(testValue)
     })
   })
@@ -127,7 +158,7 @@ describe('when storing and retrieving values', () => {
     it('should return null', async () => {
       const result = await component.get(testKey)
 
-      expect(getMock).toHaveBeenCalledWith(testKey.toLowerCase())
+      expect(getMock).toHaveBeenCalledWith(testKey)
       expect(result).toBeNull()
     })
   })
@@ -138,7 +169,7 @@ describe('when storing and retrieving values', () => {
     })
 
     it('should call Redis del command', () => {
-      expect(delMock).toHaveBeenCalledWith(testKey.toLowerCase())
+      expect(delMock).toHaveBeenCalledWith(testKey)
     })
   })
 })
@@ -364,7 +395,7 @@ describe('when acquiring locks', () => {
         retries: 5
       })
 
-      expect(setMock).toHaveBeenCalledWith(lockKey.toLowerCase(), expect.any(String), { NX: true, EX: 5000 })
+      expect(setMock).toHaveBeenCalledWith(lockKey, expect.any(String), { NX: true, PX: 5000 })
     })
   })
 
@@ -416,7 +447,7 @@ describe('when releasing locks', () => {
       await component.releaseLock(lockKey)
 
       expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if redis.call("GET", KEYS[1]) == ARGV[1]'), {
-        keys: [lockKey.toLowerCase()],
+        keys: [lockKey],
         arguments: [expect.any(String)]
       })
     })
@@ -431,7 +462,7 @@ describe('when releasing locks', () => {
       await expect(component.releaseLock(lockKey)).rejects.toThrow(LockNotReleasedError)
 
       expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if redis.call("GET", KEYS[1]) == ARGV[1]'), {
-        keys: [lockKey.toLowerCase()],
+        keys: [lockKey],
         arguments: [expect.any(String)]
       })
     })
@@ -462,7 +493,7 @@ describe('when trying to acquire locks', () => {
       const result = await component.tryAcquireLock(lockKey)
 
       expect(result).toBe(true)
-      expect(setMock).toHaveBeenCalledWith(lockKey.toLowerCase(), expect.any(String), { NX: true, EX: 10000 })
+      expect(setMock).toHaveBeenCalledWith(lockKey, expect.any(String), { NX: true, PX: 10000 })
     })
 
     it('should return true with custom options', async () => {
@@ -472,7 +503,7 @@ describe('when trying to acquire locks', () => {
       })
 
       expect(result).toBe(true)
-      expect(setMock).toHaveBeenCalledWith(lockKey.toLowerCase(), expect.any(String), { NX: true, EX: 5000 })
+      expect(setMock).toHaveBeenCalledWith(lockKey, expect.any(String), { NX: true, PX: 5000 })
     })
   })
 
@@ -515,7 +546,7 @@ describe('when trying to release locks', () => {
 
       expect(result).toBe(true)
       expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if redis.call("GET", KEYS[1]) == ARGV[1]'), {
-        keys: [lockKey.toLowerCase()],
+        keys: [lockKey],
         arguments: [expect.any(String)]
       })
     })
@@ -531,7 +562,7 @@ describe('when trying to release locks', () => {
 
       expect(result).toBe(false)
       expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if redis.call("GET", KEYS[1]) == ARGV[1]'), {
-        keys: [lockKey.toLowerCase()],
+        keys: [lockKey],
         arguments: [expect.any(String)]
       })
     })
