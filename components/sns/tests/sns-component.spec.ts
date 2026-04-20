@@ -216,13 +216,47 @@ describe('when publishing messages', () => {
     })
   })
 
-  describe('and the AWS client throws an error', () => {
+  describe('and the AWS client throws an error for a batch', () => {
     beforeEach(() => {
       sendMock.mockRejectedValue(new Error('AWS Error'))
     })
 
-    it('should throw the error', async () => {
-      await expect(component.publishMessages([event])).rejects.toThrow('AWS Error')
+    it('should report every event in the batch as failed instead of throwing', async () => {
+      const result = await component.publishMessages([event])
+
+      expect(result.successfulMessageIds).toEqual([])
+      expect(result.failedEvents).toEqual([event])
+    })
+  })
+
+  describe('and one batch rejects while another succeeds', () => {
+    let manyEvents: Array<{ type: string; subType: string; index: number }>
+
+    beforeEach(() => {
+      manyEvents = Array.from({ length: 15 }, (_, i) => ({
+        type: 'test_event',
+        subType: 'batch',
+        index: i
+      }))
+
+      let callCount = 0
+      sendMock.mockImplementation(async () => {
+        callCount++
+        if (callCount === 1) {
+          return {
+            Successful: Array.from({ length: 10 }, (_, i) => ({ MessageId: `msg-${i}` })),
+            Failed: []
+          }
+        }
+        throw new Error('AWS Error on second batch')
+      })
+    })
+
+    it('should preserve successful results from the healthy batch and fail the rejected events', async () => {
+      const result = await component.publishMessages(manyEvents)
+
+      expect(result.successfulMessageIds).toHaveLength(10)
+      expect(result.failedEvents).toEqual(manyEvents.slice(10))
     })
   })
 
@@ -233,6 +267,73 @@ describe('when publishing messages', () => {
       expect(result.successfulMessageIds).toEqual([])
       expect(result.failedEvents).toEqual([])
       expect(sendMock).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('when publishing events without a subType', () => {
+  afterEach(() => {
+    sendMock.mockClear()
+  })
+
+  describe('and publishing a single message', () => {
+    let eventWithoutSubType: { type: string; data: string }
+
+    beforeEach(() => {
+      eventWithoutSubType = { type: 'user_login', data: 'test' }
+      sendMock.mockResolvedValue({ MessageId: 'msg-123' })
+    })
+
+    it('should omit the subType attribute rather than sending StringValue: undefined', async () => {
+      await component.publishMessage(eventWithoutSubType)
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            MessageAttributes: {
+              type: { DataType: 'String', StringValue: 'user_login' }
+            }
+          })
+        })
+      )
+    })
+  })
+
+  describe('and publishing in batch', () => {
+    let eventsWithoutSubType: Array<{ type: string; index: number }>
+
+    beforeEach(() => {
+      eventsWithoutSubType = [
+        { type: 'user_login', index: 0 },
+        { type: 'user_logout', index: 1 }
+      ]
+      sendMock.mockResolvedValue({
+        Successful: [{ MessageId: 'msg-1' }, { MessageId: 'msg-2' }],
+        Failed: []
+      })
+    })
+
+    it('should omit the subType attribute for entries that do not carry one', async () => {
+      await component.publishMessages(eventsWithoutSubType)
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: [
+              expect.objectContaining({
+                MessageAttributes: {
+                  type: { DataType: 'String', StringValue: 'user_login' }
+                }
+              }),
+              expect.objectContaining({
+                MessageAttributes: {
+                  type: { DataType: 'String', StringValue: 'user_logout' }
+                }
+              })
+            ]
+          })
+        })
+      )
     })
   })
 })
