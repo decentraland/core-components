@@ -939,6 +939,34 @@ describe('when keys is called with the match-all pattern', () => {
   })
 })
 
+describe('when keys is called with an empty-string pattern', () => {
+  // Redis's `SCAN MATCH ''` only matches an empty-string key. The
+  // previous short-circuit treated '' the same as "no pattern" and
+  // returned every key — an interchangeability gap with Redis that
+  // could only surprise a caller who slipped an empty pattern in by
+  // accident. The compiled regex now resolves to `^$`.
+  beforeEach(async () => {
+    await component.set('normal', 1)
+    await component.set('another', 2)
+  })
+
+  describe('and no key has an empty string as its name', () => {
+    it('should return no keys', async () => {
+      expect(await component.keys('')).toEqual([])
+    })
+  })
+
+  describe('and a key with an empty-string name exists', () => {
+    beforeEach(async () => {
+      await component.set('', 'empty-key-value')
+    })
+
+    it('should return only the empty-string key', async () => {
+      expect(await component.keys('')).toEqual([''])
+    })
+  })
+})
+
 describe('when a retrying acquireLock observes a contested slot', () => {
   // Regression guard: the previous `!cache.has(key)` check passed when
   // the slot was empty OR when a caller had stored `null` under that

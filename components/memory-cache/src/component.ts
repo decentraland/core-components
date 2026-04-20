@@ -104,8 +104,11 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
 
     async keys(pattern?: string): Promise<string[]> {
       // Short-circuit the no-pattern and match-all cases — materialising
-      // the iterator once is the best we can do for those.
-      if (!pattern || pattern === '*') {
+      // the iterator once is the best we can do for those. An explicit
+      // empty string is NOT a match-all: Redis's `SCAN MATCH ''` would
+      // match nothing (only an empty-string key), so let it fall through
+      // and compile to an anchored `^$` regex.
+      if (pattern === undefined || pattern === '*') {
         return Array.from(cache.keys()) as string[]
       }
 
