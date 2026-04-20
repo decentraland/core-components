@@ -1,7 +1,7 @@
 import { PublishBatchCommand, PublishCommand, SNSClient, PublishCommandOutput } from '@aws-sdk/client-sns'
 import { IConfigComponent } from '@well-known-components/interfaces'
 
-import { IPublisherComponent, CustomMessageAttributes, MessageAttribute } from './types'
+import { IPublisherComponent, CustomMessageAttributes, MessageAttribute, PublishableEvent } from './types'
 
 function chunk<T>(theArray: T[], size: number): T[][] {
   return theArray.reduce((acc: T[][], _, i) => {
@@ -28,7 +28,7 @@ function validateCustomAttributes(customMessageAttributes?: CustomMessageAttribu
 }
 
 function buildMessageAttributes(
-  event: { type: string; subType?: string },
+  event: PublishableEvent,
   customMessageAttributes?: CustomMessageAttributes
 ): Record<string, MessageAttribute> {
   // `type` is required per the TS contract, but fall back to 'unknown' at
@@ -57,11 +57,7 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
   })
 
   async function publishMessage(
-    event: {
-      type: string
-      subType?: string
-      [key: string]: any
-    },
+    event: PublishableEvent,
     customMessageAttributes?: CustomMessageAttributes
   ): Promise<PublishCommandOutput> {
     validateCustomAttributes(customMessageAttributes)
@@ -75,11 +71,11 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
   }
 
   async function publishMessages(
-    events: Array<{ type: string; subType?: string; [key: string]: any }>,
+    events: PublishableEvent[],
     customMessageAttributes?: CustomMessageAttributes
   ): Promise<{
     successfulMessageIds: string[]
-    failedEvents: Array<{ type: string; subType?: string; [key: string]: any }>
+    failedEvents: PublishableEvent[]
   }> {
     validateCustomAttributes(customMessageAttributes)
 
@@ -102,7 +98,7 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
       const successfulMessageIds: string[] =
         Successful?.flatMap((result) => (result.MessageId ? [result.MessageId] : [])) ?? []
 
-      const failedEvents: Array<{ type: string; subType?: string; [key: string]: any }> =
+      const failedEvents: PublishableEvent[] =
         Failed?.flatMap((failure) => {
           // Strictly match the Id shape we generated above (`msg_<digits>`)
           // so a malformed echo from the service can't silently map to a
@@ -119,7 +115,7 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
     const results = await Promise.allSettled(publishBatchPromises)
 
     const successfulMessageIds: string[] = []
-    const failedEvents: Array<{ type: string; subType?: string; [key: string]: any }> = []
+    const failedEvents: PublishableEvent[] = []
 
     results.forEach((result, batchIndex) => {
       if (result.status === 'fulfilled') {
