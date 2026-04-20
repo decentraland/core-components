@@ -338,6 +338,113 @@ describe('when publishing events without a subType', () => {
   })
 })
 
+describe('when an event is missing a type at runtime', () => {
+  afterEach(() => {
+    sendMock.mockClear()
+  })
+
+  describe('and publishing a single message', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValue({ MessageId: 'msg-123' })
+    })
+
+    it('should fall back to StringValue: "unknown" rather than sending undefined', async () => {
+      await component.publishMessage({ type: undefined as unknown as string, data: 'noisy' })
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            MessageAttributes: expect.objectContaining({
+              type: { DataType: 'String', StringValue: 'unknown' }
+            })
+          })
+        })
+      )
+    })
+  })
+
+  describe('and publishing in batch', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValue({
+        Successful: [{ MessageId: 'msg-1' }],
+        Failed: []
+      })
+    })
+
+    it('should fall back to StringValue: "unknown" for every entry without a type', async () => {
+      await component.publishMessages([{ type: '' as string, index: 0 }])
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            PublishBatchRequestEntries: [
+              expect.objectContaining({
+                MessageAttributes: expect.objectContaining({
+                  type: { DataType: 'String', StringValue: 'unknown' }
+                })
+              })
+            ]
+          })
+        })
+      )
+    })
+  })
+})
+
+describe('when a failed-event Id returned by SNS does not match the expected shape', () => {
+  const event = { type: 'user_login', subType: 'web', userId: '123' }
+
+  afterEach(() => {
+    sendMock.mockClear()
+  })
+
+  describe('and the Id has extra characters (e.g. "msg_0abc")', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValue({
+        Successful: [],
+        Failed: [{ Id: 'msg_0abc', Code: 'InvalidParameter' }]
+      })
+    })
+
+    it('should not map it to batch[0]; it should be skipped entirely', async () => {
+      const result = await component.publishMessages([event])
+
+      expect(result.successfulMessageIds).toEqual([])
+      expect(result.failedEvents).toEqual([])
+    })
+  })
+
+  describe('and the Id has an unexpected prefix', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValue({
+        Successful: [],
+        Failed: [{ Id: 'other_0', Code: 'InvalidParameter' }]
+      })
+    })
+
+    it('should be skipped rather than producing an undefined entry', async () => {
+      const result = await component.publishMessages([event])
+
+      expect(result.failedEvents).toEqual([])
+    })
+  })
+
+  describe('and the Id is completely missing', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValue({
+        Successful: [],
+        Failed: [{ Code: 'InvalidParameter' }]
+      })
+    })
+
+    it('should be skipped rather than producing an undefined entry', async () => {
+      const result = await component.publishMessages([event])
+
+      expect(result.failedEvents).toEqual([])
+    })
+  })
+})
+
 describe('when publishing a single message with custom MessageAttributes', () => {
   let event: any
   let customAttributes: CustomMessageAttributes

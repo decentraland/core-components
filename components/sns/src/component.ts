@@ -31,8 +31,12 @@ function buildMessageAttributes(
   event: { type: string; subType?: string },
   customMessageAttributes?: CustomMessageAttributes
 ): Record<string, MessageAttribute> {
+  // `type` is required per the TS contract, but fall back to 'unknown' at
+  // runtime so a caller that slips past the type system (e.g. `''` or
+  // `undefined`) doesn't end up sending `StringValue: undefined`, which
+  // SNS rejects for a String-typed attribute.
   const attributes: Record<string, MessageAttribute> = {
-    type: { DataType: 'String', StringValue: event.type }
+    type: { DataType: 'String', StringValue: event.type || 'unknown' }
   }
 
   if (event.subType !== undefined) {
@@ -100,7 +104,11 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
 
       const failedEvents: Array<{ type: string; subType?: string; [key: string]: any }> =
         Failed?.flatMap((failure) => {
-          const localIndex = failure.Id ? parseInt(failure.Id.slice('msg_'.length), 10) : NaN
+          // Strictly match the Id shape we generated above (`msg_<digits>`)
+          // so a malformed echo from the service can't silently map to a
+          // neighbouring event via parseInt's lenient parsing.
+          const match = failure.Id?.match(/^msg_(\d+)$/)
+          const localIndex = match ? parseInt(match[1], 10) : NaN
           const failedEvent = Number.isInteger(localIndex) ? batch[localIndex] : undefined
           return failedEvent ? [failedEvent] : []
         }) ?? []
