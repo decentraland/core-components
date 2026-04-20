@@ -492,3 +492,190 @@ describe('when stopping the component with remaining messages', () => {
     })
   })
 })
+
+// A receiveMessages mock that blocks until the caller's AbortSignal fires,
+// mirroring how the real AWS SDK behaves during long-poll.
+function createAbortableReceiveMock(options: { onReceiveCalled?: (signal?: AbortSignal) => void } = {}) {
+  return jest.fn().mockImplementation(async (_amount?: number, opts?: { abortSignal?: AbortSignal }) => {
+    options.onReceiveCalled?.(opts?.abortSignal)
+    return new Promise((_, reject) => {
+      if (!opts?.abortSignal) {
+        return
+      }
+      const onAbort = () => {
+        const err = new Error('The operation was aborted')
+        err.name = 'AbortError'
+        reject(err)
+      }
+      if (opts.abortSignal.aborted) {
+        onAbort()
+        return
+      }
+      opts.abortSignal.addEventListener('abort', onAbort, { once: true })
+    })
+  })
+}
+
+describe('when configuring the poll batch size', () => {
+  let sqs: jest.Mocked<IQueueComponent>
+  let logs: jest.Mocked<ILoggerComponent>
+  let component: IQueueConsumerComponent
+  let receiveCalled: Promise<void>
+
+  afterEach(async () => {
+    await component[STOP_COMPONENT]!()
+    jest.resetAllMocks()
+  })
+
+  describe('and a custom batchSize is provided', () => {
+    beforeEach(async () => {
+      let resolveReceiveCalled!: () => void
+      receiveCalled = new Promise((resolve) => {
+        resolveReceiveCalled = resolve
+      })
+
+      sqs = createMockSqsComponent({
+        receiveMessages: createAbortableReceiveMock({ onReceiveCalled: () => resolveReceiveCalled() })
+      })
+      logs = createLoggerMockedComponent()
+
+      component = createQueueConsumerComponent({ sqs, logs }, { batchSize: 3 })
+      await component[START_COMPONENT]!(mockStartOptions)
+      await receiveCalled
+    })
+
+    it('should forward it to sqs.receiveMessages', () => {
+      expect(sqs.receiveMessages).toHaveBeenCalledWith(3, expect.anything())
+    })
+  })
+
+  describe('and no batchSize is provided', () => {
+    beforeEach(async () => {
+      let resolveReceiveCalled!: () => void
+      receiveCalled = new Promise((resolve) => {
+        resolveReceiveCalled = resolve
+      })
+
+      sqs = createMockSqsComponent({
+        receiveMessages: createAbortableReceiveMock({ onReceiveCalled: () => resolveReceiveCalled() })
+      })
+      logs = createLoggerMockedComponent()
+
+      component = createQueueConsumerComponent({ sqs, logs })
+      await component[START_COMPONENT]!(mockStartOptions)
+      await receiveCalled
+    })
+
+    it('should default to 10', () => {
+      expect(sqs.receiveMessages).toHaveBeenCalledWith(10, expect.anything())
+    })
+  })
+})
+
+describe('when stopping during a long-poll', () => {
+  let sqs: jest.Mocked<IQueueComponent>
+  let logs: jest.Mocked<ILoggerComponent>
+  let component: IQueueConsumerComponent
+  let receiveCalled: Promise<void>
+  let capturedSignal: AbortSignal | undefined
+
+  beforeEach(async () => {
+    let resolveReceiveCalled!: () => void
+    receiveCalled = new Promise((resolve) => {
+      resolveReceiveCalled = resolve
+    })
+    capturedSignal = undefined
+
+    sqs = createMockSqsComponent({
+      receiveMessages: createAbortableReceiveMock({
+        onReceiveCalled: (signal) => {
+          capturedSignal = signal
+          resolveReceiveCalled()
+        }
+      })
+    })
+    logs = createLoggerMockedComponent()
+
+    component = createQueueConsumerComponent({ sqs, logs })
+    await component[START_COMPONENT]!(mockStartOptions)
+    await receiveCalled
+  })
+
+  afterEach(() => {
+    jest.resetAllMocks()
+  })
+
+  it('should forward an AbortSignal to sqs.receiveMessages', () => {
+    expect(capturedSignal).toBeDefined()
+    expect(capturedSignal!.aborted).toBe(false)
+  })
+
+  it('should abort the in-flight receive and resolve stop quickly', async () => {
+    const stopStartedAt = Date.now()
+    await component[STOP_COMPONENT]!()
+
+    expect(capturedSignal!.aborted).toBe(true)
+    // Without the abort plumbing, stop would only return when the receive
+    // promise settled (which in our mock is never). A generous 500ms bound
+    // is still tight enough to prove the abort path is in play.
+    expect(Date.now() - stopStartedAt).toBeLessThan(500)
+  })
+})
+
+describe('when a message is missing a ReceiptHandle', () => {
+  let sqs: jest.Mocked<IQueueComponent>
+  let logs: jest.Mocked<ILoggerComponent>
+  let component: IQueueConsumerComponent
+  let mockLogger: jest.Mocked<ILoggerComponent.ILogger>
+  let warnCalled: Promise<void>
+  let resolveWarnCalled: () => void
+
+  beforeEach(async () => {
+    warnCalled = new Promise((resolve) => {
+      resolveWarnCalled = resolve
+    })
+
+    sqs = createMockSqsComponent({
+      receiveMessages: jest
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            MessageId: 'msg-1',
+            Body: JSON.stringify(createTestMessage())
+            // no ReceiptHandle
+          }
+        ])
+        .mockResolvedValue([])
+    })
+
+    mockLogger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn().mockImplementation(() => {
+        resolveWarnCalled()
+      }),
+      error: jest.fn(),
+      log: jest.fn()
+    }
+    logs = {
+      getLogger: jest.fn().mockReturnValue(mockLogger)
+    }
+
+    component = createQueueConsumerComponent({ sqs, logs })
+    await component[START_COMPONENT]!(mockStartOptions)
+    await warnCalled
+  })
+
+  afterEach(async () => {
+    await component[STOP_COMPONENT]!()
+    jest.resetAllMocks()
+  })
+
+  it('should skip the delete call instead of passing undefined to sqs.deleteMessage', () => {
+    expect(sqs.deleteMessage).not.toHaveBeenCalled()
+  })
+
+  it('should log a warning', () => {
+    expect(mockLogger.warn).toHaveBeenCalledWith('Skipping delete for message without ReceiptHandle')
+  })
+})
