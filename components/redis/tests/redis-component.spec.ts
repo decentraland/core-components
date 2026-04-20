@@ -25,6 +25,8 @@ let multiMock: jest.Mock
 let expireMock: jest.Mock
 let execMock: jest.Mock
 let evalMock: jest.Mock
+let evalShaMock: jest.Mock
+let scriptLoadMock: jest.Mock
 let errorLogMock: jest.Mock
 let debugLogMock: jest.Mock
 
@@ -44,6 +46,8 @@ beforeEach(async () => {
   expireMock = jest.fn().mockResolvedValue(1)
   execMock = jest.fn().mockResolvedValue(['OK', 1])
   evalMock = jest.fn()
+  evalShaMock = jest.fn()
+  scriptLoadMock = jest.fn().mockResolvedValue('dummy-sha')
   multiMock = jest.fn().mockReturnValue({
     hSet: hSetMock,
     expire: expireMock,
@@ -70,6 +74,8 @@ beforeEach(async () => {
     hGetAll: hGetAllMock,
     multi: multiMock,
     eval: evalMock,
+    evalSha: evalShaMock,
+    scriptLoad: scriptLoadMock,
     on: jest.fn()
   }
 
@@ -804,5 +810,185 @@ describe('when setInHash is called and the transaction contains a per-command er
       'Error setting hash field',
       expect.objectContaining({ key: hashKey, field })
     )
+  })
+})
+
+describe('when start() is called concurrently', () => {
+  // Regression: the previous `if (client.isOpen) return` only protected
+  // against sequential double-starts. Two callers firing before the
+  // first connect resolves would both see `isOpen: false` and race.
+  // The gate now funnels them onto a single startPromise.
+  let connectResolve: (() => void) | null
+  let freshComponent: ICacheStorageComponent
+
+  beforeEach(async () => {
+    connectResolve = null
+    // Make connect() intentionally slow so the two start() callers
+    // actually overlap rather than resolving sequentially.
+    const slowConnect = jest.fn().mockImplementation(() => {
+      return new Promise<void>((resolve) => {
+        connectResolve = () => {
+          mockRedisClient.isOpen = true
+          resolve()
+        }
+      })
+    })
+
+    const freshClient = { ...mockRedisClient, isOpen: false, connect: slowConnect }
+    const { createClient } = require('redis')
+    createClient.mockReturnValue(freshClient)
+    freshComponent = await createRedisComponent(hostUrl, { logs })
+
+    // Fire two start() calls before the first resolves.
+    const a = freshComponent[START_COMPONENT]!({
+      started: () => true,
+      live: () => true,
+      getComponents: () => ({})
+    })
+    const b = freshComponent[START_COMPONENT]!({
+      started: () => true,
+      live: () => true,
+      getComponents: () => ({})
+    })
+
+    connectResolve!()
+    await Promise.all([a, b])
+    mockRedisClient.connect = slowConnect
+  })
+
+  it('should issue connect() exactly once even under two concurrent start() calls', () => {
+    expect((mockRedisClient.connect as jest.Mock).mock.calls.length).toBe(1)
+  })
+})
+
+describe('when the Redis URL contains credentials', () => {
+  // The `hostUrl` was logged at debug level verbatim, which meant a
+  // managed-Redis password (very common shape) would show up in the
+  // connection-start log.
+  beforeEach(async () => {
+    const freshClient = { ...mockRedisClient, isOpen: false }
+    const { createClient } = require('redis')
+    createClient.mockReturnValue(freshClient)
+    const comp = await createRedisComponent('redis://default:supersecret@example.com:6379', { logs })
+    await comp[START_COMPONENT]!({ started: () => true, live: () => true, getComponents: () => ({}) })
+  })
+
+  it('should redact the user-info section before logging the connect line', () => {
+    expect(debugLogMock).toHaveBeenCalledWith('Connecting to Redis', { hostUrl: 'redis://***:***@example.com:6379' })
+    // Belt and suspenders: no call should ever contain the raw password.
+    for (const call of debugLogMock.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('supersecret')
+    }
+  })
+})
+
+describe('when set and setInHash are given an undefined value', () => {
+  // Mirror the memory-cache guard: JSON.stringify(undefined) === undefined,
+  // which node-redis then serialises inconsistently — reject synchronously
+  // so both implementations of ICacheStorageComponent agree.
+  it('set() should reject rather than hand undefined to the client', async () => {
+    await expect(component.set('k', undefined as unknown as string)).rejects.toThrow(/undefined value/)
+    expect(setMock).not.toHaveBeenCalled()
+  })
+
+  it('setInHash() should reject rather than hand undefined to the client', async () => {
+    await expect(component.setInHash('k', 'f', undefined as unknown as string)).rejects.toThrow(
+      /undefined value/
+    )
+    expect(hSetMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('when the client error handler fires with a stack-bearing Error', () => {
+  let onCalls: Array<[string, (...args: any[]) => void]>
+
+  beforeEach(async () => {
+    onCalls = []
+    const freshClient = {
+      ...mockRedisClient,
+      on: jest.fn((event: string, listener: (...args: any[]) => void) => {
+        onCalls.push([event, listener])
+      })
+    }
+    const { createClient } = require('redis')
+    createClient.mockReturnValue(freshClient)
+    await createRedisComponent(hostUrl, { logs })
+  })
+
+  it('should include the stack trace in the structured payload', () => {
+    const handler = onCalls.find(([event]) => event === 'error')![1]
+    const err = new Error('boom')
+
+    handler(err)
+
+    expect(errorLogMock).toHaveBeenCalledWith(
+      'Redis client error',
+      expect.objectContaining({ error: 'boom', stack: err.stack })
+    )
+  })
+})
+
+describe('when releaseLock can cache the Lua script via EVALSHA', () => {
+  const lockKey = 'releasable'
+
+  it('should fall back to EVAL on the first call and then kick off SCRIPT LOAD to prime EVALSHA', async () => {
+    evalMock.mockResolvedValue(1)
+    scriptLoadMock.mockResolvedValue('cached-sha')
+
+    await component.releaseLock(lockKey)
+
+    expect(evalMock).toHaveBeenCalledTimes(1)
+    // Best-effort SCRIPT LOAD is not awaited; flush microtasks.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(scriptLoadMock).toHaveBeenCalled()
+  })
+
+  it('should use EVALSHA on subsequent calls once the SHA has been cached', async () => {
+    evalMock.mockResolvedValue(1)
+    scriptLoadMock.mockResolvedValue('cached-sha')
+    evalShaMock.mockResolvedValue(1)
+
+    // First call populates the SHA via the async scriptLoad follow-up.
+    await component.releaseLock(lockKey)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Second call: now on the fast path.
+    await component.releaseLock(lockKey)
+
+    expect(evalShaMock).toHaveBeenCalledTimes(1)
+    expect(evalShaMock).toHaveBeenCalledWith('cached-sha', expect.objectContaining({ keys: [lockKey] }))
+  })
+
+  it('should fall back to EVAL and drop the cached SHA when the server replies NOSCRIPT', async () => {
+    evalMock.mockResolvedValue(1)
+    scriptLoadMock.mockResolvedValue('cached-sha')
+    evalShaMock
+      .mockRejectedValueOnce(new Error('NOSCRIPT No matching script. Please use EVAL.'))
+      .mockResolvedValue(1)
+
+    // Prime the SHA.
+    await component.releaseLock(lockKey)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    evalMock.mockClear()
+
+    // Second call: evalSha throws NOSCRIPT -> falls back to EVAL.
+    await component.releaseLock(lockKey)
+
+    expect(evalMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('should treat a synchronous scriptLoad failure as a soft fallback to EVAL', async () => {
+    evalMock.mockResolvedValue(1)
+    // Simulate a client that doesn't expose scriptLoad at all.
+    const freshClient = { ...mockRedisClient, isOpen: false, scriptLoad: undefined }
+    const { createClient } = require('redis')
+    createClient.mockReturnValue(freshClient)
+    const comp = await createRedisComponent(hostUrl, { logs })
+
+    await expect(comp.releaseLock(lockKey)).resolves.not.toThrow()
   })
 })
