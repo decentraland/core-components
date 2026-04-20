@@ -53,6 +53,28 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
     }
   }
 
+  // Returns a hash-storage object we can safely mutate with bracket
+  // assignment. If the incoming value is an Object.prototype-chained
+  // plain object (from an older write, or from a caller seeding the
+  // key via `set()` with `{foo: 1}`), its contents are migrated onto
+  // a fresh null-prototype object; subsequent writes are then free of
+  // the `__proto__` setter hazard (`target['__proto__'] = v` on a
+  // regular object rewrites the prototype instead of storing an own
+  // property).
+  function normaliseHashStorage(existing: unknown): Record<string, unknown> {
+    if (existing === undefined || !isPlainObject(existing)) {
+      return Object.create(null) as Record<string, unknown>
+    }
+    if (Object.getPrototypeOf(existing) === null) {
+      return existing
+    }
+    const migrated: Record<string, unknown> = Object.create(null)
+    for (const ownField of Object.keys(existing)) {
+      migrated[ownField] = existing[ownField]
+    }
+    return migrated
+  }
+
   const component: ICacheStorageComponent = {
     async get<T>(key: string): Promise<T | null> {
       const value = cache.get(key)
@@ -81,10 +103,11 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
     },
 
     async keys(pattern?: string): Promise<string[]> {
-      const allKeys = Array.from(cache.keys()) as string[]
-      // Short-circuit the no-pattern and match-all cases so we don't
-      // compile a regex just to iterate the whole set back out.
-      if (!pattern || pattern === '*') return allKeys
+      // Short-circuit the no-pattern and match-all cases — materialising
+      // the iterator once is the best we can do for those.
+      if (!pattern || pattern === '*') {
+        return Array.from(cache.keys()) as string[]
+      }
 
       // Convert a Redis-style glob pattern to an anchored regex:
       //  1. Escape every regex metacharacter so `user.id:*` doesn't let `.`
@@ -94,10 +117,24 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
       //     substring (previously `user:*` also matched `admin_user:123`).
       const regexSource = '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'
       const regex = new RegExp(regexSource)
-      return allKeys.filter((key: string) => regex.test(key))
+      // One-pass filter over the iterator — no intermediate Array.from
+      // allocation for a cache whose size can run into the tens of
+      // thousands when the pattern only matches a handful of keys.
+      const result: string[] = []
+      for (const key of cache.keys() as IterableIterator<string>) {
+        if (regex.test(key)) result.push(key)
+      }
+      return result
     },
 
     async setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
+      // Mirror Redis: HSET cannot carry an `undefined` value. The previous
+      // spread would store `{ [field]: undefined }`, and getFromHash
+      // would then report `null` — a silent write-then-read discrepancy
+      // that no Redis-backed call would ever exhibit.
+      if (value === undefined) {
+        throw new Error(`Cannot setInHash an undefined value under key "${key}", field "${field}".`)
+      }
       // Read-modify-write on the hash. This block must stay synchronous
       // (no `await` between the get and the set) so concurrent calls on
       // the same key cannot interleave and drop fields.
@@ -107,15 +144,29 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
       //  - No TTL (or 0/negative): ttl:0 with noUpdateTTL:true. For a new
       //    key, ttl:0 means "never expire" (matching Redis's "no EXPIRE
       //    issued"). For an existing key, noUpdateTTL:true preserves
-      //    whatever TTL is already on the entry.
+      //    whatever TTL is already on the entry — `ttl:0` is the
+      //    operative instruction only on the new-key path.
       const options =
         ttlInSecondsForHash && ttlInSecondsForHash > 0
           ? { ttl: fromSecondsToMilliseconds(ttlInSecondsForHash) }
           : { ttl: 0, noUpdateTTL: true }
       const existing = cache.get(key)
       assertHashCompatible(key, existing, 'setInHash')
-      const base = isPlainObject(existing) ? existing : {}
-      cache.set(key, { ...base, [field]: value }, options)
+      // Mutate in place. Redis HSET is O(1); the previous spread-based
+      // version was O(fields) per call. Safe because getAllHashFields
+      // and getFromHash return shallow clones / single values, so
+      // callers cannot hold a reference that observes this mutation.
+      //
+      // The storage uses a null-prototype object so that mutating
+      // assignments like `hash['__proto__'] = value` write an own
+      // property instead of invoking the Object.prototype __proto__
+      // setter (which would clobber the prototype and break subsequent
+      // reads). Existing Object.prototype-chained hashes (from an older
+      // write, or from a caller who seeded the key via `set()` with a
+      // plain literal) are migrated on first write.
+      const target = normaliseHashStorage(existing)
+      target[field] = value
+      cache.set(key, target, options)
     },
 
     async getFromHash<T>(key: string, field: string): Promise<T | null> {
@@ -131,17 +182,20 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
     },
 
     async removeFromHash(key: string, field: string): Promise<void> {
-      const hash = cache.get(key)
-      if (!isPlainObject(hash)) return
-      const newHash = { ...hash }
-      delete newHash[field]
+      const existing = cache.get(key)
+      if (!isPlainObject(existing)) return
+      // Normalise to a null-prototype object so a subsequent delete of
+      // a prototype-shaped field name (e.g. '__proto__') removes an own
+      // property rather than silently doing nothing on the base object.
+      const target = normaliseHashStorage(existing)
+      delete target[field]
 
-      if (Object.keys(newHash).length === 0) {
+      if (Object.keys(target).length === 0) {
         cache.delete(key)
       } else {
         // Preserve the hash's existing TTL — HDEL in Redis does not
-        // affect EXPIRE, so we mustn't silently reset it here either.
-        cache.set(key, newHash, { noUpdateTTL: true })
+        // touch EXPIRE, so we mustn't silently reset it here either.
+        cache.set(key, target, { noUpdateTTL: true })
       }
     },
 
@@ -149,8 +203,12 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
       const value = cache.get(key)
       // Guard against a caller that previously stored a non-object value
       // under `key` via `set()` — returning the raw value cast as a
-      // record would be a type lie.
-      return isPlainObject(value) ? (value as Record<string, T>) : {}
+      // record would be a type lie. And even for plain-object hashes,
+      // return a shallow clone: the underlying entry is mutated
+      // in-place by setInHash / removeFromHash, so handing the live
+      // reference back would leak cache mutations to the caller (and
+      // vice-versa).
+      return isPlainObject(value) ? { ...(value as Record<string, T>) } : {}
     },
 
     async acquireLock(
@@ -170,10 +228,13 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
       const retries = options?.retries ?? DEFAULT_ACQUIRE_LOCK_RETRIES
 
       for (let i = 0; i < retries; i++) {
-        // Use `has` rather than comparing `get(key) ?? null` to null: the
-        // latter treats a user-stored `null` value as "unlocked" and
-        // would silently overwrite it when acquiring.
-        if (!cache.has(key)) {
+        // Use `cache.get(key) === undefined` rather than `cache.has(key)`:
+        //  - `get` refreshes recency so the held lock cannot be evicted
+        //    by the LRU when other entries fill the cache (a real hazard
+        //    with the configurable `max`). `has` does NOT refresh.
+        //  - `=== undefined` still distinguishes "absent" from "stored
+        //    null"; `cache.get` returns undefined only for the former.
+        if (cache.get(key) === undefined) {
           cache.set(key, randomValue, { ttl })
           return
         }
