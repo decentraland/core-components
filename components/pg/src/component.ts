@@ -11,6 +11,9 @@ import { Options, IPgComponent, IMetricsComponent, QueryStreamWithCallback, Quer
 export * from './types'
 export * from './metrics'
 
+/**
+ * @internal
+ */
 export async function runReportingQueryDurationMetric<T>(
   components: { metrics: IMetricsComponent },
   queryNameLabel: string,
@@ -44,7 +47,17 @@ export async function createPgComponent(
   const logger = logs.getLogger('pg-component')
 
   // Environment
-  const [connectionString, port, host, database, user, password, idleTimeoutMillis, query_timeout] = await Promise.all([
+  const [
+    connectionString,
+    port,
+    host,
+    database,
+    user,
+    password,
+    idleTimeoutMillis,
+    query_timeout,
+    connectionTimeoutMillis
+  ] = await Promise.all([
     config.getString('PG_COMPONENT_PSQL_CONNECTION_STRING'),
     config.getNumber('PG_COMPONENT_PSQL_PORT'),
     config.getString('PG_COMPONENT_PSQL_HOST'),
@@ -52,7 +65,8 @@ export async function createPgComponent(
     config.getString('PG_COMPONENT_PSQL_USER'),
     config.getString('PG_COMPONENT_PSQL_PASSWORD'),
     config.getNumber('PG_COMPONENT_IDLE_TIMEOUT'),
-    config.getNumber('PG_COMPONENT_QUERY_TIMEOUT')
+    config.getNumber('PG_COMPONENT_QUERY_TIMEOUT'),
+    config.getNumber('PG_COMPONENT_CONNECTION_TIMEOUT')
   ])
   const defaultOptions: PoolConfig = {
     connectionString,
@@ -62,22 +76,42 @@ export async function createPgComponent(
     user,
     password,
     idleTimeoutMillis,
-    query_timeout
+    query_timeout,
+    connectionTimeoutMillis
   }
 
   const STREAM_QUERY_TIMEOUT = await config.getNumber('PG_COMPONENT_STREAM_QUERY_TIMEOUT')
-  const GRACE_PERIODS = (await config.getNumber('PG_COMPONENT_GRACE_PERIODS')) || 10
+  const GRACE_PERIODS = (await config.getNumber('PG_COMPONENT_GRACE_PERIODS')) ?? 10
+  const STOP_TIMEOUT = (await config.getNumber('PG_COMPONENT_STOP_TIMEOUT')) ?? 30_000
 
   const finalOptions: PoolConfig = { ...defaultOptions, ...options.pool }
 
   // Config
   const pool: Pool = new Pool(finalOptions)
 
+  // Idle-client errors are emitted on the pool and would otherwise become
+  // unhandled Node errors. Surface them through the logger so the process stays up.
+  const onPoolError = (error: Error) => {
+    logger.error('Idle pg client error', {
+      error: error?.message ?? String(error),
+      stack: error?.stack ?? ''
+    })
+  }
+  pool.on('error', onPoolError)
+
   // Async context for transaction client
   const transactionContext = new AsyncLocalStorage<PoolClient>()
 
+  let didStart = false
+
   // Methods
   async function start() {
+    if (didStart) {
+      logger.warn('Start called more than once, ignoring')
+      return
+    }
+    didStart = true
+
     try {
       const db = await pool.connect()
 
@@ -96,20 +130,26 @@ export async function createPgComponent(
           await runner(opt)
         }
       } catch (err: any) {
-        logger.error(err)
+        logger.error('Migration failed', {
+          error: err?.message ?? String(err),
+          stack: err?.stack ?? ''
+        })
         throw err
       } finally {
         db.release()
       }
     } catch (error: any) {
-      logger.warn('Error starting pg-component:')
-      logger.error(error)
+      logger.error('Error starting pg-component', {
+        error: error?.message ?? String(error),
+        stack: error?.stack ?? ''
+      })
       throw error
     }
   }
 
   async function withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await pool.connect()
+    let rollbackError: Error | undefined
 
     try {
       await client.query('BEGIN')
@@ -118,15 +158,21 @@ export async function createPgComponent(
 
       return result
     } catch (error) {
-      await client.query('ROLLBACK')
+      try {
+        await client.query('ROLLBACK')
+      } catch (err: any) {
+        rollbackError = err
+        logger.error('Error rolling back transaction', { error: err?.message ?? String(err) })
+      }
       throw error
     } finally {
-      client.release()
+      client.release(rollbackError)
     }
   }
 
   async function withAsyncContextTransaction<T>(callback: () => Promise<T>): Promise<T> {
     const client = await pool.connect()
+    let rollbackError: Error | undefined
 
     try {
       await client.query('BEGIN')
@@ -136,14 +182,19 @@ export async function createPgComponent(
       await client.query('COMMIT')
       return result
     } catch (error) {
-      await client.query('ROLLBACK')
+      try {
+        await client.query('ROLLBACK')
+      } catch (err: any) {
+        rollbackError = err
+        logger.error('Error rolling back transaction', { error: err?.message ?? String(err) })
+      }
       throw error
     } finally {
-      client.release()
+      client.release(rollbackError)
     }
   }
 
-  async function defaultQuery<T extends Record<string, any>>(sql: string | SQLStatement): Promise<QueryResult<T>> {
+  async function doQuery<T extends Record<string, any>>(sql: string | SQLStatement): Promise<QueryResult<T>> {
     const notices: NoticeMessage[] = []
 
     // Get the transaction's context client or connect a new one
@@ -168,25 +219,44 @@ export async function createPgComponent(
     }
   }
 
-  async function measuredQuery<T extends Record<string, any>>(
+  const metricsComponent = components.metrics
+
+  async function query<T extends Record<string, any>>(
     sql: string | SQLStatement,
     durationQueryNameLabel?: string
   ): Promise<QueryResult<T>> {
-    const result = durationQueryNameLabel
-      ? await runReportingQueryDurationMetric({ metrics: components.metrics! }, durationQueryNameLabel, () =>
-          defaultQuery<T>(sql)
-        )
-      : await defaultQuery<T>(sql)
-
-    return result
+    if (durationQueryNameLabel && metricsComponent) {
+      return runReportingQueryDurationMetric({ metrics: metricsComponent }, durationQueryNameLabel, () =>
+        doQuery<T>(sql)
+      )
+    }
+    return doQuery<T>(sql)
   }
 
   async function* streamQuery<T>(sql: SQLStatement, config?: { batchSize?: number }): AsyncGenerator<T> {
     const client = new Client({
       ...finalOptions,
-      query_timeout: STREAM_QUERY_TIMEOUT
+      // Only override when a stream-specific timeout is configured, otherwise fall back
+      // to `finalOptions.query_timeout` (an explicit `undefined` here would clobber it).
+      ...(STREAM_QUERY_TIMEOUT !== undefined ? { query_timeout: STREAM_QUERY_TIMEOUT } : {})
     })
-    await client.connect()
+
+    // Socket errors on the dedicated stream client would otherwise bubble up as
+    // unhandled 'error' events on the EventEmitter. Surface them through the logger.
+    const onClientError = (error: Error) => {
+      logger.error('Stream pg client error', {
+        error: error?.message ?? String(error),
+        stack: error?.stack ?? ''
+      })
+    }
+    client.on('error', onClientError)
+
+    try {
+      await client.connect()
+    } catch (err) {
+      client.off('error', onClientError)
+      throw err
+    }
 
     // https://github.com/brianc/node-postgres/issues/1860
     // Uncaught TypeError: queryCallback is not a function
@@ -211,6 +281,7 @@ export async function createPgComponent(
       throw err
     } finally {
       stream.destroy()
+      client.off('error', onClientError)
       await client.end()
     }
   }
@@ -223,6 +294,8 @@ export async function createPgComponent(
       return
     }
     didStop = true
+
+    pool.off('error', onPoolError)
 
     let gracePeriods = GRACE_PERIODS
 
@@ -237,23 +310,46 @@ export async function createPgComponent(
 
     const promise = pool.end()
     let finished = false
+    let endError: unknown
 
-    promise.finally(() => {
-      finished = true
-    })
-
-    while (!finished && (pool.totalCount > 0 || pool.idleCount > 0 || pool.waitingCount > 0)) {
-      if (pool.totalCount) {
-        logger.log('Draining connections', {
-          totalCount: pool.totalCount,
-          idleCount: pool.idleCount,
-          waitingCount: pool.waitingCount
-        })
-        await setTimeout(1000)
+    promise.then(
+      () => {
+        finished = true
+      },
+      (err) => {
+        finished = true
+        endError = err
       }
+    )
+
+    const deadline = Date.now() + STOP_TIMEOUT
+
+    while (
+      !finished &&
+      Date.now() < deadline &&
+      (pool.totalCount > 0 || pool.idleCount > 0 || pool.waitingCount > 0)
+    ) {
+      logger.log('Draining connections', {
+        totalCount: pool.totalCount,
+        idleCount: pool.idleCount,
+        waitingCount: pool.waitingCount
+      })
+      await setTimeout(1000)
     }
 
-    await promise
+    if (!finished) {
+      logger.warn('pg-component stop timed out, abandoning remaining connections', {
+        totalCount: pool.totalCount,
+        idleCount: pool.idleCount,
+        waitingCount: pool.waitingCount,
+        timeoutMs: STOP_TIMEOUT
+      })
+      return
+    }
+
+    if (endError) {
+      throw endError
+    }
   }
 
   function getPool(): Pool {
@@ -261,7 +357,7 @@ export async function createPgComponent(
   }
 
   return {
-    query: components.metrics ? measuredQuery : defaultQuery,
+    query,
     withTransaction,
     withAsyncContextTransaction,
     streamQuery,
