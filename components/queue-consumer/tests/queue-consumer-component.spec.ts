@@ -752,10 +752,13 @@ describe('when computing the retry delay', () => {
   })
 
   describe('and the random jitter is at its lowest', () => {
-    it('should return zero regardless of the failure count', () => {
-      for (const failures of [1, 2, 5, 10, 100]) {
-        expect(computeRetryDelayMs(failures, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(0)
-      }
+    it('should return half of the exponential ceiling (not zero) to guarantee a non-tight retry loop', () => {
+      // Equal jitter: delay in [exp/2, exp). With random=0, delay = exp/2.
+      expect(computeRetryDelayMs(1, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(500)
+      expect(computeRetryDelayMs(2, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(1000)
+      expect(computeRetryDelayMs(3, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(2000)
+      // Once the exponential caps at maxRetryDelayMs, floor is maxRetryDelayMs/2.
+      expect(computeRetryDelayMs(100, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(15_000)
     })
   })
 
@@ -763,7 +766,7 @@ describe('when computing the retry delay', () => {
     const almostOne = 1 - Number.EPSILON
 
     it('should grow exponentially at low failure counts', () => {
-      // With jitter ≈ 1, the delay approaches baseRetryDelayMs * 2 ** (n-1).
+      // With jitter ≈ 1, delay approaches the exponential ceiling.
       expect(computeRetryDelayMs(1, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(999)
       expect(computeRetryDelayMs(2, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(1999)
       expect(computeRetryDelayMs(3, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(3999)
@@ -779,12 +782,12 @@ describe('when computing the retry delay', () => {
   })
 
   describe('and the random jitter is somewhere in between', () => {
-    it('should never exceed the exponential ceiling for the given failure count', () => {
+    it('should stay within [ceiling/2, ceiling) for the given failure count', () => {
       for (const failures of [1, 2, 5, 10, 50]) {
         const ceiling = Math.min(baseRetryDelayMs * 2 ** (failures - 1), maxRetryDelayMs)
         for (const random of [0.1, 0.3, 0.5, 0.7, 0.9]) {
           const delay = computeRetryDelayMs(failures, baseRetryDelayMs, maxRetryDelayMs, random)
-          expect(delay).toBeGreaterThanOrEqual(0)
+          expect(delay).toBeGreaterThanOrEqual(ceiling / 2)
           expect(delay).toBeLessThan(ceiling)
         }
       }

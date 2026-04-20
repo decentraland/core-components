@@ -5,10 +5,11 @@ import { IQueueComponent } from '@dcl/sqs-component'
 import type { IQueueConsumerComponent, MessageHandler, IQueueConsumerOptions } from './types'
 
 /**
- * Computes an exponential-backoff delay with full jitter.
+ * Computes an exponential-backoff delay with equal jitter.
  *
- * Exported so tests can pin it without driving the process loop through
- * fake timers.
+ * The result falls in [exp/2, exp), which keeps a lower floor so a streak of
+ * small randoms cannot produce a tight zero-delay retry loop. Exported so
+ * tests can pin it without driving the process loop through fake timers.
  */
 export function computeRetryDelayMs(
   consecutiveFailures: number,
@@ -20,7 +21,8 @@ export function computeRetryDelayMs(
     return 0
   }
   const exponentialDelay = Math.min(baseRetryDelayMs * 2 ** (consecutiveFailures - 1), maxRetryDelayMs)
-  return Math.floor(random * exponentialDelay)
+  const half = exponentialDelay / 2
+  return Math.floor(half + random * half)
 }
 
 /**
