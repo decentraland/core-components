@@ -33,8 +33,24 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
 
   const randomValue = randomUUID()
 
+  // Accepts only plain JS objects (no arrays, Maps, Sets, Dates, class
+  // instances, etc.) — anything else is type-unsafe to treat as a hash.
   function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value)
+    if (typeof value !== 'object' || value === null) return false
+    const proto = Object.getPrototypeOf(value)
+    return proto === Object.prototype || proto === null
+  }
+
+  // Redis's WRONGTYPE equivalent — thrown when a caller tries a hash
+  // operation on a key that holds a non-object value (e.g. a string
+  // written via `set()`). Matching Redis's reaction here keeps the two
+  // implementations of ICacheStorageComponent interchangeable.
+  function assertHashCompatible(key: string, existing: unknown, op: string): void {
+    if (existing !== undefined && !isPlainObject(existing)) {
+      throw new Error(
+        `Cannot ${op} on key "${key}" — it holds a non-object value. Remove the key first or pick a different key.`
+      )
+    }
   }
 
   const component: ICacheStorageComponent = {
@@ -44,6 +60,13 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
     },
 
     async set<T>(key: string, value: T, ttl?: number): Promise<void> {
+      // Mirror Redis: `SET` cannot carry an `undefined` value. Catching
+      // this here avoids lru-cache's "undefined = delete" semantics,
+      // which diverges from the Redis implementation (which would error
+      // out on the wire before storing anything).
+      if (value === undefined) {
+        throw new Error(`Cannot set an undefined value for key "${key}".`)
+      }
       // Match Redis SET semantics:
       //  - With a positive TTL: apply it.
       //  - Without (or with 0/negative): write the value with ttl:0, which
@@ -59,7 +82,9 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
 
     async keys(pattern?: string): Promise<string[]> {
       const allKeys = Array.from(cache.keys()) as string[]
-      if (!pattern) return allKeys
+      // Short-circuit the no-pattern and match-all cases so we don't
+      // compile a regex just to iterate the whole set back out.
+      if (!pattern || pattern === '*') return allKeys
 
       // Convert a Redis-style glob pattern to an anchored regex:
       //  1. Escape every regex metacharacter so `user.id:*` doesn't let `.`
@@ -88,6 +113,7 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
           ? { ttl: fromSecondsToMilliseconds(ttlInSecondsForHash) }
           : { ttl: 0, noUpdateTTL: true }
       const existing = cache.get(key)
+      assertHashCompatible(key, existing, 'setInHash')
       const base = isPlainObject(existing) ? existing : {}
       cache.set(key, { ...base, [field]: value }, options)
     },
@@ -95,6 +121,11 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
     async getFromHash<T>(key: string, field: string): Promise<T | null> {
       const hash = cache.get(key)
       if (!isPlainObject(hash)) return null
+      // hasOwnProperty guard: `hash[field]` without this would return
+      // Object.prototype for field === '__proto__', or the constructor
+      // function for field === 'constructor'. We only want to expose
+      // values the caller explicitly stored.
+      if (!Object.prototype.hasOwnProperty.call(hash, field)) return null
       const value = hash[field]
       return value !== undefined ? (value as T) : null
     },
@@ -130,7 +161,11 @@ export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {})
         retries?: number
       }
     ): Promise<void> {
-      const ttl = options?.ttlInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
+      // Clamp non-positive TTL to the default. With `{ ttl: 0 }`, lru-cache
+      // creates a never-expiring entry — here that would mean a lock that
+      // silently leaks forever, which is never what the caller meant.
+      const requestedTtl = options?.ttlInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
+      const ttl = requestedTtl > 0 ? requestedTtl : DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
       const retryDelay = options?.retryDelayInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS
       const retries = options?.retries ?? DEFAULT_ACQUIRE_LOCK_RETRIES
 
