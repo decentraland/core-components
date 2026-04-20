@@ -4,15 +4,18 @@ import addFormats from 'ajv-formats'
 import { IHttpServerComponent } from '@well-known-components/interfaces'
 import { ISchemaValidatorComponent, Validation } from './types'
 
-export function createSchemaValidatorComponent<T extends Object>(options?: {
+export function createSchemaValidatorComponent<T extends object>(options?: {
   ensureJsonContentType?: boolean
 }): ISchemaValidatorComponent<T> {
   const { ensureJsonContentType = true } = options ?? {}
 
-  const ajv = new Ajv({ removeAdditional: true })
+  const ajv = new Ajv()
   addFormats(ajv)
 
   function addSchema(schema: Schema, key: string): void {
+    if (ajv.getSchema(key)) {
+      ajv.removeSchema(key)
+    }
     ajv.addSchema(schema, key)
   }
 
@@ -25,10 +28,18 @@ export function createSchemaValidatorComponent<T extends Object>(options?: {
 
     const valid = validate(data) as boolean
 
-    return {
-      valid,
-      errors: validate.errors ?? null
+    if (valid) {
+      return { valid: true, errors: null }
     }
+    return { valid: false, errors: validate.errors ?? [] }
+  }
+
+  function isJsonContentType(contentType: string | null): boolean {
+    if (!contentType) {
+      return false
+    }
+    const mediaType = contentType.split(';', 1)[0].trim().toLowerCase()
+    return mediaType === 'application/json' || mediaType.endsWith('+json')
   }
 
   function withSchemaValidatorMiddleware(
@@ -38,9 +49,9 @@ export function createSchemaValidatorComponent<T extends Object>(options?: {
     addSchema(schema, schemaId)
 
     return async (context, next): Promise<IHttpServerComponent.IResponse> => {
-      if (ensureJsonContentType && context.request.headers.get('Content-Type') !== 'application/json') {
+      if (ensureJsonContentType && !isJsonContentType(context.request.headers.get('Content-Type'))) {
         return {
-          status: 400,
+          status: 415,
           body: {
             ok: false,
             message: 'Content-Type must be application/json'
@@ -80,6 +91,8 @@ export function createSchemaValidatorComponent<T extends Object>(options?: {
   }
 
   return {
+    addSchema,
+    validateSchema,
     withSchemaValidatorMiddleware
   }
 }
