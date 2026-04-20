@@ -26,8 +26,20 @@ export async function createRedisComponent(
 
   const client: RedisClientType = createClient({ url: hostUrl })
 
+  // Connection lifecycle observability. The node-redis client emits
+  // 'error', 'reconnecting', 'ready', 'end'; only 'error' was wired up
+  // before, so reconnects and closures were invisible in the logs.
   client.on('error', (err: Error) => {
     logger.error('Redis client error', { error: err.message })
+  })
+  client.on('reconnecting', () => {
+    logger.debug('Redis client reconnecting')
+  })
+  client.on('ready', () => {
+    logger.debug('Redis client ready')
+  })
+  client.on('end', () => {
+    logger.debug('Redis client connection ended')
   })
 
   async function start() {
@@ -99,7 +111,12 @@ export async function createRedisComponent(
     key: string,
     options?: { ttlInMilliseconds?: number; retryDelayInMilliseconds?: number; retries?: number }
   ): Promise<void> {
-    const ttlInMilliseconds = options?.ttlInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
+    // Clamp non-positive TTL to the default. Redis would reject `PX: 0`
+    // at the wire with "invalid expire time in set", but surfacing that
+    // as a LockNotAcquiredError further down the line is confusing —
+    // bump the unit back to a usable value here instead.
+    const requestedTtl = options?.ttlInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
+    const ttlInMilliseconds = requestedTtl > 0 ? requestedTtl : DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS
     const retryDelay = options?.retryDelayInMilliseconds ?? DEFAULT_ACQUIRE_LOCK_RETRY_DELAY_IN_MILLISECONDS
     const retries = options?.retries ?? DEFAULT_ACQUIRE_LOCK_RETRIES
 
@@ -113,7 +130,12 @@ export async function createRedisComponent(
       }
       logger.debug('Could not acquire lock', { key })
       if (i < retries - 1) {
-        await sleep(retryDelay)
+        // Equal-jitter retry: wait between retryDelay/2 and retryDelay.
+        // Pure fixed delays phase-lock concurrent consumers onto the
+        // same wake-up tick and they all retry simultaneously; jitter
+        // spreads them out while keeping a predictable floor.
+        const jitteredDelay = retryDelay / 2 + Math.floor(Math.random() * (retryDelay / 2))
+        await sleep(jitteredDelay)
       }
     }
 
@@ -206,14 +228,28 @@ export async function createRedisComponent(
   }
 
   async function setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
-    // client.multi() is synchronous in node-redis v5 and returns a builder;
-    // the previous `await client.multi()` was a no-op.
-    const multi = client.multi()
-    multi.hSet(key, field, JSON.stringify(value))
-    if (ttlInSecondsForHash && ttlInSecondsForHash > 0) {
-      multi.expire(key, ttlInSecondsForHash)
+    try {
+      // client.multi() is synchronous in node-redis v5 and returns a builder;
+      // the previous `await client.multi()` was a no-op.
+      const multi = client.multi()
+      multi.hSet(key, field, JSON.stringify(value))
+      if (ttlInSecondsForHash && ttlInSecondsForHash > 0) {
+        multi.expire(key, ttlInSecondsForHash)
+      }
+      // exec() returns one reply per command. When the transaction is
+      // queued with errors (e.g. wrong type, OOM reply), node-redis
+      // resolves with per-command Error instances instead of throwing.
+      // Inspect each so a partially-failed transaction isn't reported
+      // to the caller as a clean write.
+      const replies = await multi.exec()
+      const failed = replies?.find((reply) => reply instanceof Error) as Error | undefined
+      if (failed) {
+        throw failed
+      }
+    } catch (err) {
+      logger.error('Error setting hash field', { key, field, error: errorMessageOf(err) })
+      throw err
     }
-    await multi.exec()
   }
 
   async function getFromHash<T>(key: string, field: string): Promise<T | null> {

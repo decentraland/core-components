@@ -677,3 +677,132 @@ describe('when getAllHashFields encounters a malformed JSON value', () => {
     )
   })
 })
+
+describe('when acquireLock is given a non-positive ttlInMilliseconds', () => {
+  const lockKey = 'clamped-lock'
+
+  beforeEach(() => {
+    setMock.mockResolvedValue('OK')
+  })
+
+  it('should clamp a zero ttl to the default instead of letting Redis reject PX: 0', async () => {
+    await component.acquireLock(lockKey, { ttlInMilliseconds: 0, retries: 1 })
+
+    expect(setMock).toHaveBeenCalledWith(
+      lockKey,
+      expect.any(String),
+      expect.objectContaining({ NX: true, PX: 10000 })
+    )
+  })
+
+  it('should clamp a negative ttl the same way', async () => {
+    await component.acquireLock(lockKey, { ttlInMilliseconds: -1, retries: 1 })
+
+    expect(setMock).toHaveBeenCalledWith(
+      lockKey,
+      expect.any(String),
+      expect.objectContaining({ NX: true, PX: 10000 })
+    )
+  })
+})
+
+describe('when acquireLock retries across multiple attempts', () => {
+  const lockKey = 'jittered-lock'
+
+  beforeEach(() => {
+    setMock.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce('OK')
+  })
+
+  it('should apply equal jitter — each sleep lands within [delay/2, delay)', async () => {
+    // Deterministic jitter: pin Math.random so we can check the exact
+    // values. With random === 0.5 and retryDelay === 100, the sleep
+    // per retry is 100/2 + floor(0.5 * 100/2) = 50 + 25 = 75 ms.
+    const originalRandom = Math.random
+    Math.random = () => 0.5
+    try {
+      const start = Date.now()
+      await component.acquireLock(lockKey, { retryDelayInMilliseconds: 100, retries: 5 })
+      const elapsed = Date.now() - start
+
+      // Two sleeps between the three set attempts, each 75 ms.
+      expect(elapsed).toBeGreaterThanOrEqual(140)
+      expect(elapsed).toBeLessThan(220)
+    } finally {
+      Math.random = originalRandom
+    }
+  })
+})
+
+describe('when the connection lifecycle emits events', () => {
+  // The 'error' listener was the only one wired pre-fix. The component
+  // now also logs 'reconnecting', 'ready', and 'end' at debug level so
+  // a dropped/recovered connection is visible in operator logs.
+  let onCalls: Array<[string, (...args: any[]) => void]>
+
+  beforeEach(async () => {
+    // Re-build the component with a fresh on-spy so we can inspect the
+    // exact event-name/listener pairs it registered.
+    onCalls = []
+    const freshClient = {
+      ...mockRedisClient,
+      on: jest.fn((event: string, listener: (...args: any[]) => void) => {
+        onCalls.push([event, listener])
+      })
+    }
+    const { createClient } = require('redis')
+    createClient.mockReturnValue(freshClient)
+    await createRedisComponent(hostUrl, { logs })
+  })
+
+  it('should register error, reconnecting, ready, and end listeners', () => {
+    const events = onCalls.map(([event]) => event).sort()
+    expect(events).toEqual(['end', 'error', 'ready', 'reconnecting'])
+  })
+
+  it('should log a debug entry when the client reconnects', () => {
+    const reconnecting = onCalls.find(([event]) => event === 'reconnecting')![1]
+    reconnecting()
+
+    expect(debugLogMock).toHaveBeenCalledWith('Redis client reconnecting')
+  })
+
+  it('should log a debug entry when the client becomes ready', () => {
+    const ready = onCalls.find(([event]) => event === 'ready')![1]
+    ready()
+
+    expect(debugLogMock).toHaveBeenCalledWith('Redis client ready')
+  })
+
+  it('should log a debug entry when the connection ends', () => {
+    const end = onCalls.find(([event]) => event === 'end')![1]
+    end()
+
+    expect(debugLogMock).toHaveBeenCalledWith('Redis client connection ended')
+  })
+})
+
+describe('when setInHash is called and the transaction contains a per-command error', () => {
+  // node-redis's MULTI resolves with per-command Error instances when a
+  // queued command failed; it does not throw the whole transaction. If
+  // the component didn't inspect the reply, a partial failure would be
+  // silently reported as success.
+  const hashKey = 'hash'
+  const field = 'field'
+
+  beforeEach(() => {
+    execMock.mockResolvedValue([new Error('WRONGTYPE Operation against a key holding the wrong kind of value')])
+  })
+
+  it('should throw the per-command error so the caller sees the failure', async () => {
+    await expect(component.setInHash(hashKey, field, { a: 1 })).rejects.toThrow(/WRONGTYPE/)
+  })
+
+  it('should log the failure with the key and field context', async () => {
+    await expect(component.setInHash(hashKey, field, { a: 1 })).rejects.toThrow()
+
+    expect(errorLogMock).toHaveBeenCalledWith(
+      'Error setting hash field',
+      expect.objectContaining({ key: hashKey, field })
+    )
+  })
+})
