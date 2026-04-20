@@ -187,11 +187,15 @@ export const createQueueConsumerComponent = (
         // Don't retry if we're stopping — the receive was aborted on purpose.
         if (!isRunning) break
 
-        logger.error(`Error receiving messages from queue: ${error}`)
+        const errorMessage = isErrorWithMessage(error) ? error.message : 'Unexpected failure'
+        logger.error('Error receiving messages from queue', { error: errorMessage })
         consecutiveFailures++
         const delay = computeRetryDelayMs(consecutiveFailures, baseRetryDelayMs, maxRetryDelayMs)
 
-        // Interruptible sleep - check isRunning periodically
+        // Interruptible sleep — the AbortController covers only the in-flight
+        // receiveMessages call, not this retry sleep. We poll `isRunning`
+        // every sleepInterval ms so stop() still causes a prompt exit during
+        // backoff without needing a second abort plumbing path.
         const sleepInterval = 100
         for (let elapsed = 0; elapsed < delay && isRunning; elapsed += sleepInterval) {
           await sleep(Math.min(sleepInterval, delay - elapsed))
