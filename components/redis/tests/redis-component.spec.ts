@@ -1,4 +1,4 @@
-import { ILoggerComponent } from '@well-known-components/interfaces'
+import { ILoggerComponent, START_COMPONENT, STOP_COMPONENT } from '@well-known-components/interfaces'
 import { createLoggerMockedComponent, LockNotAcquiredError, LockNotReleasedError } from '@dcl/core-commons'
 import { createRedisComponent } from '../src/component'
 import { ICacheStorageComponent } from '@dcl/core-commons'
@@ -53,8 +53,13 @@ beforeEach(async () => {
   debugLogMock = jest.fn()
 
   mockRedisClient = {
-    connect: connectMock,
-    close: closeMock,
+    isOpen: false,
+    connect: connectMock.mockImplementation(async () => {
+      mockRedisClient.isOpen = true
+    }),
+    close: closeMock.mockImplementation(async () => {
+      mockRedisClient.isOpen = false
+    }),
     get: getMock,
     set: setMock,
     del: delMock,
@@ -578,5 +583,97 @@ describe('when trying to release locks', () => {
     it('should throw the Redis error', async () => {
       await expect(component.tryReleaseLock(lockKey)).rejects.toThrow(error)
     })
+  })
+})
+
+describe('when starting the component', () => {
+  describe('and the client has not been opened yet', () => {
+    it('should call connect()', async () => {
+      await component[START_COMPONENT]!({ started: () => true, live: () => true, getComponents: () => ({}) })
+
+      expect(connectMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and start is called twice in a row', () => {
+    it('should not re-open an already-open client', async () => {
+      await component[START_COMPONENT]!({ started: () => true, live: () => true, getComponents: () => ({}) })
+      await component[START_COMPONENT]!({ started: () => true, live: () => true, getComponents: () => ({}) })
+
+      // The second start is a no-op because the client is already open.
+      expect(connectMock).toHaveBeenCalledTimes(1)
+    })
+  })
+})
+
+describe('when stopping the component', () => {
+  describe('and the client is currently open', () => {
+    beforeEach(async () => {
+      await component[START_COMPONENT]!({ started: () => true, live: () => true, getComponents: () => ({}) })
+    })
+
+    it('should call close()', async () => {
+      await component[STOP_COMPONENT]!()
+
+      expect(closeMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and stop is called without a prior start', () => {
+    it('should not call close()', async () => {
+      await component[STOP_COMPONENT]!()
+
+      expect(closeMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('and stop is called twice in a row', () => {
+    beforeEach(async () => {
+      await component[START_COMPONENT]!({ started: () => true, live: () => true, getComponents: () => ({}) })
+    })
+
+    it('should only close the client once', async () => {
+      await component[STOP_COMPONENT]!()
+      await component[STOP_COMPONENT]!()
+
+      expect(closeMock).toHaveBeenCalledTimes(1)
+    })
+  })
+})
+
+describe('when get returns an empty string from Redis', () => {
+  // An empty string is a malformed value (values written by this
+  // component are JSON-encoded, so strings always come back wrapped in
+  // quotes — `JSON.stringify('') === '""'`). Letting it reach JSON.parse
+  // surfaces the corruption to the caller instead of silently returning
+  // null as if the key were absent.
+  const key = 'empty-string-key'
+
+  beforeEach(() => {
+    getMock.mockResolvedValue('')
+  })
+
+  it('should throw the parse error rather than silently return null', async () => {
+    await expect(component.get(key)).rejects.toThrow()
+  })
+})
+
+describe('when getAllHashFields encounters a malformed JSON value', () => {
+  const hashKey = 'hash-with-bad-field'
+
+  beforeEach(() => {
+    hGetAllMock.mockResolvedValue({
+      good: JSON.stringify({ ok: true }),
+      bad: 'not-valid-json{'
+    })
+  })
+
+  it('should surface the offending field name in the structured log before throwing', async () => {
+    await expect(component.getAllHashFields(hashKey)).rejects.toThrow()
+
+    expect(errorLogMock).toHaveBeenCalledWith(
+      'Failed to parse hash field',
+      expect.objectContaining({ key: hashKey, field: 'bad' })
+    )
   })
 })

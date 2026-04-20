@@ -31,6 +31,12 @@ export async function createRedisComponent(
   })
 
   async function start() {
+    // Idempotent: if connect() has already run (or is running), there's
+    // nothing to do. Calling client.connect() twice on node-redis v5
+    // throws "Socket already opened".
+    if (client.isOpen) {
+      return
+    }
     try {
       logger.debug('Connecting to Redis', { hostUrl })
       await client.connect()
@@ -44,6 +50,11 @@ export async function createRedisComponent(
   async function stop() {
     // Stop is best-effort: a disconnect failure should not prevent the
     // lifecycle manager from moving on with the rest of the shutdown.
+    // Skip entirely if the client never opened (start failed, or stop is
+    // being called twice) — close() throws in that state.
+    if (!client.isOpen) {
+      return
+    }
     try {
       logger.debug('Disconnecting from Redis')
       await client.close()
@@ -56,10 +67,14 @@ export async function createRedisComponent(
   async function get<T>(key: string): Promise<T | null> {
     try {
       const serializedValue = await client.get(key)
-      if (serializedValue) {
-        return JSON.parse(serializedValue) as T
+      // Explicit null/undefined check rather than truthy: `JSON.stringify('')`
+      // yields `'""'` (truthy), so an externally-written raw empty string
+      // is a malformed value and would throw during parse — no need to
+      // silently swallow it as "not found".
+      if (serializedValue === null || serializedValue === undefined) {
+        return null
       }
-      return null
+      return JSON.parse(serializedValue) as T
     } catch (err) {
       logger.error('Error getting key', { key, error: errorMessageOf(err) })
       throw err
@@ -203,7 +218,10 @@ export async function createRedisComponent(
 
   async function getFromHash<T>(key: string, field: string): Promise<T | null> {
     const value = await client.hGet(key, field)
-    return value ? JSON.parse(value) : null
+    if (value === null || value === undefined) {
+      return null
+    }
+    return JSON.parse(value) as T
   }
 
   async function removeFromHash(key: string, field: string): Promise<void> {
@@ -212,10 +230,19 @@ export async function createRedisComponent(
 
   async function getAllHashFields<T>(key: string): Promise<Record<string, T>> {
     const hashFields = await client.hGetAll(key)
-    return Object.entries(hashFields).reduce((acc: Record<string, T>, [field, value]) => {
-      acc[field] = JSON.parse(value)
-      return acc
-    }, {} as Record<string, T>)
+    const result: Record<string, T> = {}
+    for (const [field, value] of Object.entries(hashFields)) {
+      try {
+        result[field] = JSON.parse(value) as T
+      } catch (err) {
+        // Surface the offending field so the caller can correlate the
+        // corruption to a specific entry, rather than losing the rest
+        // of the hash to a single malformed value.
+        logger.error('Failed to parse hash field', { key, field, error: errorMessageOf(err) })
+        throw err
+      }
+    }
+    return result
   }
 
   return {
