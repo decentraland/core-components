@@ -596,3 +596,107 @@ describe('when trying to release locks', () => {
     })
   })
 })
+
+describe('when matching keys with glob patterns', () => {
+  describe('and a literal-looking dot appears in the pattern', () => {
+    beforeEach(async () => {
+      // The dot is a regex metacharacter; without escaping, the pattern
+      // `user.id:*` would also match `userXid:123`.
+      await component.set('user.id:1', 'ok')
+      await component.set('userXid:1', 'also-ok')
+    })
+
+    it('should treat the dot literally and not match an arbitrary character in its position', async () => {
+      const result = await component.keys('user.id:*')
+
+      expect(result).toContain('user.id:1')
+      expect(result).not.toContain('userXid:1')
+    })
+  })
+
+  describe('and another key shares the pattern prefix but with extra leading characters', () => {
+    beforeEach(async () => {
+      await component.set('user:123', 'ok')
+      await component.set('admin_user:456', 'should-not-match')
+    })
+
+    it('should not match the key that only contains the pattern as a substring', async () => {
+      const result = await component.keys('user:*')
+
+      expect(result).toContain('user:123')
+      expect(result).not.toContain('admin_user:456')
+    })
+  })
+
+  describe('and another key shares the pattern but with extra trailing characters beyond the glob', () => {
+    beforeEach(async () => {
+      await component.set('prefix', 'ok')
+      await component.set('prefix-extra', 'also-ok')
+    })
+
+    it('should only return the exact-match key when the pattern has no glob', async () => {
+      const result = await component.keys('prefix')
+
+      expect(result).toContain('prefix')
+      expect(result).not.toContain('prefix-extra')
+    })
+  })
+})
+
+describe('when a stored value happens to be null', () => {
+  const dataKey = 'shared-key-with-null-value'
+
+  beforeEach(async () => {
+    // A caller legitimately stored `null`. acquireLock must not treat
+    // that slot as free; doing so would overwrite user data.
+    await component.set(dataKey, null)
+  })
+
+  it('should not allow acquireLock to overwrite the stored null as if it were an unlocked slot', async () => {
+    await expect(
+      component.acquireLock(dataKey, { retries: 2, retryDelayInMilliseconds: 10 })
+    ).rejects.toThrow(LockNotAcquiredError)
+
+    // The original null must still be there.
+    const result = await component.get(dataKey)
+    expect(result).toBeNull()
+  })
+})
+
+describe('when setting fields in a hash that already has a TTL', () => {
+  const hashKey = 'hash-with-ttl'
+
+  describe('and a subsequent setInHash omits the TTL', () => {
+    beforeEach(async () => {
+      // Short TTL (50 ms) so we can observe preservation vs reset.
+      await component.setInHash(hashKey, 'first', { a: 1 }, 0.05)
+      // Halfway through the TTL.
+      await sleep(30)
+      await component.setInHash(hashKey, 'second', { b: 2 })
+    })
+
+    it('should preserve the original expiry rather than resetting it', async () => {
+      // Total elapsed so far: ~30 ms. The original TTL was 50 ms, so the
+      // entry should expire shortly after this sleep. If the second
+      // setInHash had reset the TTL to the cache's 1-hour default, the
+      // hash would still be here 30 ms later.
+      await sleep(40)
+
+      const fields = await component.getAllHashFields(hashKey)
+      expect(fields).toEqual({})
+    })
+  })
+
+  describe('and a subsequent setInHash supplies a non-positive TTL', () => {
+    beforeEach(async () => {
+      await component.setInHash(hashKey, 'first', { a: 1 }, 60)
+      await component.setInHash(hashKey, 'second', { b: 2 }, 0)
+      await component.setInHash(hashKey, 'third', { c: 3 }, -1)
+    })
+
+    it('should ignore the zero / negative TTL just like the Redis implementation', async () => {
+      const fields = await component.getAllHashFields(hashKey)
+      expect(fields).toEqual({ first: { a: 1 }, second: { b: 2 }, third: { c: 3 } })
+    })
+  })
+})

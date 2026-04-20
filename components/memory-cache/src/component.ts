@@ -38,18 +38,29 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
       const allKeys = Array.from(cache.keys()) as string[]
       if (!pattern) return allKeys
 
-      // Simple pattern matching - convert glob-like pattern to regex
-      const regexPattern = pattern.replace(/\*/g, '.*')
-      const regex = new RegExp(regexPattern)
+      // Convert a Redis-style glob pattern to an anchored regex:
+      //  1. Escape every regex metacharacter so `user.id:*` doesn't let `.`
+      //     match an arbitrary character.
+      //  2. Turn `\*` (escaped glob star) back into `.*`.
+      //  3. Anchor with ^…$ so the pattern must match the whole key, not a
+      //     substring (previously `user:*` also matched `admin_user:123`).
+      const regexSource = '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'
+      const regex = new RegExp(regexSource)
       return allKeys.filter((key: string) => regex.test(key))
     },
 
     async setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
-      cache.set(
-        key,
-        { ...(cache.get(key) ?? {}), [field]: value },
-        ttlInSecondsForHash !== undefined ? { ttl: fromSecondsToMilliseconds(ttlInSecondsForHash) } : undefined
-      )
+      // Read-modify-write on the hash. This block must stay synchronous
+      // (no `await` between the get and the set) so concurrent calls on
+      // the same key cannot interleave and drop fields.
+      const options =
+        ttlInSecondsForHash && ttlInSecondsForHash > 0
+          ? { ttl: fromSecondsToMilliseconds(ttlInSecondsForHash) }
+          : // When no TTL is specified, match Redis's behavior: do not
+            // touch the existing expiry. noUpdateTTL preserves the TTL
+            // that was already on the entry.
+            { noUpdateTTL: true }
+      cache.set(key, { ...(cache.get(key) ?? {}), [field]: value }, options)
     },
 
     async getFromHash<T>(key: string, field: string): Promise<T | null> {
@@ -87,8 +98,10 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
       const retries = options?.retries ?? DEFAULT_ACQUIRE_LOCK_RETRIES
 
       for (let i = 0; i < retries; i++) {
-        const lock = cache.get(key) ?? null
-        if (lock === null) {
+        // Use `has` rather than comparing `get(key) ?? null` to null: the
+        // latter treats a user-stored `null` value as "unlocked" and
+        // would silently overwrite it when acquiring.
+        if (!cache.has(key)) {
           cache.set(key, randomValue, { ttl })
           return
         }
@@ -101,8 +114,7 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
     },
 
     async releaseLock(key: string): Promise<void> {
-      const lock = cache.get(key) ?? null
-      if (lock === randomValue) {
+      if (cache.get(key) === randomValue) {
         cache.delete(key)
         return
       }
