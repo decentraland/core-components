@@ -24,7 +24,7 @@ function chunks<T>(array: T[], size: number): T[][] {
 
 export async function createSqsComponent(config: IConfigComponent): Promise<IQueueComponent> {
   const queueUrl = await config.requireString('AWS_SQS_QUEUE_URL')
-  const endpoint = await config.getString?.('AWS_SQS_ENDPOINT')
+  const endpoint = await config.getString('AWS_SQS_ENDPOINT')
 
   const clientConfig: { endpoint?: string } = {}
   if (endpoint) {
@@ -35,8 +35,7 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
   async function sendMessage(message: any): Promise<void> {
     const sendCommand = new SendMessageCommand({
       QueueUrl: queueUrl,
-      MessageBody: JSON.stringify({ Message: JSON.stringify(message) }),
-      DelaySeconds: 10
+      MessageBody: JSON.stringify(message)
     })
     await client.send(sendCommand)
   }

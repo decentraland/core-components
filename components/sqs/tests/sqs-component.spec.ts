@@ -6,7 +6,8 @@ import {
   ChangeMessageVisibilityBatchCommand,
   ChangeMessageVisibilityCommand,
   Message,
-  ReceiveMessageCommand
+  ReceiveMessageCommand,
+  SendMessageCommand
 } from '@aws-sdk/client-sqs'
 
 // Mock the AWS SDK
@@ -69,11 +70,29 @@ describe('when sending messages', () => {
     beforeEach(() => {
       testMessage = { type: 'test', data: 'test data' }
       sendMock.mockResolvedValue({ MessageId: 'msg-123' })
+      ;(SendMessageCommand as unknown as jest.Mock).mockClear()
     })
 
     it('should send the message successfully', async () => {
       await expect(component.sendMessage(testMessage)).resolves.not.toThrow()
       expect(sendMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('should serialize the message body as a single JSON payload', async () => {
+      await component.sendMessage(testMessage)
+
+      expect(SendMessageCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          QueueUrl: queueUrl,
+          MessageBody: JSON.stringify(testMessage)
+        })
+      )
+    })
+
+    it('should not set a delay on sent messages', async () => {
+      await component.sendMessage(testMessage)
+
+      expect(SendMessageCommand).toHaveBeenCalledWith(expect.not.objectContaining({ DelaySeconds: expect.anything() }))
     })
   })
 
