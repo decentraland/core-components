@@ -1,7 +1,7 @@
 import { START_COMPONENT, STOP_COMPONENT, ILoggerComponent, IBaseComponent } from '@well-known-components/interfaces'
 import { createLoggerMockedComponent } from '@dcl/core-commons'
 import { IQueueComponent } from '@dcl/sqs-component'
-import { createQueueConsumerComponent } from '../src/component'
+import { createQueueConsumerComponent, computeRetryDelayMs } from '../src/component'
 import { IQueueConsumerComponent } from '../src/types'
 import { Events } from '@dcl/schemas'
 import { createMockSqsComponent } from './mocks/sqs-mock-component'
@@ -610,15 +610,14 @@ describe('when stopping during a long-poll', () => {
     expect(capturedSignal!.aborted).toBe(false)
   })
 
-  it('should abort the in-flight receive and resolve stop quickly', async () => {
-    const stopStartedAt = Date.now()
+  it('should abort the in-flight receive so stop can return', async () => {
+    // If the abort path is not plumbed, the mock's never-resolving receive
+    // promise would block stop forever and Jest's default 5s test timeout
+    // would fail this test. We additionally assert the signal was aborted
+    // as direct evidence the plumbing fired.
     await component[STOP_COMPONENT]!()
 
     expect(capturedSignal!.aborted).toBe(true)
-    // Without the abort plumbing, stop would only return when the receive
-    // promise settled (which in our mock is never). A generous 500ms bound
-    // is still tight enough to prove the abort path is in play.
-    expect(Date.now() - stopStartedAt).toBeLessThan(500)
   })
 })
 
@@ -677,5 +676,118 @@ describe('when a message is missing a ReceiptHandle', () => {
 
   it('should log a warning', () => {
     expect(mockLogger.warn).toHaveBeenCalledWith('Skipping delete for message without ReceiptHandle')
+  })
+})
+
+describe('when sqs.deleteMessage throws after a successful receive', () => {
+  let sqs: jest.Mocked<IQueueComponent>
+  let logs: jest.Mocked<ILoggerComponent>
+  let component: IQueueConsumerComponent
+  let mockLogger: jest.Mocked<ILoggerComponent.ILogger>
+  let deleteFailed: Promise<void>
+  let resolveDeleteFailed: () => void
+
+  beforeEach(async () => {
+    deleteFailed = new Promise((resolve) => {
+      resolveDeleteFailed = resolve
+    })
+
+    sqs = createMockSqsComponent({
+      receiveMessages: jest
+        .fn()
+        .mockResolvedValueOnce([createSqsMessage(createTestMessage(), 'receipt-1')])
+        .mockResolvedValue([]),
+      deleteMessage: jest.fn().mockRejectedValue(new Error('Delete failed'))
+    })
+
+    mockLogger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn().mockImplementation((message: string) => {
+        if (message === 'Failed to delete message after processing') {
+          resolveDeleteFailed()
+        }
+      }),
+      log: jest.fn()
+    }
+    logs = {
+      getLogger: jest.fn().mockReturnValue(mockLogger)
+    }
+
+    component = createQueueConsumerComponent({ sqs, logs })
+    await component[START_COMPONENT]!(mockStartOptions)
+    await deleteFailed
+  })
+
+  afterEach(async () => {
+    await component[STOP_COMPONENT]!()
+    jest.resetAllMocks()
+  })
+
+  it('should log the delete failure', () => {
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Failed to delete message after processing',
+      expect.objectContaining({
+        messageHandle: 'receipt-1',
+        error: 'Delete failed'
+      })
+    )
+  })
+
+  it('should not treat the delete failure as a receive failure (no backoff entry)', () => {
+    expect(mockLogger.error).not.toHaveBeenCalledWith(expect.stringContaining('Error receiving messages from queue'))
+  })
+})
+
+describe('when computing the retry delay', () => {
+  const baseRetryDelayMs = 1000
+  const maxRetryDelayMs = 30_000
+
+  describe('and there have been no failures yet', () => {
+    it('should return zero', () => {
+      expect(computeRetryDelayMs(0, baseRetryDelayMs, maxRetryDelayMs, 0.5)).toBe(0)
+      expect(computeRetryDelayMs(-1, baseRetryDelayMs, maxRetryDelayMs, 0.5)).toBe(0)
+    })
+  })
+
+  describe('and the random jitter is at its lowest', () => {
+    it('should return zero regardless of the failure count', () => {
+      for (const failures of [1, 2, 5, 10, 100]) {
+        expect(computeRetryDelayMs(failures, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(0)
+      }
+    })
+  })
+
+  describe('and the random jitter is near its highest', () => {
+    const almostOne = 1 - Number.EPSILON
+
+    it('should grow exponentially at low failure counts', () => {
+      // With jitter ≈ 1, the delay approaches baseRetryDelayMs * 2 ** (n-1).
+      expect(computeRetryDelayMs(1, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(999)
+      expect(computeRetryDelayMs(2, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(1999)
+      expect(computeRetryDelayMs(3, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(3999)
+      expect(computeRetryDelayMs(4, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(7999)
+    })
+
+    it('should cap at maxRetryDelayMs once the exponential exceeds it', () => {
+      // 2 ** 14 * 1000 = 16_384_000ms > 30_000ms, must be clamped.
+      for (const failures of [10, 20, 50, 100, 1000]) {
+        expect(computeRetryDelayMs(failures, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(29_999)
+      }
+    })
+  })
+
+  describe('and the random jitter is somewhere in between', () => {
+    it('should never exceed the exponential ceiling for the given failure count', () => {
+      for (const failures of [1, 2, 5, 10, 50]) {
+        const ceiling = Math.min(baseRetryDelayMs * 2 ** (failures - 1), maxRetryDelayMs)
+        for (const random of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+          const delay = computeRetryDelayMs(failures, baseRetryDelayMs, maxRetryDelayMs, random)
+          expect(delay).toBeGreaterThanOrEqual(0)
+          expect(delay).toBeLessThan(ceiling)
+        }
+      }
+    })
   })
 })

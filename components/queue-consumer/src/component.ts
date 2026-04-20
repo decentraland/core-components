@@ -5,6 +5,25 @@ import { IQueueComponent } from '@dcl/sqs-component'
 import type { IQueueConsumerComponent, MessageHandler, IQueueConsumerOptions } from './types'
 
 /**
+ * Computes an exponential-backoff delay with full jitter.
+ *
+ * Exported so tests can pin it without driving the process loop through
+ * fake timers.
+ */
+export function computeRetryDelayMs(
+  consecutiveFailures: number,
+  baseRetryDelayMs: number,
+  maxRetryDelayMs: number,
+  random: number = Math.random()
+): number {
+  if (consecutiveFailures <= 0) {
+    return 0
+  }
+  const exponentialDelay = Math.min(baseRetryDelayMs * 2 ** (consecutiveFailures - 1), maxRetryDelayMs)
+  return Math.floor(random * exponentialDelay)
+}
+
+/**
  * Creates the Queue Consumer component
  *
  * Orchestrates message consumption from a queue and handler execution:
@@ -145,7 +164,18 @@ export const createQueueConsumerComponent = (
             })
           } finally {
             if (ReceiptHandle) {
-              await sqs.deleteMessage(ReceiptHandle)
+              // Swallow delete failures: bubbling them to the outer catch
+              // would misclassify a post-receive delete error as a receive
+              // failure and trigger backoff.
+              try {
+                await sqs.deleteMessage(ReceiptHandle)
+              } catch (deleteError) {
+                const errorMessage = isErrorWithMessage(deleteError) ? deleteError.message : 'Unexpected failure'
+                logger.error('Failed to delete message after processing', {
+                  messageHandle: ReceiptHandle,
+                  error: errorMessage
+                })
+              }
             } else {
               logger.warn('Skipping delete for message without ReceiptHandle')
             }
@@ -157,8 +187,7 @@ export const createQueueConsumerComponent = (
 
         logger.error(`Error receiving messages from queue: ${error}`)
         consecutiveFailures++
-        // Exponential backoff: 1s, 2s, 4s, 8s, …, capped at maxRetryDelayMs.
-        const delay = Math.min(baseRetryDelayMs * 2 ** (consecutiveFailures - 1), maxRetryDelayMs)
+        const delay = computeRetryDelayMs(consecutiveFailures, baseRetryDelayMs, maxRetryDelayMs)
 
         // Interruptible sleep - check isRunning periodically
         const sleepInterval = 100
