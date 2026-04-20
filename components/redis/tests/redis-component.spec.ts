@@ -684,6 +684,30 @@ describe('when getAllHashFields encounters a malformed JSON value', () => {
   })
 })
 
+describe('when getFromHash encounters a malformed JSON value', () => {
+  let hashKey: string
+  let field: string
+
+  beforeEach(() => {
+    hashKey = 'single-field-hash'
+    field = 'corrupt-field'
+    hGetMock.mockResolvedValue('not-valid-json{')
+  })
+
+  it('should reject with the underlying parse error', async () => {
+    await expect(component.getFromHash(hashKey, field)).rejects.toThrow()
+  })
+
+  it('should surface the offending key and field in the structured log', async () => {
+    await component.getFromHash(hashKey, field).catch(() => undefined)
+
+    expect(errorLogMock).toHaveBeenCalledWith(
+      'Failed to parse hash field',
+      expect.objectContaining({ key: hashKey, field })
+    )
+  })
+})
+
 describe('when acquireLock is given a non-positive ttlInMilliseconds', () => {
   const lockKey = 'clamped-lock'
 

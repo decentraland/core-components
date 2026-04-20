@@ -353,7 +353,15 @@ export async function createRedisComponent(
     if (value === null || value === undefined) {
       return null
     }
-    return JSON.parse(value) as T
+    try {
+      return JSON.parse(value) as T
+    } catch (err) {
+      // Mirror getAllHashFields's per-field error shape so a corrupted
+      // entry surfaces the key / field that produced it, rather than
+      // bubbling up a bare SyntaxError with no context.
+      logger.error('Failed to parse hash field', { key, field, ...errorLogPayload(err) })
+      throw err
+    }
   }
 
   async function removeFromHash(key: string, field: string): Promise<void> {
