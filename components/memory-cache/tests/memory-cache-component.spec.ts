@@ -1,6 +1,10 @@
 import { createInMemoryCacheComponent } from '../src/component'
 import { ICacheStorageComponent, LockNotAcquiredError, LockNotReleasedError, sleep } from '@dcl/core-commons'
 
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
 let component: ICacheStorageComponent
 
 beforeEach(() => {
@@ -698,5 +702,126 @@ describe('when setting fields in a hash that already has a TTL', () => {
       const fields = await component.getAllHashFields(hashKey)
       expect(fields).toEqual({ first: { a: 1 }, second: { b: 2 }, third: { c: 3 } })
     })
+  })
+})
+
+describe('when set is called without a TTL', () => {
+  // Before this fix, omitting a TTL meant the entry silently inherited
+  // the cache's hardcoded 1-hour default. Redis SET without EX is
+  // persistent; we now match that.
+  it('should store the value persistently rather than inheriting a default TTL', async () => {
+    const key = 'persistent-key'
+    await component.set(key, 'value-that-should-not-expire')
+
+    // Let the event loop tick; no wall-clock TTL comparison needed here.
+    await settle()
+
+    const result = await component.get(key)
+    expect(result).toBe('value-that-should-not-expire')
+  })
+
+  describe('and the key previously had a TTL', () => {
+    it('should clear the previous TTL so the new value survives past it', async () => {
+      const key = 'replace-key'
+      // Write with a short TTL first.
+      await component.set(key, 'first', 0.05)
+      // Replace without a TTL — Redis SET without EX clears the expire.
+      await component.set(key, 'second')
+      // Wait long enough that the first TTL would have expired.
+      await sleep(80)
+
+      const result = await component.get(key)
+      expect(result).toBe('second')
+    })
+  })
+})
+
+describe('when setInHash is called on a NEW key without a TTL', () => {
+  // Before this fix, noUpdateTTL alone didn't help new keys: the cache's
+  // default 1-hour TTL still applied. Now new hashes without a TTL are
+  // persistent, matching Redis (no HEXPIRE / EXPIRE issued).
+  it('should store the hash persistently rather than under a 1-hour default', async () => {
+    const hashKey = 'fresh-hash'
+    await component.setInHash(hashKey, 'only', { a: 1 })
+
+    await settle()
+
+    const fields = await component.getAllHashFields<{ a: number }>(hashKey)
+    expect(fields).toEqual({ only: { a: 1 } })
+  })
+})
+
+describe('when removeFromHash leaves a hash with remaining fields', () => {
+  // Before this fix, the cache.set(key, newHash) call used no options
+  // and therefore reset the entry's TTL back to the 1-hour default.
+  // HDEL in Redis leaves the expire untouched.
+  const hashKey = 'partial-remove'
+
+  beforeEach(async () => {
+    // Short TTL so we can observe whether it was reset by removeFromHash.
+    await component.setInHash(hashKey, 'keep', { a: 1 }, 0.05)
+    await component.setInHash(hashKey, 'drop', { b: 2 })
+    await sleep(20)
+    await component.removeFromHash(hashKey, 'drop')
+  })
+
+  it('should preserve the hash TTL rather than resetting it', async () => {
+    // Total elapsed so far: ~20 ms. Original TTL was 50 ms. If the
+    // remove reset the TTL to a 1-hour default, the hash would still be
+    // here after this second sleep.
+    await sleep(40)
+
+    const fields = await component.getAllHashFields(hashKey)
+    expect(fields).toEqual({})
+  })
+})
+
+describe('when getAllHashFields is called on a key that holds a non-object value', () => {
+  // A caller mixed the two API styles: set() to write a scalar, then
+  // getAllHashFields() to read. Previously the scalar came back typed as
+  // a Record. Now we return an empty record so the declared contract
+  // holds.
+  const key = 'mixed-usage'
+
+  beforeEach(async () => {
+    await component.set(key, 'not-a-hash')
+  })
+
+  it('should return an empty object rather than casting the scalar to a Record', async () => {
+    const fields = await component.getAllHashFields(key)
+    expect(fields).toEqual({})
+  })
+})
+
+describe('when getFromHash is called on a key that holds a non-object value', () => {
+  const key = 'also-mixed'
+
+  beforeEach(async () => {
+    await component.set(key, 'not-a-hash')
+  })
+
+  it('should return null rather than indexing into the scalar', async () => {
+    const result = await component.getFromHash(key, '0')
+    expect(result).toBeNull()
+  })
+})
+
+describe('when a custom max entry count is provided', () => {
+  let smallCache: ICacheStorageComponent
+
+  beforeEach(() => {
+    smallCache = createInMemoryCacheComponent({ max: 2 })
+  })
+
+  it('should evict the oldest entries once the configured max is exceeded', async () => {
+    await smallCache.set('a', 1)
+    await smallCache.set('b', 2)
+    await smallCache.set('c', 3)
+
+    // `a` should have been evicted by the LRU once the third entry was
+    // written; `b` and `c` should remain.
+    expect(await smallCache.get('a')).toBeNull()
+    expect(await smallCache.get('b')).toBe(2)
+    expect(await smallCache.get('c')).toBe(3)
   })
 })

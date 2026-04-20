@@ -11,13 +11,31 @@ import {
   LockNotReleasedError
 } from '@dcl/core-commons'
 
-export function createInMemoryCacheComponent(): ICacheStorageComponent {
+const DEFAULT_MAX_ENTRIES = 10_000
+
+export interface InMemoryCacheOptions {
+  /**
+   * Maximum number of entries the underlying LRU holds before the oldest
+   * are evicted. Useful to raise when using this component as a stand-in
+   * for a Redis-backed implementation in a workload that stores more than
+   * 10 000 keys. Defaults to 10 000.
+   */
+  max?: number
+}
+
+export function createInMemoryCacheComponent(options: InMemoryCacheOptions = {}): ICacheStorageComponent {
+  // No cache-wide default TTL. Per-entry TTLs are applied explicitly at
+  // every write site so the memory-cache and Redis implementations of
+  // ICacheStorageComponent agree on "no TTL = persistent".
   const cache = new LRUCache<string, any>({
-    max: 10000,
-    ttl: 1000 * 60 * 60 // 1 hour default TTL
+    max: options.max ?? DEFAULT_MAX_ENTRIES
   })
 
   const randomValue = randomUUID()
+
+  function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+  }
 
   const component: ICacheStorageComponent = {
     async get<T>(key: string): Promise<T | null> {
@@ -26,8 +44,13 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
     },
 
     async set<T>(key: string, value: T, ttl?: number): Promise<void> {
-      const options = ttl ? { ttl: fromSecondsToMilliseconds(ttl) } : undefined
-      cache.set(key, value, options)
+      // Match Redis SET semantics:
+      //  - With a positive TTL: apply it.
+      //  - Without (or with 0/negative): write the value with ttl:0, which
+      //    in lru-cache means "never expire", matching Redis's behavior
+      //    of clearing any previous expire when SET has no EX/PX.
+      const ttlMs = ttl && ttl > 0 ? fromSecondsToMilliseconds(ttl) : 0
+      cache.set(key, value, { ttl: ttlMs })
     },
 
     async remove(key: string): Promise<void> {
@@ -53,36 +76,50 @@ export function createInMemoryCacheComponent(): ICacheStorageComponent {
       // Read-modify-write on the hash. This block must stay synchronous
       // (no `await` between the get and the set) so concurrent calls on
       // the same key cannot interleave and drop fields.
+      //
+      // TTL semantics, aligned with the Redis implementation:
+      //  - Positive TTL: apply it.
+      //  - No TTL (or 0/negative): ttl:0 with noUpdateTTL:true. For a new
+      //    key, ttl:0 means "never expire" (matching Redis's "no EXPIRE
+      //    issued"). For an existing key, noUpdateTTL:true preserves
+      //    whatever TTL is already on the entry.
       const options =
         ttlInSecondsForHash && ttlInSecondsForHash > 0
           ? { ttl: fromSecondsToMilliseconds(ttlInSecondsForHash) }
-          : // When no TTL is specified, match Redis's behavior: do not
-            // touch the existing expiry. noUpdateTTL preserves the TTL
-            // that was already on the entry.
-            { noUpdateTTL: true }
-      cache.set(key, { ...(cache.get(key) ?? {}), [field]: value }, options)
+          : { ttl: 0, noUpdateTTL: true }
+      const existing = cache.get(key)
+      const base = isPlainObject(existing) ? existing : {}
+      cache.set(key, { ...base, [field]: value }, options)
     },
 
     async getFromHash<T>(key: string, field: string): Promise<T | null> {
-      return cache.get(key)?.[field] ?? null
+      const hash = cache.get(key)
+      if (!isPlainObject(hash)) return null
+      const value = hash[field]
+      return value !== undefined ? (value as T) : null
     },
 
     async removeFromHash(key: string, field: string): Promise<void> {
       const hash = cache.get(key)
-      if (!hash) return
+      if (!isPlainObject(hash)) return
       const newHash = { ...hash }
       delete newHash[field]
 
-      // If the hash is empty, delete it
       if (Object.keys(newHash).length === 0) {
         cache.delete(key)
       } else {
-        cache.set(key, newHash)
+        // Preserve the hash's existing TTL — HDEL in Redis does not
+        // affect EXPIRE, so we mustn't silently reset it here either.
+        cache.set(key, newHash, { noUpdateTTL: true })
       }
     },
 
     async getAllHashFields<T>(key: string): Promise<Record<string, T>> {
-      return cache.get(key) ?? {}
+      const value = cache.get(key)
+      // Guard against a caller that previously stored a non-object value
+      // under `key` via `set()` — returning the raw value cast as a
+      // record would be a type lie.
+      return isPlainObject(value) ? (value as Record<string, T>) : {}
     },
 
     async acquireLock(
