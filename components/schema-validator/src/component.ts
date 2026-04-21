@@ -4,6 +4,10 @@ import addFormats from 'ajv-formats'
 import { IHttpServerComponent } from '@well-known-components/interfaces'
 import { ISchemaValidatorComponent, Validation } from './types'
 
+// RFC 6839 structured-suffix match: non-empty type and subtype separated by `/`,
+// ending in `+json`. Prevents matching a bare `+json` or `application/+json`.
+const JSON_STRUCTURED_SUFFIX_RE = /^[^/\s]+\/[^/\s]+\+json$/
+
 export function createSchemaValidatorComponent<T extends object>(options?: {
   ensureJsonContentType?: boolean
 }): ISchemaValidatorComponent<T> {
@@ -39,7 +43,7 @@ export function createSchemaValidatorComponent<T extends object>(options?: {
       return false
     }
     const mediaType = contentType.split(';', 1)[0].trim().toLowerCase()
-    return mediaType === 'application/json' || mediaType.endsWith('+json')
+    return mediaType === 'application/json' || JSON_STRUCTURED_SUFFIX_RE.test(mediaType)
   }
 
   function withSchemaValidatorMiddleware(
