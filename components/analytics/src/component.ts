@@ -13,10 +13,14 @@ export async function createAnalyticsComponent<T extends AnalyticsEventMap>(
   const analyticsApiToken = await config.requireString('ANALYTICS_API_TOKEN')
   const env = await config.requireString('ENV')
   const configuredTimeout = await config.getNumber('ANALYTICS_REQUEST_TIMEOUT')
-  const requestTimeout =
+  const hasValidConfiguredTimeout =
     typeof configuredTimeout === 'number' && Number.isFinite(configuredTimeout) && configuredTimeout > 0
-      ? configuredTimeout
-      : DEFAULT_REQUEST_TIMEOUT_MS
+  if (configuredTimeout !== undefined && !hasValidConfiguredTimeout) {
+    logger.warn(
+      `ANALYTICS_REQUEST_TIMEOUT value "${configuredTimeout}" is invalid; using default ${DEFAULT_REQUEST_TIMEOUT_MS}ms`
+    )
+  }
+  const requestTimeout = hasValidConfiguredTimeout ? (configuredTimeout as number) : DEFAULT_REQUEST_TIMEOUT_MS
 
   async function _sendEvent<K extends keyof T>(name: K, body: T[K]): Promise<void> {
     try {

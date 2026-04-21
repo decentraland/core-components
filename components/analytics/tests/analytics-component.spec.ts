@@ -13,6 +13,7 @@ let analyticsApiToken: string
 let environment: string
 let fetchMock: jest.Mock
 let errorLogMock: jest.Mock
+let warnLogMock: jest.Mock
 
 beforeEach(async () => {
   analyticsApiUrl = 'https://analytics.example.com/events'
@@ -21,7 +22,8 @@ beforeEach(async () => {
   context = 'test-context'
   fetchMock = jest.fn()
   errorLogMock = jest.fn()
-  logs = createLoggerMockedComponent({ error: errorLogMock })
+  warnLogMock = jest.fn()
+  logs = createLoggerMockedComponent({ error: errorLogMock, warn: warnLogMock })
   fetcher = createFetchMockedComponent({ fetch: fetchMock })
   config = createConfigMockedComponent({
     requireString: jest.fn().mockImplementation((key) => {
@@ -166,11 +168,15 @@ describe('when firing an event', () => {
 describe('when ANALYTICS_REQUEST_TIMEOUT is configured', () => {
   let eventBody: Record<string, any>
   let eventName: string
-  let customTimeout: number
 
-  beforeEach(async () => {
-    customTimeout = 5000
-    config = createConfigMockedComponent({
+  beforeEach(() => {
+    eventName = 'user_login'
+    eventBody = { userId: '123' }
+    fetchMock.mockResolvedValue({ ok: true, status: 200 })
+  })
+
+  const buildConfigWithTimeout = (timeout: number | undefined) =>
+    createConfigMockedComponent({
       requireString: jest.fn().mockImplementation((key) => {
         switch (key) {
           case 'ANALYTICS_CONTEXT':
@@ -183,22 +189,44 @@ describe('when ANALYTICS_REQUEST_TIMEOUT is configured', () => {
             return environment
         }
       }),
-      getNumber: jest.fn().mockImplementation((key) =>
-        key === 'ANALYTICS_REQUEST_TIMEOUT' ? customTimeout : undefined
-      )
+      getNumber: jest.fn().mockImplementation((key) => (key === 'ANALYTICS_REQUEST_TIMEOUT' ? timeout : undefined))
     })
-    component = await createAnalyticsComponent({ logs, fetcher, config })
-    eventName = 'user_login'
-    eventBody = { userId: '123' }
-    fetchMock.mockResolvedValue({ ok: true, status: 200 })
+
+  describe('and the value is a finite positive number', () => {
+    let customTimeout: number
+
+    beforeEach(async () => {
+      customTimeout = 5000
+      config = buildConfigWithTimeout(customTimeout)
+      component = await createAnalyticsComponent({ logs, fetcher, config })
+    })
+
+    it('should forward the configured timeout on the fetch call and not warn', async () => {
+      await component.sendEvent(eventName, eventBody)
+
+      expect(fetchMock).toHaveBeenCalledWith(analyticsApiUrl, expect.objectContaining({ timeout: customTimeout }))
+      expect(warnLogMock).not.toHaveBeenCalled()
+    })
   })
 
-  it('should forward the configured timeout on the fetch call', async () => {
-    await component.sendEvent(eventName, eventBody)
+  describe.each([
+    ['zero', 0],
+    ['negative', -100],
+    ['NaN', NaN],
+    ['Infinity', Number.POSITIVE_INFINITY]
+  ])('and the value is %s', (_label, invalidTimeout) => {
+    beforeEach(async () => {
+      config = buildConfigWithTimeout(invalidTimeout)
+      component = await createAnalyticsComponent({ logs, fetcher, config })
+    })
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      analyticsApiUrl,
-      expect.objectContaining({ timeout: customTimeout })
-    )
+    it('should fall back to the default timeout and warn about the invalid value', async () => {
+      await component.sendEvent(eventName, eventBody)
+
+      expect(fetchMock).toHaveBeenCalledWith(analyticsApiUrl, expect.objectContaining({ timeout: 10000 }))
+      expect(warnLogMock).toHaveBeenCalledWith(
+        `ANALYTICS_REQUEST_TIMEOUT value "${invalidTimeout}" is invalid; using default 10000ms`
+      )
+    })
   })
 })
