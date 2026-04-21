@@ -147,13 +147,13 @@ export async function createPgComponent(
     }
   }
 
-  async function withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
+  async function executeInTransaction<T>(runCallback: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await pool.connect()
     let rollbackError: Error | undefined
 
     try {
       await client.query('BEGIN')
-      const result = await callback(client)
+      const result = await runCallback(client)
       await client.query('COMMIT')
 
       return result
@@ -170,28 +170,12 @@ export async function createPgComponent(
     }
   }
 
+  async function withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
+    return executeInTransaction(callback)
+  }
+
   async function withAsyncContextTransaction<T>(callback: () => Promise<T>): Promise<T> {
-    const client = await pool.connect()
-    let rollbackError: Error | undefined
-
-    try {
-      await client.query('BEGIN')
-
-      const result = await transactionContext.run(client, callback)
-
-      await client.query('COMMIT')
-      return result
-    } catch (error) {
-      try {
-        await client.query('ROLLBACK')
-      } catch (err: any) {
-        rollbackError = err
-        logger.error('Error rolling back transaction', { error: err?.message ?? String(err) })
-      }
-      throw error
-    } finally {
-      client.release(rollbackError)
-    }
+    return executeInTransaction((client) => transactionContext.run(client, callback))
   }
 
   async function doQuery<T extends Record<string, any>>(sql: string | SQLStatement): Promise<QueryResult<T>> {
@@ -258,10 +242,12 @@ export async function createPgComponent(
       throw err
     }
 
+    // TODO: remove this workaround once node-postgres/pg-query-stream#1860 is fixed.
     // https://github.com/brianc/node-postgres/issues/1860
-    // Uncaught TypeError: queryCallback is not a function
-    // finish - OK, this call is necessary to finish the query when we configure query_timeout due to a bug in pg
-    // finish - with error, this call is necessary to finish the query when we configure query_timeout due to a bug in pg
+    // Symptom: `Uncaught TypeError: queryCallback is not a function` when
+    // `query_timeout` is configured. We must install a noop `callback` on the
+    // stream (see `stream.callback` below) and invoke it on both success and
+    // failure so pg's timer cleanup can run.
     const stream = new QueryStream(sql.text, sql.values, config) as QueryStreamWithCallback
 
     stream.callback = function () {
@@ -343,6 +329,15 @@ export async function createPgComponent(
         idleCount: pool.idleCount,
         waitingCount: pool.waitingCount,
         timeoutMs: STOP_TIMEOUT
+      })
+      // pool.end() is still pending — we're no longer awaiting it, but we still
+      // want any eventual failure to surface in logs instead of being silently
+      // captured by the `.then(ok, rej)` handler we attached earlier.
+      promise.catch((err: any) => {
+        logger.error('pool.end() failed after stop timeout', {
+          error: err?.message ?? String(err),
+          stack: err?.stack ?? ''
+        })
       })
       return
     }
