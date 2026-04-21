@@ -65,6 +65,7 @@ describe('when sending an event', () => {
 
       expect(fetchMock).toHaveBeenCalledWith(analyticsApiUrl, {
         method: 'POST',
+        timeout: 10000,
         headers: {
           'x-token': analyticsApiToken,
           'Content-Type': 'application/json'
@@ -113,5 +114,91 @@ describe('when sending an event', () => {
         error: 'Got status 400 from the Analytics API'
       })
     })
+  })
+
+  describe('and the API call is rejected with a non-Error value', () => {
+    beforeEach(() => {
+      fetchMock.mockRejectedValue('network glitch string')
+    })
+
+    it('should log "Unknown error" and resolve', async () => {
+      await expect(component.sendEvent(eventName, eventBody)).resolves.toBeUndefined()
+
+      expect(errorLogMock).toHaveBeenCalledWith('Error sending event to Analytics user_login', {
+        error: 'Unknown error'
+      })
+    })
+  })
+})
+
+describe('when firing an event', () => {
+  let eventBody: Record<string, any>
+  let eventName: string
+
+  beforeEach(() => {
+    eventName = 'user_login'
+    eventBody = { userId: '123', timestamp: 1 }
+    fetchMock.mockResolvedValue({ ok: true, status: 200 })
+  })
+
+  it('should dispatch the fetch call without awaiting the response', () => {
+    component.fireEvent(eventName, eventBody)
+
+    expect(fetchMock).toHaveBeenCalledWith(analyticsApiUrl, {
+      method: 'POST',
+      timeout: 10000,
+      headers: {
+        'x-token': analyticsApiToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        event: eventName,
+        body: {
+          ...eventBody,
+          env: environment
+        },
+        context: 'test-context'
+      })
+    })
+  })
+})
+
+describe('when ANALYTICS_REQUEST_TIMEOUT is configured', () => {
+  let eventBody: Record<string, any>
+  let eventName: string
+  let customTimeout: number
+
+  beforeEach(async () => {
+    customTimeout = 5000
+    config = createConfigMockedComponent({
+      requireString: jest.fn().mockImplementation((key) => {
+        switch (key) {
+          case 'ANALYTICS_CONTEXT':
+            return context
+          case 'ANALYTICS_API_URL':
+            return analyticsApiUrl
+          case 'ANALYTICS_API_TOKEN':
+            return analyticsApiToken
+          case 'ENV':
+            return environment
+        }
+      }),
+      getNumber: jest.fn().mockImplementation((key) =>
+        key === 'ANALYTICS_REQUEST_TIMEOUT' ? customTimeout : undefined
+      )
+    })
+    component = await createAnalyticsComponent({ logs, fetcher, config })
+    eventName = 'user_login'
+    eventBody = { userId: '123' }
+    fetchMock.mockResolvedValue({ ok: true, status: 200 })
+  })
+
+  it('should forward the configured timeout on the fetch call', async () => {
+    await component.sendEvent(eventName, eventBody)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      analyticsApiUrl,
+      expect.objectContaining({ timeout: customTimeout })
+    )
   })
 })

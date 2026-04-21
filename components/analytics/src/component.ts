@@ -1,7 +1,9 @@
 import { isErrorWithMessage } from '@dcl/core-commons'
-import { IAnalyticsComponent, IAnalyticsDependencies } from './types'
+import { AnalyticsEventMap, IAnalyticsComponent, IAnalyticsDependencies } from './types'
 
-export async function createAnalyticsComponent<T extends Record<string, any>>(
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000
+
+export async function createAnalyticsComponent<T extends AnalyticsEventMap>(
   components: Pick<IAnalyticsDependencies, 'fetcher' | 'logs' | 'config'>
 ): Promise<IAnalyticsComponent<T>> {
   const { fetcher, logs, config } = components
@@ -10,13 +12,17 @@ export async function createAnalyticsComponent<T extends Record<string, any>>(
   const analyticsApiUrl = await config.requireString('ANALYTICS_API_URL')
   const analyticsApiToken = await config.requireString('ANALYTICS_API_TOKEN')
   const env = await config.requireString('ENV')
+  const configuredTimeout = await config.getNumber('ANALYTICS_REQUEST_TIMEOUT')
+  const requestTimeout =
+    typeof configuredTimeout === 'number' && Number.isFinite(configuredTimeout) && configuredTimeout > 0
+      ? configuredTimeout
+      : DEFAULT_REQUEST_TIMEOUT_MS
 
-  async function _sendEvent(name: keyof T, body: T[keyof T]): Promise<void> {
-    logger.debug(`Sending event to Analytics ${name.toString()}`)
-
+  async function _sendEvent<K extends keyof T>(name: K, body: T[K]): Promise<void> {
     try {
       const response = await fetcher.fetch(analyticsApiUrl, {
         method: 'POST',
+        timeout: requestTimeout,
         headers: {
           'x-token': analyticsApiToken,
           'Content-Type': 'application/json'
@@ -35,17 +41,17 @@ export async function createAnalyticsComponent<T extends Record<string, any>>(
         throw new Error(`Got status ${response.status} from the Analytics API`)
       }
     } catch (error) {
-      logger.error(`Error sending event to Analytics ${name.toString()}`, {
+      logger.error(`Error sending event to Analytics ${String(name)}`, {
         error: isErrorWithMessage(error) ? error.message : 'Unknown error'
       })
     }
   }
 
-  function fireEvent(name: keyof T, body: T[keyof T]): void {
+  function fireEvent<K extends keyof T>(name: K, body: T[K]): void {
     void _sendEvent(name, body)
   }
 
-  async function sendEvent(name: keyof T, body: T[keyof T]): Promise<void> {
+  async function sendEvent<K extends keyof T>(name: K, body: T[K]): Promise<void> {
     return _sendEvent(name, body)
   }
 
