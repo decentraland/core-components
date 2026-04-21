@@ -15,12 +15,9 @@ export class InvalidStartupDelayError extends Error {
 }
 
 export class InvalidCronExpressionError extends Error {
-  public readonly cause: unknown
-
   constructor(expression: string, cause: unknown) {
     const causeMessage = isErrorWithMessage(cause) ? cause.message : String(cause)
-    super(`Invalid cron expression "${expression}": ${causeMessage}`)
+    super(`Invalid cron expression "${expression}": ${causeMessage}`, { cause })
     this.name = 'InvalidCronExpressionError'
-    this.cause = cause
   }
 }

@@ -4,6 +4,7 @@ import { JobOptions } from './types'
 import { InvalidStartupDelayError } from './errors'
 
 const FALLBACK_NEXT_DELAY_MS = 60_000
+const MAX_SAFE_TIMEOUT_MS = 2_147_483_647
 
 export type ScheduledRunnerConfig = {
   logs: ILoggerComponent
@@ -25,7 +26,7 @@ export function createScheduledRunner(config: ScheduledRunnerConfig): IBaseCompo
     onFinish = () => undefined
   } = config.options
 
-  if (startupDelay < 0) {
+  if (!Number.isFinite(startupDelay) || startupDelay < 0) {
     throw new InvalidStartupDelayError(startupDelay)
   }
 
@@ -61,7 +62,7 @@ export function createScheduledRunner(config: ScheduledRunnerConfig): IBaseCompo
         logger.error('Computed delay is not a finite number; using fallback', { value: String(value) })
         return FALLBACK_NEXT_DELAY_MS
       }
-      return Math.max(0, value)
+      return Math.min(Math.max(0, value), MAX_SAFE_TIMEOUT_MS)
     } catch (error) {
       logger.error('Failed to compute next delay; using fallback', {
         error: isErrorWithMessage(error) ? error.message : String(error)
@@ -88,6 +89,9 @@ export function createScheduledRunner(config: ScheduledRunnerConfig): IBaseCompo
       if (!repeat) {
         break
       }
+      if (shouldStop) {
+        break
+      }
       await sleep(safeDelay(nextDelayMs))
     }
     try {
@@ -106,7 +110,11 @@ export function createScheduledRunner(config: ScheduledRunnerConfig): IBaseCompo
       return
     }
     hasStarted = true
-    runJobPromise = runJob().catch(() => undefined)
+    runJobPromise = runJob().catch((error) => {
+      logger.error('run loop terminated unexpectedly', {
+        error: isErrorWithMessage(error) ? error.message : String(error)
+      })
+    })
   }
 
   async function stop() {

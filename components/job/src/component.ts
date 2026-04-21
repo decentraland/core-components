@@ -11,7 +11,7 @@ export function createJobComponent(
   onTime: number,
   options: JobOptions = {}
 ): IJobComponent {
-  if (onTime < 500) {
+  if (!Number.isFinite(onTime) || onTime < 500) {
     throw new WrongOnTimeError(onTime)
   }
 

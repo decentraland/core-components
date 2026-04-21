@@ -39,10 +39,30 @@ describe('when creating the job component with a lower than 500ms onTime', () =>
   })
 })
 
+describe('when creating the job component with a non-finite onTime', () => {
+  it.each([
+    ['NaN', NaN],
+    ['Infinity', Number.POSITIVE_INFINITY]
+  ])('should throw a WrongOnTimeError for %s', (_label, invalid) => {
+    expect(() => createJobComponent({ logs }, job, invalid, { repeat: false, onFinish })).toThrow(WrongOnTimeError)
+  })
+})
+
 describe('when creating the job component with a negative startupDelay', () => {
   it('should throw an InvalidStartupDelayError', () => {
     expect(() =>
       createJobComponent({ logs }, job, time, { repeat: false, startupDelay: -10, onFinish })
+    ).toThrow(InvalidStartupDelayError)
+  })
+})
+
+describe('when creating the job component with a non-finite startupDelay', () => {
+  it.each([
+    ['NaN', NaN],
+    ['Infinity', Number.POSITIVE_INFINITY]
+  ])('should throw an InvalidStartupDelayError for %s', (_label, invalid) => {
+    expect(() =>
+      createJobComponent({ logs }, job, time, { repeat: false, startupDelay: invalid, onFinish })
     ).toThrow(InvalidStartupDelayError)
   })
 })
@@ -517,6 +537,123 @@ describe('when nextDelayMs throws a non-Error value between iterations', () => {
       'Failed to compute next delay; using fallback',
       { error: 'delay string rejection' }
     )
+  })
+})
+
+describe('when stop() is called while the job is still executing', () => {
+  let finishJobExecution: (value: unknown) => void
+  let jobRunning: Promise<void>
+
+  beforeEach(() => {
+    mockedSetTimeout.mockReset()
+    mockedSetTimeout
+      .mockImplementationOnce((handler) => {
+        ;(handler as any)()
+        return 1 as any
+      })
+      .mockImplementation(() => 2 as any)
+
+    let signalRunning: () => void
+    jobRunning = new Promise<void>((r) => (signalRunning = r))
+    job.mockImplementationOnce(() => {
+      signalRunning()
+      return new Promise((resolve) => {
+        finishJobExecution = resolve
+      })
+    })
+    component = createJobComponent({ logs }, job, time, { repeat: true, onFinish })
+  })
+
+  it('should break out of the loop before scheduling the inter-iteration sleep', async () => {
+    await component[START_COMPONENT]?.({} as any)
+    await jobRunning
+
+    const stopping = component[STOP_COMPONENT]?.()
+    finishJobExecution(undefined)
+    await Promise.all([stopping, componentFinished])
+
+    expect(job).toHaveBeenCalledTimes(1)
+    expect(mockedSetTimeout).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('when nextDelayMs returns a value larger than the 32-bit setTimeout limit', () => {
+  let nextDelayMs: jest.Mock
+  let runner: IJobComponent
+
+  beforeEach(() => {
+    nextDelayMs = jest
+      .fn()
+      .mockReturnValueOnce(30 * 24 * 60 * 60 * 1000)
+      .mockImplementation(() => {
+        runner[STOP_COMPONENT]?.()
+        return 1000
+      })
+    runner = createScheduledRunner({
+      logs,
+      job: jest.fn(),
+      nextDelayMs,
+      options: { repeat: true, onFinish }
+    })
+  })
+
+  it('should clamp the delay to the 32-bit setTimeout max', async () => {
+    await runner[START_COMPONENT]?.({} as any)
+    await componentFinished
+    expect(mockedSetTimeout).toHaveBeenCalledWith(expect.anything(), 2_147_483_647)
+  })
+})
+
+describe('when runJob rejects unexpectedly after onFinish', () => {
+  let infoLogMock: jest.Mock
+
+  beforeEach(() => {
+    infoLogMock = jest.fn().mockImplementation((msg: string) => {
+      if (msg === '[Stopped]') {
+        throw new Error('logger exploded')
+      }
+    })
+    logs = createLoggerMockedComponent({ error: errorLogMock, info: infoLogMock })
+    component = createJobComponent({ logs }, job, time, {
+      repeat: false,
+      onFinish: () => undefined
+    })
+  })
+
+  it('should log the failure from the run loop instead of swallowing it', async () => {
+    await component[START_COMPONENT]?.({} as any)
+    await component[STOP_COMPONENT]?.()
+
+    expect(errorLogMock).toHaveBeenCalledWith('run loop terminated unexpectedly', {
+      error: 'logger exploded'
+    })
+  })
+})
+
+describe('when runJob rejects with a non-Error value', () => {
+  let infoLogMock: jest.Mock
+
+  beforeEach(() => {
+    infoLogMock = jest.fn().mockImplementation((msg: string) => {
+      if (msg === '[Stopped]') {
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal
+        throw 'non-error rejection'
+      }
+    })
+    logs = createLoggerMockedComponent({ error: errorLogMock, info: infoLogMock })
+    component = createJobComponent({ logs }, job, time, {
+      repeat: false,
+      onFinish: () => undefined
+    })
+  })
+
+  it('should stringify the rejection in the run-loop failure log', async () => {
+    await component[START_COMPONENT]?.({} as any)
+    await component[STOP_COMPONENT]?.()
+
+    expect(errorLogMock).toHaveBeenCalledWith('run loop terminated unexpectedly', {
+      error: 'non-error rejection'
+    })
   })
 })
 
