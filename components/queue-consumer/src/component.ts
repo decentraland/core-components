@@ -5,6 +5,27 @@ import { IQueueComponent } from '@dcl/sqs-component'
 import type { IQueueConsumerComponent, MessageHandler, IQueueConsumerOptions } from './types'
 
 /**
+ * Computes an exponential-backoff delay with equal jitter.
+ *
+ * The result falls in [exp/2, exp), which keeps a lower floor so a streak of
+ * small randoms cannot produce a tight zero-delay retry loop. Exported so
+ * tests can pin it without driving the process loop through fake timers.
+ */
+export function computeRetryDelayMs(
+  consecutiveFailures: number,
+  baseRetryDelayMs: number,
+  maxRetryDelayMs: number,
+  random: number = Math.random()
+): number {
+  if (consecutiveFailures <= 0) {
+    return 0
+  }
+  const exponentialDelay = Math.min(baseRetryDelayMs * 2 ** (consecutiveFailures - 1), maxRetryDelayMs)
+  const half = exponentialDelay / 2
+  return Math.floor(half + random * half)
+}
+
+/**
  * Creates the Queue Consumer component
  *
  * Orchestrates message consumption from a queue and handler execution:
@@ -26,9 +47,11 @@ export const createQueueConsumerComponent = (
 ): IQueueConsumerComponent => {
   const { sqs, logs } = components
   const releaseVisibilityTimeoutSeconds = options?.releaseVisibilityTimeoutSeconds ?? 0
+  const batchSize = options?.batchSize ?? 10
 
   let isRunning = false
   let processLoopPromise: Promise<void> | null = null
+  let receiveAbortController: AbortController | null = null
   const logger = logs.getLogger('messages-handler')
 
   // Map to store handlers by composite key (type:subType), allowing multiple handlers per type/subType
@@ -76,12 +99,15 @@ export const createQueueConsumerComponent = (
     isRunning = true
     let consecutiveFailures = 0
     const baseRetryDelayMs = 1000
+    const maxRetryDelayMs = 30_000
 
     while (isRunning) {
       try {
-        const messages = await sqs.receiveMessages(10)
+        receiveAbortController = new AbortController()
+        const messages = await sqs.receiveMessages(batchSize, {
+          abortSignal: receiveAbortController.signal
+        })
 
-        // Reset failure count on successful receive
         if (consecutiveFailures > 0) {
           logger.info('Queue connection recovered', {
             previousFailures: consecutiveFailures
@@ -139,22 +165,43 @@ export const createQueueConsumerComponent = (
               error: errorMessage
             })
           } finally {
-            await sqs.deleteMessage(ReceiptHandle)
+            if (ReceiptHandle) {
+              // Swallow delete failures: bubbling them to the outer catch
+              // would misclassify a post-receive delete error as a receive
+              // failure and trigger backoff.
+              try {
+                await sqs.deleteMessage(ReceiptHandle)
+              } catch (deleteError) {
+                const errorMessage = isErrorWithMessage(deleteError) ? deleteError.message : 'Unexpected failure'
+                logger.error('Failed to delete message after processing', {
+                  messageHandle: ReceiptHandle,
+                  error: errorMessage
+                })
+              }
+            } else {
+              logger.warn('Skipping delete for message without ReceiptHandle')
+            }
           }
         }
       } catch (error) {
-        // Don't retry if we're stopping
+        // Don't retry if we're stopping — the receive was aborted on purpose.
         if (!isRunning) break
 
-        logger.error(`Error receiving messages from queue: ${error}`)
+        const errorMessage = isErrorWithMessage(error) ? error.message : 'Unexpected failure'
+        logger.error('Error receiving messages from queue', { error: errorMessage })
         consecutiveFailures++
-        const delay = baseRetryDelayMs * Math.min(consecutiveFailures, 8)
+        const delay = computeRetryDelayMs(consecutiveFailures, baseRetryDelayMs, maxRetryDelayMs)
 
-        // Interruptible sleep - check isRunning periodically
+        // Interruptible sleep — the AbortController covers only the in-flight
+        // receiveMessages call, not this retry sleep. We poll `isRunning`
+        // every sleepInterval ms so stop() still causes a prompt exit during
+        // backoff without needing a second abort plumbing path.
         const sleepInterval = 100
         for (let elapsed = 0; elapsed < delay && isRunning; elapsed += sleepInterval) {
           await sleep(Math.min(sleepInterval, delay - elapsed))
         }
+      } finally {
+        receiveAbortController = null
       }
     }
   }
@@ -220,6 +267,12 @@ export const createQueueConsumerComponent = (
   async function stop() {
     logger.info('Stopping messages consumer component')
     isRunning = false
+
+    // Abort any in-flight long-poll so shutdown does not wait up to
+    // WaitTimeSeconds for the current receiveMessages call to return.
+    if (receiveAbortController) {
+      receiveAbortController.abort()
+    }
 
     if (processLoopPromise) {
       await processLoopPromise

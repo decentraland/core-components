@@ -1,7 +1,7 @@
 import { START_COMPONENT, STOP_COMPONENT, ILoggerComponent, IBaseComponent } from '@well-known-components/interfaces'
 import { createLoggerMockedComponent } from '@dcl/core-commons'
 import { IQueueComponent } from '@dcl/sqs-component'
-import { createQueueConsumerComponent } from '../src/component'
+import { createQueueConsumerComponent, computeRetryDelayMs } from '../src/component'
 import { IQueueConsumerComponent } from '../src/types'
 import { Events } from '@dcl/schemas'
 import { createMockSqsComponent } from './mocks/sqs-mock-component'
@@ -489,6 +489,308 @@ describe('when stopping the component with remaining messages', () => {
           error: 'Visibility change failed'
         })
       )
+    })
+  })
+})
+
+// A receiveMessages mock that blocks until the caller's AbortSignal fires,
+// mirroring how the real AWS SDK behaves during long-poll.
+function createAbortableReceiveMock(options: { onReceiveCalled?: (signal?: AbortSignal) => void } = {}) {
+  return jest.fn().mockImplementation(async (_amount?: number, opts?: { abortSignal?: AbortSignal }) => {
+    options.onReceiveCalled?.(opts?.abortSignal)
+    return new Promise((_, reject) => {
+      if (!opts?.abortSignal) {
+        return
+      }
+      const onAbort = () => {
+        const err = new Error('The operation was aborted')
+        err.name = 'AbortError'
+        reject(err)
+      }
+      if (opts.abortSignal.aborted) {
+        onAbort()
+        return
+      }
+      opts.abortSignal.addEventListener('abort', onAbort, { once: true })
+    })
+  })
+}
+
+describe('when configuring the poll batch size', () => {
+  let sqs: jest.Mocked<IQueueComponent>
+  let logs: jest.Mocked<ILoggerComponent>
+  let component: IQueueConsumerComponent
+  let receiveCalled: Promise<void>
+
+  afterEach(async () => {
+    await component[STOP_COMPONENT]!()
+    jest.resetAllMocks()
+  })
+
+  describe('and a custom batchSize is provided', () => {
+    beforeEach(async () => {
+      let resolveReceiveCalled!: () => void
+      receiveCalled = new Promise((resolve) => {
+        resolveReceiveCalled = resolve
+      })
+
+      sqs = createMockSqsComponent({
+        receiveMessages: createAbortableReceiveMock({ onReceiveCalled: () => resolveReceiveCalled() })
+      })
+      logs = createLoggerMockedComponent()
+
+      component = createQueueConsumerComponent({ sqs, logs }, { batchSize: 3 })
+      await component[START_COMPONENT]!(mockStartOptions)
+      await receiveCalled
+    })
+
+    it('should forward it to sqs.receiveMessages', () => {
+      expect(sqs.receiveMessages).toHaveBeenCalledWith(3, expect.anything())
+    })
+  })
+
+  describe('and no batchSize is provided', () => {
+    beforeEach(async () => {
+      let resolveReceiveCalled!: () => void
+      receiveCalled = new Promise((resolve) => {
+        resolveReceiveCalled = resolve
+      })
+
+      sqs = createMockSqsComponent({
+        receiveMessages: createAbortableReceiveMock({ onReceiveCalled: () => resolveReceiveCalled() })
+      })
+      logs = createLoggerMockedComponent()
+
+      component = createQueueConsumerComponent({ sqs, logs })
+      await component[START_COMPONENT]!(mockStartOptions)
+      await receiveCalled
+    })
+
+    it('should default to 10', () => {
+      expect(sqs.receiveMessages).toHaveBeenCalledWith(10, expect.anything())
+    })
+  })
+})
+
+describe('when stopping during a long-poll', () => {
+  let sqs: jest.Mocked<IQueueComponent>
+  let logs: jest.Mocked<ILoggerComponent>
+  let component: IQueueConsumerComponent
+  let receiveCalled: Promise<void>
+  let capturedSignal: AbortSignal | undefined
+
+  beforeEach(async () => {
+    let resolveReceiveCalled!: () => void
+    receiveCalled = new Promise((resolve) => {
+      resolveReceiveCalled = resolve
+    })
+    capturedSignal = undefined
+
+    sqs = createMockSqsComponent({
+      receiveMessages: createAbortableReceiveMock({
+        onReceiveCalled: (signal) => {
+          capturedSignal = signal
+          resolveReceiveCalled()
+        }
+      })
+    })
+    logs = createLoggerMockedComponent()
+
+    component = createQueueConsumerComponent({ sqs, logs })
+    await component[START_COMPONENT]!(mockStartOptions)
+    await receiveCalled
+  })
+
+  afterEach(() => {
+    jest.resetAllMocks()
+  })
+
+  it('should forward an AbortSignal to sqs.receiveMessages', () => {
+    expect(capturedSignal).toBeDefined()
+    expect(capturedSignal!.aborted).toBe(false)
+  })
+
+  it('should abort the in-flight receive so stop can return', async () => {
+    // If the abort path is not plumbed, the mock's never-resolving receive
+    // promise would block stop forever and Jest's default 5s test timeout
+    // would fail this test. We additionally assert the signal was aborted
+    // as direct evidence the plumbing fired.
+    await component[STOP_COMPONENT]!()
+
+    expect(capturedSignal!.aborted).toBe(true)
+  })
+})
+
+describe('when a message is missing a ReceiptHandle', () => {
+  let sqs: jest.Mocked<IQueueComponent>
+  let logs: jest.Mocked<ILoggerComponent>
+  let component: IQueueConsumerComponent
+  let mockLogger: jest.Mocked<ILoggerComponent.ILogger>
+  let warnCalled: Promise<void>
+  let resolveWarnCalled: () => void
+
+  beforeEach(async () => {
+    warnCalled = new Promise((resolve) => {
+      resolveWarnCalled = resolve
+    })
+
+    sqs = createMockSqsComponent({
+      receiveMessages: jest
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            MessageId: 'msg-1',
+            Body: JSON.stringify(createTestMessage())
+            // no ReceiptHandle
+          }
+        ])
+        .mockResolvedValue([])
+    })
+
+    mockLogger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn().mockImplementation(() => {
+        resolveWarnCalled()
+      }),
+      error: jest.fn(),
+      log: jest.fn()
+    }
+    logs = {
+      getLogger: jest.fn().mockReturnValue(mockLogger)
+    }
+
+    component = createQueueConsumerComponent({ sqs, logs })
+    await component[START_COMPONENT]!(mockStartOptions)
+    await warnCalled
+  })
+
+  afterEach(async () => {
+    await component[STOP_COMPONENT]!()
+    jest.resetAllMocks()
+  })
+
+  it('should skip the delete call instead of passing undefined to sqs.deleteMessage', () => {
+    expect(sqs.deleteMessage).not.toHaveBeenCalled()
+  })
+
+  it('should log a warning', () => {
+    expect(mockLogger.warn).toHaveBeenCalledWith('Skipping delete for message without ReceiptHandle')
+  })
+})
+
+describe('when sqs.deleteMessage throws after a successful receive', () => {
+  let sqs: jest.Mocked<IQueueComponent>
+  let logs: jest.Mocked<ILoggerComponent>
+  let component: IQueueConsumerComponent
+  let mockLogger: jest.Mocked<ILoggerComponent.ILogger>
+  let deleteFailed: Promise<void>
+  let resolveDeleteFailed: () => void
+
+  beforeEach(async () => {
+    deleteFailed = new Promise((resolve) => {
+      resolveDeleteFailed = resolve
+    })
+
+    sqs = createMockSqsComponent({
+      receiveMessages: jest
+        .fn()
+        .mockResolvedValueOnce([createSqsMessage(createTestMessage(), 'receipt-1')])
+        .mockResolvedValue([]),
+      deleteMessage: jest.fn().mockRejectedValue(new Error('Delete failed'))
+    })
+
+    mockLogger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn().mockImplementation((message: string) => {
+        if (message === 'Failed to delete message after processing') {
+          resolveDeleteFailed()
+        }
+      }),
+      log: jest.fn()
+    }
+    logs = {
+      getLogger: jest.fn().mockReturnValue(mockLogger)
+    }
+
+    component = createQueueConsumerComponent({ sqs, logs })
+    await component[START_COMPONENT]!(mockStartOptions)
+    await deleteFailed
+  })
+
+  afterEach(async () => {
+    await component[STOP_COMPONENT]!()
+    jest.resetAllMocks()
+  })
+
+  it('should log the delete failure', () => {
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Failed to delete message after processing',
+      expect.objectContaining({
+        messageHandle: 'receipt-1',
+        error: 'Delete failed'
+      })
+    )
+  })
+
+  it('should not treat the delete failure as a receive failure (no backoff entry)', () => {
+    expect(mockLogger.error).not.toHaveBeenCalledWith(expect.stringContaining('Error receiving messages from queue'))
+  })
+})
+
+describe('when computing the retry delay', () => {
+  const baseRetryDelayMs = 1000
+  const maxRetryDelayMs = 30_000
+
+  describe('and there have been no failures yet', () => {
+    it('should return zero', () => {
+      expect(computeRetryDelayMs(0, baseRetryDelayMs, maxRetryDelayMs, 0.5)).toBe(0)
+      expect(computeRetryDelayMs(-1, baseRetryDelayMs, maxRetryDelayMs, 0.5)).toBe(0)
+    })
+  })
+
+  describe('and the random jitter is at its lowest', () => {
+    it('should return half of the exponential ceiling (not zero) to guarantee a non-tight retry loop', () => {
+      // Equal jitter: delay in [exp/2, exp). With random=0, delay = exp/2.
+      expect(computeRetryDelayMs(1, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(500)
+      expect(computeRetryDelayMs(2, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(1000)
+      expect(computeRetryDelayMs(3, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(2000)
+      // Once the exponential caps at maxRetryDelayMs, floor is maxRetryDelayMs/2.
+      expect(computeRetryDelayMs(100, baseRetryDelayMs, maxRetryDelayMs, 0)).toBe(15_000)
+    })
+  })
+
+  describe('and the random jitter is near its highest', () => {
+    const almostOne = 1 - Number.EPSILON
+
+    it('should grow exponentially at low failure counts', () => {
+      // With jitter ≈ 1, delay approaches the exponential ceiling.
+      expect(computeRetryDelayMs(1, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(999)
+      expect(computeRetryDelayMs(2, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(1999)
+      expect(computeRetryDelayMs(3, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(3999)
+      expect(computeRetryDelayMs(4, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(7999)
+    })
+
+    it('should cap at maxRetryDelayMs once the exponential exceeds it', () => {
+      // 2 ** 14 * 1000 = 16_384_000ms > 30_000ms, must be clamped.
+      for (const failures of [10, 20, 50, 100, 1000]) {
+        expect(computeRetryDelayMs(failures, baseRetryDelayMs, maxRetryDelayMs, almostOne)).toBe(29_999)
+      }
+    })
+  })
+
+  describe('and the random jitter is somewhere in between', () => {
+    it('should stay within [ceiling/2, ceiling) for the given failure count', () => {
+      for (const failures of [1, 2, 5, 10, 50]) {
+        const ceiling = Math.min(baseRetryDelayMs * 2 ** (failures - 1), maxRetryDelayMs)
+        for (const random of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+          const delay = computeRetryDelayMs(failures, baseRetryDelayMs, maxRetryDelayMs, random)
+          expect(delay).toBeGreaterThanOrEqual(ceiling / 2)
+          expect(delay).toBeLessThan(ceiling)
+        }
+      }
     })
   })
 })

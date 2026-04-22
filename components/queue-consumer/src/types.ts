@@ -13,6 +13,12 @@ export interface IQueueConsumerOptions {
    * @default 0
    */
   releaseVisibilityTimeoutSeconds?: number
+
+  /**
+   * Maximum number of messages to pull from the queue on each poll.
+   * @default 10
+   */
+  batchSize?: number
 }
 
 export interface IQueueConsumerComponent extends IBaseComponent {
