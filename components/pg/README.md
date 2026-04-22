@@ -85,6 +85,26 @@ await pg.withAsyncContextTransaction(async () => {
 })
 ```
 
+#### Do not run concurrent queries inside `withAsyncContextTransaction`
+
+All `pg.query()` calls inside the callback share the single `Client` held by the async context. Running them in parallel (e.g. `Promise.all`) will issue concurrent commands on the same connection, which `pg` does not support and will fail or corrupt state:
+
+```typescript
+// ❌ WRONG - concurrent queries on the same transaction client
+await pg.withAsyncContextTransaction(async () => {
+  await Promise.all([
+    pg.query(SQL`INSERT INTO users (name) VALUES ('Alice')`),
+    pg.query(SQL`INSERT INTO users (name) VALUES ('Bob')`)
+  ])
+})
+
+// ✅ CORRECT - await queries sequentially
+await pg.withAsyncContextTransaction(async () => {
+  await pg.query(SQL`INSERT INTO users (name) VALUES ('Alice')`)
+  await pg.query(SQL`INSERT INTO users (name) VALUES ('Bob')`)
+})
+```
+
 #### Nesting transactions creates independent transactions
 
 Calling `withTransaction` or `withAsyncContextTransaction` inside another transaction method will create **independent transactions**, not nested transactions. Each call acquires a new connection from the pool:
@@ -143,10 +163,12 @@ Environment variables read by the component:
 | `PG_COMPONENT_PSQL_DATABASE`          | `string` | Database name                            |
 | `PG_COMPONENT_PSQL_USER`              | `string` | Database user                            |
 | `PG_COMPONENT_PSQL_PASSWORD`          | `string` | Database password                        |
-| `PG_COMPONENT_IDLE_TIMEOUT`           | `number` | Idle connection timeout (ms)             |
-| `PG_COMPONENT_QUERY_TIMEOUT`          | `number` | Query timeout (ms)                       |
-| `PG_COMPONENT_STREAM_QUERY_TIMEOUT`   | `number` | Stream query timeout (ms)                |
-| `PG_COMPONENT_GRACE_PERIODS`          | `number` | Grace periods for shutdown (default: 10) |
+| `PG_COMPONENT_IDLE_TIMEOUT`           | `number` | Idle connection timeout (ms)                                                         |
+| `PG_COMPONENT_QUERY_TIMEOUT`          | `number` | Query timeout (ms)                                                                   |
+| `PG_COMPONENT_STREAM_QUERY_TIMEOUT`   | `number` | Stream query timeout (ms); falls back to `PG_COMPONENT_QUERY_TIMEOUT` when unset     |
+| `PG_COMPONENT_CONNECTION_TIMEOUT`     | `number` | How long `pool.connect()` waits for a TCP connection before failing (ms)             |
+| `PG_COMPONENT_GRACE_PERIODS`          | `number` | Grace periods for shutdown (default: 10)                                             |
+| `PG_COMPONENT_STOP_TIMEOUT`           | `number` | Upper bound (ms) for `stop()` to drain the pool before abandoning it (default: 30000) |
 
 ## Metrics
 

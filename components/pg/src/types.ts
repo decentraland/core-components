@@ -31,7 +31,7 @@ export type Options = Partial<{ pool: PoolConfig; migration: Omit<RunnerOption, 
 export interface IPgComponent extends IDatabase {
   start(): Promise<void>
 
-  query<T extends Record<string, any>>(sql: string): Promise<QueryResult<T>>
+  query<T extends Record<string, any>>(sql: string, durationQueryNameLabel?: string): Promise<QueryResult<T>>
   query<T extends Record<string, any>>(sql: SQLStatement, durationQueryNameLabel?: string): Promise<QueryResult<T>>
   streamQuery<T = any>(sql: SQLStatement, config?: { batchSize?: number }): AsyncGenerator<T>
   /**
@@ -56,6 +56,9 @@ export interface IPgComponent extends IDatabase {
    * @warning Nesting transaction methods (calling `withTransaction` or `withAsyncContextTransaction`
    * inside this callback) will create independent transactions, not nested transactions.
    * Each call acquires a new connection from the pool.
+   *
+   * @warning Queries executed concurrently inside the callback (e.g. via `Promise.all`) share a
+   * single pg `Client` and are not supported. Await queries sequentially within the transaction.
    */
   withAsyncContextTransaction<T>(callback: () => Promise<T>): Promise<T>
 
