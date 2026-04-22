@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@dcl/core-commons": "workspace:*",
-    "@well-known-components/interfaces": "^1.5.2"
+    "@well-known-components/interfaces": "^1.5.2",
+    "cron-parser": "^5.0.0"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
