@@ -10,6 +10,7 @@ This repository is organized as a monorepo using pnpm workspaces with the follow
 core-components/
 ├── components/          # Reusable components
 │   ├── analytics/        # Analytics component for event tracking
+│   ├── block-indexer/    # On-chain block indexer component
 │   ├── http-server/      # HTTP server component
 │   ├── job/              # Job scheduling and execution component
 │   ├── memory-cache/     # In-memory LRU cache component
@@ -57,6 +58,10 @@ core-components/
 ### Database
 
 - **PG Component** (`@dcl/pg-component`) - PostgreSQL database with connection pooling, transactions, and migrations
+
+### Blockchain
+
+- **Block Indexer** (`@dcl/block-indexer`) - On-chain block indexer that finds the block at the tip of the blockchain for a given timestamp
 
 ### Utilities
 
@@ -140,6 +145,7 @@ Testing is configured with Jest and `ts-jest` for TypeScript support. The config
 This project uses [Changesets](https://github.com/changesets/changesets) for automated version management and publishing to npm. All packages are published under the `@dcl` scope:
 
 - `@dcl/analytics-component`
+- `@dcl/block-indexer`
 - `@dcl/http-server`
 - `@dcl/job-component`
 - `@dcl/memory-cache-component`
