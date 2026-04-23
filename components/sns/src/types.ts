@@ -1,4 +1,4 @@
-import { PublishCommandOutput } from '@aws-sdk/client-sns'
+import type { PublishCommandOutput } from '@aws-sdk/client-sns'
 
 export interface MessageAttribute {
   DataType: string
