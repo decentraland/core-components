@@ -15,7 +15,10 @@ import {
 import { IS3Component } from './types'
 
 const S3_LIST_PAGE_SIZE = 1000
-const MULTIPLE_EXISTS_CONCURRENCY = 50
+// Upper bound on keys processed per `Promise.all` group in `multipleObjectsExist`.
+// Matches AWS SDK v3's default `maxSockets` per host, so the in-flight HeadObject
+// requests from one batch can use the full pool without queuing.
+const MULTIPLE_EXISTS_BATCH_SIZE = 50
 
 /**
  * Checks whether an error from the S3 SDK represents a missing object.
@@ -40,11 +43,27 @@ function buildRangeHeader(start?: number, end?: number): string | undefined {
   return `bytes=${start ?? ''}-${end ?? ''}`
 }
 
+const VALID_SERVER_SIDE_ENCRYPTION = new Set<string>(Object.values(ServerSideEncryption))
+
+function parseServerSideEncryption(raw: string | undefined): ServerSideEncryption | undefined {
+  if (!raw) {
+    return undefined
+  }
+  if (!VALID_SERVER_SIDE_ENCRYPTION.has(raw)) {
+    throw new Error(
+      `Invalid AWS_S3_SERVER_SIDE_ENCRYPTION: "${raw}". Expected one of: ${Array.from(VALID_SERVER_SIDE_ENCRYPTION).join(', ')}.`
+    )
+  }
+  return raw as ServerSideEncryption
+}
+
 export async function createS3Component({ config }: { config: IConfigComponent }): Promise<IS3Component> {
   const bucketName = await config.requireString('AWS_S3_BUCKET_NAME')
   const optionalEndpoint = await config.getString('AWS_S3_ENDPOINT')
   const region = await config.getString('AWS_REGION')
-  const defaultServerSideEncryption = await config.getString('AWS_S3_SERVER_SIDE_ENCRYPTION')
+  const defaultServerSideEncryption = parseServerSideEncryption(
+    await config.getString('AWS_S3_SERVER_SIDE_ENCRYPTION')
+  )
 
   const client = new S3Client({
     endpoint: optionalEndpoint || undefined,
@@ -58,7 +77,7 @@ export async function createS3Component({ config }: { config: IConfigComponent }
     contentType?: string,
     options?: { serverSideEncryption?: ServerSideEncryption }
   ): Promise<{ ETag?: string }> {
-    const sse = options?.serverSideEncryption ?? (defaultServerSideEncryption as ServerSideEncryption | undefined)
+    const sse = options?.serverSideEncryption ?? defaultServerSideEncryption
 
     const command = new PutObjectCommand({
       Bucket: bucketName,
@@ -241,8 +260,8 @@ export async function createS3Component({ config }: { config: IConfigComponent }
   async function multipleObjectsExist(keys: string[]): Promise<Record<string, boolean>> {
     const results: Record<string, boolean> = {}
 
-    for (let i = 0; i < keys.length; i += MULTIPLE_EXISTS_CONCURRENCY) {
-      const batch = keys.slice(i, i + MULTIPLE_EXISTS_CONCURRENCY)
+    for (let i = 0; i < keys.length; i += MULTIPLE_EXISTS_BATCH_SIZE) {
+      const batch = keys.slice(i, i + MULTIPLE_EXISTS_BATCH_SIZE)
       await Promise.all(
         batch.map(async (key) => {
           results[key] = await objectExists(key)

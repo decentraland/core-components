@@ -1049,3 +1049,58 @@ describe('when checking if multiple objects exist', () => {
     })
   })
 })
+
+describe('when creating the component with AWS_S3_SERVER_SIDE_ENCRYPTION configured', () => {
+  let sseConfig: IConfigComponent
+
+  describe('and the value matches a known AWS SDK enum value', () => {
+    describe.each(['AES256', 'aws:kms', 'aws:kms:dsse'])('and the value is %p', (validValue) => {
+      beforeEach(() => {
+        sseConfig = createConfigMockedComponent({
+          requireString: jest.fn().mockImplementation((key: string) => {
+            if (key === 'AWS_S3_BUCKET_NAME') return bucketName
+            throw new Error(`Unknown key: ${key}`)
+          }),
+          getString: jest.fn().mockImplementation((key: string) => {
+            if (key === 'AWS_S3_SERVER_SIDE_ENCRYPTION') return validValue
+            if (key === 'AWS_REGION') return 'us-east-1'
+            return undefined
+          })
+        })
+      })
+
+      it('should create the component and apply the encryption to uploads without an explicit option', async () => {
+        const sseComponent = await createS3Component({ config: sseConfig })
+        sendMock.mockResolvedValueOnce({ ETag: '"abc123"' })
+
+        await sseComponent.uploadObject('k', 'body')
+
+        expect(sendMock.mock.calls[0][0].input).toEqual(
+          expect.objectContaining({ ServerSideEncryption: validValue })
+        )
+      })
+    })
+  })
+
+  describe('and the value does not match any known AWS SDK enum value', () => {
+    beforeEach(() => {
+      sseConfig = createConfigMockedComponent({
+        requireString: jest.fn().mockImplementation((key: string) => {
+          if (key === 'AWS_S3_BUCKET_NAME') return bucketName
+          throw new Error(`Unknown key: ${key}`)
+        }),
+        getString: jest.fn().mockImplementation((key: string) => {
+          if (key === 'AWS_S3_SERVER_SIDE_ENCRYPTION') return 'aes256'
+          if (key === 'AWS_REGION') return 'us-east-1'
+          return undefined
+        })
+      })
+    })
+
+    it('should reject at startup with a message listing the accepted values', async () => {
+      await expect(createS3Component({ config: sseConfig })).rejects.toThrow(
+        /Invalid AWS_S3_SERVER_SIDE_ENCRYPTION: "aes256"\. Expected one of: .*AES256/
+      )
+    })
+  })
+})
