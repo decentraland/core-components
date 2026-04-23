@@ -1,3 +1,4 @@
+import { Readable } from 'stream'
 import { IConfigComponent } from '@well-known-components/interfaces'
 import {
   S3Client,
@@ -6,52 +7,44 @@ import {
   DeleteObjectCommand,
   ListObjectsV2Command,
   HeadObjectCommand,
+  ServerSideEncryption,
   NoSuchKey,
   NotFound
 } from '@aws-sdk/client-s3'
 
 import { IS3Component } from './types'
 
+const S3_LIST_PAGE_SIZE = 1000
+const MULTIPLE_EXISTS_CONCURRENCY = 50
+
 /**
- * Helper function to check if an error is a "not found" error from S3
- * 
- * Handles multiple scenarios:
- * - NoSuchKey: Object doesn't exist in bucket
- * - NotFound: Generic 404 response
- * - HTTP 404: Catch-all for LocalStack/MinIO or unrecognized error formats
- * 
- * Note: Does NOT handle AccessDenied (403) - S3 returns 403 even when object
- * doesn't exist if you lack permissions (security feature to prevent enumeration)
+ * Checks whether an error from the S3 SDK represents a missing object.
+ * Does NOT handle AccessDenied (403) — S3 returns 403 even when the object
+ * does not exist if the caller lacks permissions (anti-enumeration behavior).
  */
 function isNotFoundError(error: unknown): boolean {
-  // Fast path: Check specific AWS SDK error classes
   if (error instanceof NoSuchKey || error instanceof NotFound) {
     return true
   }
-
-  // Fallback: Check HTTP status code for any 404 response
-  // This handles serialized errors, LocalStack, MinIO, and edge cases
-  if (error && typeof error === 'object' && 'name' in error) {
-    const err = error as { name: string; $metadata?: { httpStatusCode?: number } }
-    
-    // Check both error name (for string-based errors) and HTTP status code
-    if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
-      return true
-    }
-    
-    // HTTP 404 is the definitive "not found" indicator
-    if (err.$metadata?.httpStatusCode === 404) {
-      return true
-    }
+  if (error && typeof error === 'object') {
+    const err = error as { name?: string; $metadata?: { httpStatusCode?: number } }
+    return err.name === 'NoSuchKey' || err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404
   }
-
   return false
+}
+
+function buildRangeHeader(start?: number, end?: number): string | undefined {
+  if (start === undefined && end === undefined) {
+    return undefined
+  }
+  return `bytes=${start ?? ''}-${end ?? ''}`
 }
 
 export async function createS3Component({ config }: { config: IConfigComponent }): Promise<IS3Component> {
   const bucketName = await config.requireString('AWS_S3_BUCKET_NAME')
   const optionalEndpoint = await config.getString('AWS_S3_ENDPOINT')
   const region = await config.getString('AWS_REGION')
+  const defaultServerSideEncryption = await config.getString('AWS_S3_SERVER_SIDE_ENCRYPTION')
 
   const client = new S3Client({
     endpoint: optionalEndpoint || undefined,
@@ -61,14 +54,18 @@ export async function createS3Component({ config }: { config: IConfigComponent }
 
   async function uploadObject(
     key: string,
-    body: string | Buffer,
-    contentType?: string
+    body: string | Buffer | Readable,
+    contentType?: string,
+    options?: { serverSideEncryption?: ServerSideEncryption }
   ): Promise<{ ETag?: string }> {
+    const sse = options?.serverSideEncryption ?? (defaultServerSideEncryption as ServerSideEncryption | undefined)
+
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: key,
       Body: body,
-      ContentType: contentType
+      ContentType: contentType,
+      ServerSideEncryption: sse
     })
 
     const response = await client.send(command)
@@ -88,8 +85,7 @@ export async function createS3Component({ config }: { config: IConfigComponent }
         return null
       }
 
-      const bodyContents = await response.Body.transformToString()
-      return bodyContents
+      return await response.Body.transformToString()
     } catch (error: unknown) {
       if (isNotFoundError(error)) {
         return null
@@ -112,6 +108,9 @@ export async function createS3Component({ config }: { config: IConfigComponent }
       }
 
       const bodyContents = await response.Body.transformToString()
+      if (!bodyContents) {
+        return null
+      }
       return JSON.parse(bodyContents) as T
     } catch (error: unknown) {
       if (isNotFoundError(error)) {
@@ -145,15 +144,15 @@ export async function createS3Component({ config }: { config: IConfigComponent }
   }
 
   async function downloadObjectAsStream(
-    key: string, 
-    start?: number, 
+    key: string,
+    start?: number,
     end?: number
   ): Promise<AsyncIterable<Uint8Array> | null> {
     try {
       const command = new GetObjectCommand({
         Bucket: bucketName,
         Key: key,
-        Range: start !== undefined && end !== undefined ? `bytes=${start}-${end}` : undefined
+        Range: buildRangeHeader(start, end)
       })
 
       const response = await client.send(command)
@@ -180,15 +179,30 @@ export async function createS3Component({ config }: { config: IConfigComponent }
     await client.send(command)
   }
 
-  async function listObjects(prefix?: string, maxKeys: number = 1000): Promise<string[]> {
-    const command = new ListObjectsV2Command({
-      Bucket: bucketName,
-      Prefix: prefix,
-      MaxKeys: maxKeys
-    })
+  async function listObjects(prefix?: string, maxKeys: number = S3_LIST_PAGE_SIZE): Promise<string[]> {
+    const keys: string[] = []
+    let continuationToken: string | undefined
 
-    const response = await client.send(command)
-    return response.Contents?.map((obj) => obj.Key || '').filter((key) => key !== '') || []
+    while (keys.length < maxKeys) {
+      const command = new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: prefix,
+        MaxKeys: Math.min(maxKeys - keys.length, S3_LIST_PAGE_SIZE),
+        ContinuationToken: continuationToken
+      })
+
+      const response = await client.send(command)
+      const pageKeys =
+        response.Contents?.map((obj) => obj.Key).filter((k): k is string => typeof k === 'string' && k.length > 0) || []
+      keys.push(...pageKeys)
+
+      if (!response.IsTruncated || !response.NextContinuationToken) {
+        break
+      }
+      continuationToken = response.NextContinuationToken
+    }
+
+    return keys.slice(0, maxKeys)
   }
 
   async function getObjectMetadata(key: string): Promise<{
@@ -227,12 +241,14 @@ export async function createS3Component({ config }: { config: IConfigComponent }
   async function multipleObjectsExist(keys: string[]): Promise<Record<string, boolean>> {
     const results: Record<string, boolean> = {}
 
-    // Check all objects in parallel
-    await Promise.all(
-      keys.map(async (key) => {
-        results[key] = await objectExists(key)
-      })
-    )
+    for (let i = 0; i < keys.length; i += MULTIPLE_EXISTS_CONCURRENCY) {
+      const batch = keys.slice(i, i + MULTIPLE_EXISTS_CONCURRENCY)
+      await Promise.all(
+        batch.map(async (key) => {
+          results[key] = await objectExists(key)
+        })
+      )
+    }
 
     return results
   }
@@ -250,4 +266,3 @@ export async function createS3Component({ config }: { config: IConfigComponent }
     multipleObjectsExist
   }
 }
-

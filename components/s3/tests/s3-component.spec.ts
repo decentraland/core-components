@@ -7,6 +7,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  PutObjectCommand
 } from '@aws-sdk/client-s3'
 import { setupS3Mocks, setMockS3Client } from './mocks'
 
@@ -101,6 +102,27 @@ describe('when uploading objects', () => {
         Body: body,
         ContentType: contentType
       })
+    })
+  })
+
+  describe('and server-side encryption is requested via options', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ ETag: '"abc123"' })
+    })
+
+    it('should include the ServerSideEncryption parameter in the PutObjectCommand', async () => {
+      await component.uploadObject(key, body, contentType, { serverSideEncryption: 'AES256' })
+
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual(
+        expect.objectContaining({
+          Bucket: bucketName,
+          Key: key,
+          Body: body,
+          ContentType: contentType,
+          ServerSideEncryption: 'AES256'
+        })
+      )
     })
   })
 
@@ -323,6 +345,22 @@ describe('when downloading objects as JSON', () => {
       expect(result).toBeNull()
     })
   })
+
+  describe('and the object body is an empty string', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({
+        Body: {
+          transformToString: jest.fn().mockResolvedValue('')
+        }
+      })
+    })
+
+    it('should return null instead of throwing a JSON.parse error', async () => {
+      const result = await component.downloadObjectAsJson(key)
+
+      expect(result).toBeNull()
+    })
+  })
 })
 
 describe('when downloading objects as buffer', () => {
@@ -438,6 +476,42 @@ describe('when downloading objects as stream', () => {
           Bucket: bucketName,
           Key: key,
           Range: 'bytes=0-1023'
+        })
+      )
+    })
+  })
+
+  describe('and downloading with only a start byte (open-ended range)', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ Body: mockStream })
+    })
+
+    it('should send GetObjectCommand with an open-ended range header', async () => {
+      await component.downloadObjectAsStream(key, 500)
+
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key,
+          Range: 'bytes=500-'
+        })
+      )
+    })
+  })
+
+  describe('and downloading with only an end byte (suffix range)', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ Body: mockStream })
+    })
+
+    it('should send GetObjectCommand with a suffix range header', async () => {
+      await component.downloadObjectAsStream(key, undefined, 500)
+
+      expect(sendMock).toHaveBeenCalledWith(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key,
+          Range: 'bytes=-500'
         })
       )
     })
@@ -653,7 +727,43 @@ describe('when listing objects', () => {
         new ListObjectsV2Command({
           Bucket: bucketName,
           Prefix: undefined,
-          MaxKeys: 1000
+          MaxKeys: 1000,
+          ContinuationToken: undefined
+        })
+      )
+    })
+  })
+
+  describe('and the total number of objects exceeds a single S3 page', () => {
+    let firstPageKeys: string[]
+    let secondPageKeys: string[]
+
+    beforeEach(() => {
+      firstPageKeys = Array.from({ length: 1000 }, (_, i) => `file-${i}.txt`)
+      secondPageKeys = Array.from({ length: 500 }, (_, i) => `file-${1000 + i}.txt`)
+      sendMock
+        .mockResolvedValueOnce({
+          Contents: firstPageKeys.map((Key) => ({ Key })),
+          IsTruncated: true,
+          NextContinuationToken: 'token-1'
+        })
+        .mockResolvedValueOnce({
+          Contents: secondPageKeys.map((Key) => ({ Key })),
+          IsTruncated: false
+        })
+    })
+
+    it('should paginate using the continuation token and return all keys up to maxKeys', async () => {
+      const result = await component.listObjects(undefined, 2000)
+
+      expect(result).toHaveLength(1500)
+      expect(result[0]).toBe('file-0.txt')
+      expect(result[1499]).toBe('file-1499.txt')
+      expect(sendMock).toHaveBeenCalledTimes(2)
+      expect(sendMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          input: expect.objectContaining({ ContinuationToken: 'token-1' })
         })
       )
     })

@@ -1,12 +1,21 @@
+import type { Readable } from 'stream'
+import type { ServerSideEncryption } from '@aws-sdk/client-s3'
+
 export interface IS3Component {
   /**
    * Uploads an object to S3.
    * @param key - The key (path) where the object will be stored.
-   * @param body - The content to upload (string, Buffer, or stream).
+   * @param body - The content to upload (string, Buffer, or Readable stream).
    * @param contentType - Optional content type (MIME type).
+   * @param options - Optional upload options (e.g. server-side encryption).
    * @returns Promise resolving to the upload result with ETag.
    */
-  uploadObject(key: string, body: string | Buffer, contentType?: string): Promise<{ ETag?: string }>
+  uploadObject(
+    key: string,
+    body: string | Buffer | Readable,
+    contentType?: string,
+    options?: { serverSideEncryption?: ServerSideEncryption }
+  ): Promise<{ ETag?: string }>
 
   /**
    * Downloads an object from S3 as a string.
