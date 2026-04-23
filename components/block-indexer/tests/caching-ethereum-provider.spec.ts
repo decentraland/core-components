@@ -1,42 +1,112 @@
 import { createCachingEthereumProvider, EthereumProvider } from "../src"
 
-const createEthereumMock = (): EthereumProvider => ({
-  getBlock: jest.fn().mockImplementation((block) => ({ timestamp: 10 * block })),
-  getBlockNumber: jest.fn().mockReturnValue(9),
-})
+type MockEthereumProvider = {
+  getBlock: jest.Mock
+  getBlockNumber: jest.Mock
+}
 
-describe("caching-ethereum-provider", () => {
-  it("getBlockNumber is never cached", async () => {
-    const eth = createEthereumMock()
-    const cachingEth = createCachingEthereumProvider(eth)
+describe("when using the caching ethereum provider", () => {
+  let eth: MockEthereumProvider
+  let cachingEth: EthereumProvider
 
-    expect(await cachingEth.getBlockNumber()).toBe(9)
-    expect(await cachingEth.getBlockNumber()).toBe(9)
-    expect(await cachingEth.getBlockNumber()).toBe(9)
-    expect(await cachingEth.getBlockNumber()).toBe(9)
-
-    expect(eth.getBlockNumber).toHaveBeenCalledTimes(4)
+  afterEach(() => {
+    jest.resetAllMocks()
   })
 
-  it("getBlock is cached for each block", async () => {
-    const eth = createEthereumMock()
-    const cachingEth = createCachingEthereumProvider(eth)
+  describe("and calling getBlockNumber multiple times", () => {
+    beforeEach(() => {
+      eth = {
+        getBlock: jest.fn(),
+        getBlockNumber: jest.fn().mockResolvedValue(9),
+      }
+      cachingEth = createCachingEthereumProvider(eth)
+    })
 
-    expect(await cachingEth.getBlock(1)).toEqual({ timestamp: 10 })
-    expect(await cachingEth.getBlock(1)).toEqual({ timestamp: 10 })
-    expect(await cachingEth.getBlock(1)).toEqual({ timestamp: 10 })
-    expect(await cachingEth.getBlock(1)).toEqual({ timestamp: 10 })
-    expect(eth.getBlock).toHaveBeenCalledTimes(1)
+    it("should delegate to the underlying provider on every call without caching", async () => {
+      await cachingEth.getBlockNumber()
+      await cachingEth.getBlockNumber()
+      await cachingEth.getBlockNumber()
+      await cachingEth.getBlockNumber()
+      expect(eth.getBlockNumber).toHaveBeenCalledTimes(4)
+    })
+  })
 
-    expect(await cachingEth.getBlock(2)).toEqual({ timestamp: 20 })
-    expect(await cachingEth.getBlock(2)).toEqual({ timestamp: 20 })
-    expect(eth.getBlock).toHaveBeenCalledTimes(2)
+  describe("and calling getBlock", () => {
+    describe("and the same block is requested multiple times", () => {
+      beforeEach(() => {
+        eth = {
+          getBlock: jest
+            .fn()
+            .mockImplementation((block: number) => Promise.resolve({ timestamp: 10 * block })),
+          getBlockNumber: jest.fn(),
+        }
+        cachingEth = createCachingEthereumProvider(eth)
+      })
 
-    expect(await cachingEth.getBlock(1)).toEqual({ timestamp: 10 })
-    expect(await cachingEth.getBlock(2)).toEqual({ timestamp: 20 })
-    expect(eth.getBlock).toHaveBeenCalledTimes(2)
+      it("should serve subsequent requests from the cache without re-querying the provider", async () => {
+        const first = await cachingEth.getBlock(1)
+        const second = await cachingEth.getBlock(1)
+        const third = await cachingEth.getBlock(1)
 
-    expect(await cachingEth.getBlock(3)).toEqual({ timestamp: 30 })
-    expect(eth.getBlock).toHaveBeenCalledTimes(3)
+        expect(first).toEqual({ timestamp: 10 })
+        expect(second).toEqual({ timestamp: 10 })
+        expect(third).toEqual({ timestamp: 10 })
+        expect(eth.getBlock).toHaveBeenCalledTimes(1)
+      })
+    })
+
+    describe("and different blocks are requested", () => {
+      beforeEach(() => {
+        eth = {
+          getBlock: jest
+            .fn()
+            .mockImplementation((block: number) => Promise.resolve({ timestamp: 10 * block })),
+          getBlockNumber: jest.fn(),
+        }
+        cachingEth = createCachingEthereumProvider(eth)
+      })
+
+      it("should cache each block independently and query the provider once per unique block", async () => {
+        expect(await cachingEth.getBlock(1)).toEqual({ timestamp: 10 })
+        expect(await cachingEth.getBlock(2)).toEqual({ timestamp: 20 })
+        expect(await cachingEth.getBlock(3)).toEqual({ timestamp: 30 })
+        expect(await cachingEth.getBlock(1)).toEqual({ timestamp: 10 })
+        expect(await cachingEth.getBlock(2)).toEqual({ timestamp: 20 })
+        expect(await cachingEth.getBlock(3)).toEqual({ timestamp: 30 })
+
+        expect(eth.getBlock).toHaveBeenCalledTimes(3)
+      })
+    })
+
+    describe("and the underlying provider returns a falsy block", () => {
+      beforeEach(() => {
+        eth = {
+          getBlock: jest.fn().mockResolvedValue(null),
+          getBlockNumber: jest.fn(),
+        }
+        cachingEth = createCachingEthereumProvider(eth)
+      })
+
+      it("should reject with a 'Block could not be retrieved' error", async () => {
+        await expect(cachingEth.getBlock(42)).rejects.toThrow("Block 42 could not be retrieved.")
+      })
+    })
+
+    describe("and the underlying provider rejects", () => {
+      let underlyingError: Error
+
+      beforeEach(() => {
+        underlyingError = new Error("RPC unavailable")
+        eth = {
+          getBlock: jest.fn().mockRejectedValue(underlyingError),
+          getBlockNumber: jest.fn(),
+        }
+        cachingEth = createCachingEthereumProvider(eth)
+      })
+
+      it("should propagate the underlying provider error to the caller", async () => {
+        await expect(cachingEth.getBlock(7)).rejects.toThrow("RPC unavailable")
+      })
+    })
   })
 })
