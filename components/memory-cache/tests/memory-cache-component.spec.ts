@@ -1,6 +1,10 @@
 import { createInMemoryCacheComponent } from '../src/component'
 import { ICacheStorageComponent, LockNotAcquiredError, LockNotReleasedError, sleep } from '@dcl/core-commons'
 
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
 let component: ICacheStorageComponent
 
 beforeEach(() => {
@@ -594,5 +598,732 @@ describe('when trying to release locks', () => {
 
       expect(result).toBe(false)
     })
+  })
+})
+
+describe('when matching keys with glob patterns', () => {
+  describe('and a literal-looking dot appears in the pattern', () => {
+    beforeEach(async () => {
+      // The dot is a regex metacharacter; without escaping, the pattern
+      // `user.id:*` would also match `userXid:123`.
+      await component.set('user.id:1', 'ok')
+      await component.set('userXid:1', 'also-ok')
+    })
+
+    it('should treat the dot literally and not match an arbitrary character in its position', async () => {
+      const result = await component.keys('user.id:*')
+
+      expect(result).toContain('user.id:1')
+      expect(result).not.toContain('userXid:1')
+    })
+  })
+
+  describe('and another key shares the pattern prefix but with extra leading characters', () => {
+    beforeEach(async () => {
+      await component.set('user:123', 'ok')
+      await component.set('admin_user:456', 'should-not-match')
+    })
+
+    it('should not match the key that only contains the pattern as a substring', async () => {
+      const result = await component.keys('user:*')
+
+      expect(result).toContain('user:123')
+      expect(result).not.toContain('admin_user:456')
+    })
+  })
+
+  describe('and another key shares the pattern but with extra trailing characters beyond the glob', () => {
+    beforeEach(async () => {
+      await component.set('prefix', 'ok')
+      await component.set('prefix-extra', 'also-ok')
+    })
+
+    it('should only return the exact-match key when the pattern has no glob', async () => {
+      const result = await component.keys('prefix')
+
+      expect(result).toContain('prefix')
+      expect(result).not.toContain('prefix-extra')
+    })
+  })
+})
+
+describe('when a stored value happens to be null', () => {
+  const dataKey = 'shared-key-with-null-value'
+
+  beforeEach(async () => {
+    // A caller legitimately stored `null`. acquireLock must not treat
+    // that slot as free; doing so would overwrite user data.
+    await component.set(dataKey, null)
+  })
+
+  it('should not allow acquireLock to overwrite the stored null as if it were an unlocked slot', async () => {
+    await expect(
+      component.acquireLock(dataKey, { retries: 2, retryDelayInMilliseconds: 10 })
+    ).rejects.toThrow(LockNotAcquiredError)
+
+    // The original null must still be there.
+    const result = await component.get(dataKey)
+    expect(result).toBeNull()
+  })
+})
+
+describe('when setting fields in a hash that already has a TTL', () => {
+  const hashKey = 'hash-with-ttl'
+
+  describe('and a subsequent setInHash omits the TTL', () => {
+    beforeEach(async () => {
+      // Short TTL (50 ms) so we can observe preservation vs reset.
+      await component.setInHash(hashKey, 'first', { a: 1 }, 0.05)
+      // Halfway through the TTL.
+      await sleep(30)
+      await component.setInHash(hashKey, 'second', { b: 2 })
+    })
+
+    it('should preserve the original expiry rather than resetting it', async () => {
+      // Total elapsed so far: ~30 ms. The original TTL was 50 ms, so the
+      // entry should expire shortly after this sleep. If the second
+      // setInHash had reset the TTL to the cache's 1-hour default, the
+      // hash would still be here 30 ms later.
+      await sleep(40)
+
+      const fields = await component.getAllHashFields(hashKey)
+      expect(fields).toEqual({})
+    })
+  })
+
+  describe('and a subsequent setInHash supplies a non-positive TTL', () => {
+    beforeEach(async () => {
+      await component.setInHash(hashKey, 'first', { a: 1 }, 60)
+      await component.setInHash(hashKey, 'second', { b: 2 }, 0)
+      await component.setInHash(hashKey, 'third', { c: 3 }, -1)
+    })
+
+    it('should ignore the zero / negative TTL just like the Redis implementation', async () => {
+      const fields = await component.getAllHashFields(hashKey)
+      expect(fields).toEqual({ first: { a: 1 }, second: { b: 2 }, third: { c: 3 } })
+    })
+  })
+})
+
+describe('when set is called without a TTL', () => {
+  // Before this fix, omitting a TTL meant the entry silently inherited
+  // the cache's hardcoded 1-hour default. Redis SET without EX is
+  // persistent; we now match that.
+  it('should store the value persistently rather than inheriting a default TTL', async () => {
+    const key = 'persistent-key'
+    await component.set(key, 'value-that-should-not-expire')
+
+    // Let the event loop tick; no wall-clock TTL comparison needed here.
+    await settle()
+
+    const result = await component.get(key)
+    expect(result).toBe('value-that-should-not-expire')
+  })
+
+  describe('and the key previously had a TTL', () => {
+    it('should clear the previous TTL so the new value survives past it', async () => {
+      const key = 'replace-key'
+      // Write with a short TTL first.
+      await component.set(key, 'first', 0.05)
+      // Replace without a TTL — Redis SET without EX clears the expire.
+      await component.set(key, 'second')
+      // Wait long enough that the first TTL would have expired.
+      await sleep(80)
+
+      const result = await component.get(key)
+      expect(result).toBe('second')
+    })
+  })
+})
+
+describe('when setInHash is called on a NEW key without a TTL', () => {
+  // Before this fix, noUpdateTTL alone didn't help new keys: the cache's
+  // default 1-hour TTL still applied. Now new hashes without a TTL are
+  // persistent, matching Redis (no HEXPIRE / EXPIRE issued).
+  it('should store the hash persistently rather than under a 1-hour default', async () => {
+    const hashKey = 'fresh-hash'
+    await component.setInHash(hashKey, 'only', { a: 1 })
+
+    await settle()
+
+    const fields = await component.getAllHashFields<{ a: number }>(hashKey)
+    expect(fields).toEqual({ only: { a: 1 } })
+  })
+})
+
+describe('when removeFromHash leaves a hash with remaining fields', () => {
+  // Before this fix, the cache.set(key, newHash) call used no options
+  // and therefore reset the entry's TTL back to the 1-hour default.
+  // HDEL in Redis leaves the expire untouched.
+  const hashKey = 'partial-remove'
+
+  beforeEach(async () => {
+    // Short TTL so we can observe whether it was reset by removeFromHash.
+    await component.setInHash(hashKey, 'keep', { a: 1 }, 0.05)
+    await component.setInHash(hashKey, 'drop', { b: 2 })
+    await sleep(20)
+    await component.removeFromHash(hashKey, 'drop')
+  })
+
+  it('should preserve the hash TTL rather than resetting it', async () => {
+    // Total elapsed so far: ~20 ms. Original TTL was 50 ms. If the
+    // remove reset the TTL to a 1-hour default, the hash would still be
+    // here after this second sleep.
+    await sleep(40)
+
+    const fields = await component.getAllHashFields(hashKey)
+    expect(fields).toEqual({})
+  })
+})
+
+describe('when getAllHashFields is called on a key that holds a non-object value', () => {
+  // A caller mixed the two API styles: set() to write a scalar, then
+  // getAllHashFields() to read. Previously the scalar came back typed as
+  // a Record. Now we return an empty record so the declared contract
+  // holds.
+  const key = 'mixed-usage'
+
+  beforeEach(async () => {
+    await component.set(key, 'not-a-hash')
+  })
+
+  it('should return an empty object rather than casting the scalar to a Record', async () => {
+    const fields = await component.getAllHashFields(key)
+    expect(fields).toEqual({})
+  })
+})
+
+describe('when getFromHash is called on a key that holds a non-object value', () => {
+  const key = 'also-mixed'
+
+  beforeEach(async () => {
+    await component.set(key, 'not-a-hash')
+  })
+
+  it('should return null rather than indexing into the scalar', async () => {
+    const result = await component.getFromHash(key, '0')
+    expect(result).toBeNull()
+  })
+})
+
+describe('when a custom max entry count is provided', () => {
+  let smallCache: ICacheStorageComponent
+
+  beforeEach(() => {
+    smallCache = createInMemoryCacheComponent({ max: 2 })
+  })
+
+  it('should evict the oldest entries once the configured max is exceeded', async () => {
+    await smallCache.set('a', 1)
+    await smallCache.set('b', 2)
+    await smallCache.set('c', 3)
+
+    // `a` should have been evicted by the LRU once the third entry was
+    // written; `b` and `c` should remain.
+    expect(await smallCache.get('a')).toBeNull()
+    expect(await smallCache.get('b')).toBe(2)
+    expect(await smallCache.get('c')).toBe(3)
+  })
+})
+
+describe('when setInHash is called on a key that already holds a non-object value', () => {
+  // Redis would reject this with a WRONGTYPE error. Matching that
+  // behavior prevents the in-memory implementation from silently
+  // dropping the caller's existing scalar.
+  const key = 'scalar-then-hash'
+
+  beforeEach(async () => {
+    await component.set(key, 'plain-string')
+  })
+
+  it('should throw rather than silently clobber the existing value', async () => {
+    await expect(component.setInHash(key, 'field', 'value')).rejects.toThrow(
+      /holds a non-object value/
+    )
+
+    // The original scalar must still be there.
+    expect(await component.get(key)).toBe('plain-string')
+  })
+})
+
+describe('when set is called with an undefined value', () => {
+  // lru-cache treats `cache.set(k, undefined)` as a delete; Redis would
+  // error. Match Redis here so the implementations stay interchangeable.
+  it('should reject instead of silently deleting the key', async () => {
+    await component.set('some-key', 'value')
+
+    await expect(component.set('some-key', undefined)).rejects.toThrow(/undefined value/)
+
+    // The prior value must survive the rejected call.
+    expect(await component.get('some-key')).toBe('value')
+  })
+})
+
+describe('when acquireLock is given a non-positive ttlInMilliseconds', () => {
+  // `{ ttl: 0 }` in lru-cache means "never expire"; forwarding that into
+  // a lock would be a silent lock leak. Clamp back to the default.
+  const key = 'clamped-ttl-lock'
+
+  it('should clamp a zero ttlInMilliseconds so the lock still expires', async () => {
+    await component.acquireLock(key, { ttlInMilliseconds: 0 })
+
+    // Release must succeed — the lock was actually stored with a usable TTL
+    // and this instance still owns it.
+    await expect(component.releaseLock(key)).resolves.not.toThrow()
+  })
+
+  it('should clamp a negative ttlInMilliseconds the same way', async () => {
+    await component.acquireLock(key, { ttlInMilliseconds: -1 })
+
+    await expect(component.releaseLock(key)).resolves.not.toThrow()
+  })
+})
+
+describe('when getFromHash is called with a prototype-property name', () => {
+  // `hash['__proto__']` and `hash['constructor']` return the prototype
+  // chain's values, not stored data. Guard against leaking them.
+  const key = 'hash-with-normal-fields'
+
+  beforeEach(async () => {
+    await component.setInHash(key, 'stored', { a: 1 })
+  })
+
+  it('should return null for "__proto__" when it was not explicitly stored', async () => {
+    const result = await component.getFromHash(key, '__proto__')
+    expect(result).toBeNull()
+  })
+
+  it('should return null for "constructor" when it was not explicitly stored', async () => {
+    const result = await component.getFromHash(key, 'constructor')
+    expect(result).toBeNull()
+  })
+
+  it('should still return an explicitly stored "__proto__" field value', async () => {
+    await component.setInHash(key, '__proto__', 'stored-on-purpose')
+
+    const result = await component.getFromHash<string>(key, '__proto__')
+    expect(result).toBe('stored-on-purpose')
+  })
+})
+
+describe('when a non-plain object is stored under a key', () => {
+  // Map / Set / Date / RegExp satisfy `typeof === "object" && !== null`
+  // but they are not safe to index as hashes. The tightened
+  // isPlainObject predicate treats them as non-object for the purposes
+  // of the hash APIs.
+  it('should not treat a Map as a hash', async () => {
+    await component.set('map-key', new Map([['a', 1]]))
+
+    expect(await component.getFromHash('map-key', 'a')).toBeNull()
+    expect(await component.getAllHashFields('map-key')).toEqual({})
+  })
+
+  it('should not treat a Date as a hash', async () => {
+    await component.set('date-key', new Date(0))
+
+    expect(await component.getAllHashFields('date-key')).toEqual({})
+  })
+})
+
+describe('when keys is called with the match-all pattern', () => {
+  beforeEach(async () => {
+    await component.set('a', 1)
+    await component.set('b', 2)
+  })
+
+  it('should return every key, matching the no-pattern invocation', async () => {
+    const all = await component.keys()
+    const star = await component.keys('*')
+
+    expect(star.sort()).toEqual(all.sort())
+  })
+})
+
+describe('when keys is called with an empty-string pattern', () => {
+  // Redis's `SCAN MATCH ''` only matches an empty-string key. The
+  // previous short-circuit treated '' the same as "no pattern" and
+  // returned every key — an interchangeability gap with Redis that
+  // could only surprise a caller who slipped an empty pattern in by
+  // accident. The compiled regex now resolves to `^$`.
+  beforeEach(async () => {
+    await component.set('normal', 1)
+    await component.set('another', 2)
+  })
+
+  describe('and no key has an empty string as its name', () => {
+    it('should return no keys', async () => {
+      expect(await component.keys('')).toEqual([])
+    })
+  })
+
+  describe('and a key with an empty-string name exists', () => {
+    beforeEach(async () => {
+      await component.set('', 'empty-key-value')
+    })
+
+    it('should return only the empty-string key', async () => {
+      expect(await component.keys('')).toEqual([''])
+    })
+  })
+})
+
+describe('when a retrying acquireLock observes a contested slot', () => {
+  // Regression guard: the previous `!cache.has(key)` check passed when
+  // the slot was empty OR when a caller had stored `null` under that
+  // key via `set()`. Switching to `cache.get(key) === undefined`
+  // correctly distinguishes those cases (covered end-to-end by the
+  // "stored value happens to be null" suite above) and, per lru-cache
+  // semantics, refreshes the held lock's recency on every retry so
+  // pressure from other writes can't silently LRU-evict it during
+  // contention.
+  let smallCache: ICacheStorageComponent
+  let lockKey: string
+
+  beforeEach(async () => {
+    lockKey = 'contested-lock'
+    smallCache = createInMemoryCacheComponent({ max: 3 })
+    await smallCache.acquireLock(lockKey, { ttlInMilliseconds: 60_000 })
+  })
+
+  afterEach(async () => {
+    await smallCache.tryReleaseLock(lockKey)
+  })
+
+  it('should reject with LockNotAcquiredError', async () => {
+    await expect(
+      smallCache.acquireLock(lockKey, { retries: 5, retryDelayInMilliseconds: 1 })
+    ).rejects.toThrow(LockNotAcquiredError)
+  })
+
+  it('should leave the original lock in place for the owner to release', async () => {
+    await smallCache
+      .acquireLock(lockKey, { retries: 5, retryDelayInMilliseconds: 1 })
+      .catch(() => undefined)
+
+    await expect(smallCache.releaseLock(lockKey)).resolves.not.toThrow()
+  })
+})
+
+describe('when setInHash is called with an undefined value', () => {
+  // Mirror the `set(k, undefined)` guard — otherwise the memory-cache
+  // silently stores `{ [field]: undefined }`, which getFromHash then
+  // reports as null (absent). Redis's HSET rejects undefined at the
+  // wire, so aligning the two implementations avoids a silent write-
+  // vs-read disagreement.
+  let hashKey: string
+  let field: string
+
+  beforeEach(() => {
+    hashKey = 'undefined-field-hash'
+    field = 'target-field'
+  })
+
+  it('should reject with an error that mentions the undefined value', async () => {
+    await expect(
+      component.setInHash(hashKey, field, undefined as unknown as string)
+    ).rejects.toThrow(/undefined value/)
+  })
+
+  it('should leave the hash untouched so getFromHash still reports the field as absent', async () => {
+    await component
+      .setInHash(hashKey, field, undefined as unknown as string)
+      .catch(() => undefined)
+
+    expect(await component.getFromHash(hashKey, field)).toBeNull()
+  })
+})
+
+describe('when getAllHashFields is used for subsequent mutation', () => {
+  // Regression: before this fix, getAllHashFields returned the stored
+  // reference directly. A caller could then mutate the returned object
+  // and those mutations would silently leak into the cache. Now we
+  // return a shallow clone.
+  let hashKey: string
+
+  beforeEach(async () => {
+    hashKey = 'clone-on-read-hash'
+    await component.setInHash(hashKey, 'a', 1)
+  })
+
+  it('should return a clone so caller-side mutations do not alter the cache', async () => {
+    const fields = (await component.getAllHashFields(hashKey)) as Record<string, unknown>
+    fields.injected = 'sneaky'
+
+    expect(await component.getAllHashFields(hashKey)).toEqual({ a: 1 })
+  })
+})
+
+describe('when setInHash is used on a key with a prototype-shaped field name', () => {
+  // Regression guard for in-place mutation. `target['__proto__'] = v`
+  // on a plain object triggers the Object.prototype __proto__ setter,
+  // overwriting the prototype instead of storing an own property. The
+  // component now stores hashes on a null-prototype object so bracket
+  // assignment is a plain own-property write regardless of field name.
+  let hashKey: string
+
+  beforeEach(() => {
+    hashKey = 'proto-safe-hash'
+  })
+
+  describe('and the hash is built entirely through setInHash', () => {
+    beforeEach(async () => {
+      await component.setInHash(hashKey, '__proto__', 'first')
+      await component.setInHash(hashKey, 'other', 2)
+      await component.setInHash(hashKey, '__proto__', 'second')
+    })
+
+    it('should return the most recently stored "__proto__" value from getFromHash', async () => {
+      expect(await component.getFromHash<string>(hashKey, '__proto__')).toBe('second')
+    })
+
+    it('should keep sibling fields readable alongside the "__proto__" field', async () => {
+      expect(await component.getFromHash<number>(hashKey, 'other')).toBe(2)
+    })
+
+    it('should expose "__proto__" as an own property in getAllHashFields, not as the prototype', async () => {
+      // NB: using a computed key in the expected literal — `{ __proto__: v }`
+      // as a non-computed literal tries to SET the prototype, not create
+      // an own property.
+      expect(await component.getAllHashFields(hashKey)).toEqual({
+        ['__proto__']: 'second',
+        other: 2
+      })
+    })
+  })
+
+  describe('and the key was seeded via set() with a plain-literal hash', () => {
+    // Starts life as an Object.prototype-chained object; the first
+    // setInHash must migrate it to null-proto so a subsequent
+    // '__proto__' assignment stays an own-property write.
+    beforeEach(async () => {
+      await component.set(hashKey, { preexisting: 'stays' })
+      await component.setInHash(hashKey, '__proto__', 'added')
+    })
+
+    it('should store the "__proto__" write as an own field readable by getFromHash', async () => {
+      expect(await component.getFromHash<string>(hashKey, '__proto__')).toBe('added')
+    })
+
+    it('should preserve the pre-existing field after the null-proto migration', async () => {
+      expect(await component.getFromHash<string>(hashKey, 'preexisting')).toBe('stays')
+    })
+  })
+})
+
+describe('when keys matches a Redis-style glob with a `?` wildcard', () => {
+  beforeEach(async () => {
+    await component.set('user:1', 'a')
+    await component.set('user:12', 'b')
+    await component.set('user:abc', 'c')
+  })
+
+  it('should match keys of the exact wildcard length', async () => {
+    const result = await component.keys('user:?')
+    expect(result.sort()).toEqual(['user:1'])
+  })
+})
+
+describe('when keys matches a Redis-style glob with a `[...]` character class', () => {
+  beforeEach(async () => {
+    await component.set('user:1', 'a')
+    await component.set('user:2', 'b')
+    await component.set('user:3', 'c')
+    await component.set('user:x', 'd')
+  })
+
+  describe('and the class is a simple enumeration', () => {
+    it('should match only the enumerated members', async () => {
+      const result = await component.keys('user:[12]')
+      expect(result.sort()).toEqual(['user:1', 'user:2'])
+    })
+  })
+
+  describe('and the class is a range', () => {
+    it('should match every member of the range', async () => {
+      const result = await component.keys('user:[1-3]')
+      expect(result.sort()).toEqual(['user:1', 'user:2', 'user:3'])
+    })
+  })
+
+  describe('and the class is negated with `!`', () => {
+    it('should match members not listed in the class', async () => {
+      const result = await component.keys('user:[!12]')
+      expect(result.sort()).toEqual(['user:3', 'user:x'])
+    })
+  })
+
+  describe('and the class starts with a literal `]` (POSIX shorthand for "include ]")', () => {
+    beforeEach(async () => {
+      await component.set('user:]', 'literal-bracket')
+      await component.set('user:a', 'letter')
+    })
+
+    it('should match both the `]` member and other enumerated members', async () => {
+      const result = await component.keys('user:[]a]')
+      expect(result.sort()).toEqual(['user:]', 'user:a'])
+    })
+  })
+
+  describe('and the class starts with a literal `]` under negation (`[!]…]`)', () => {
+    beforeEach(async () => {
+      await component.set('user:]', 'literal-bracket')
+      await component.set('user:a', 'letter')
+      await component.set('user:z', 'other-letter')
+    })
+
+    it('should exclude both the `]` and the other listed members from the match', async () => {
+      const result = await component.keys('user:[!]a]')
+
+      // user:] and user:a are excluded by the class; every other
+      // single-character suffix from the outer beforeEach (1/2/3/x)
+      // plus the newly added 'z' still matches.
+      expect(result.sort()).toEqual(['user:1', 'user:2', 'user:3', 'user:x', 'user:z'])
+    })
+  })
+})
+
+describe('when keys contains a `\\` escape before a wildcard character', () => {
+  beforeEach(async () => {
+    await component.set('literal*key', 'yes')
+    await component.set('literalXkey', 'no')
+  })
+
+  it('should treat the escaped wildcard as a literal character', async () => {
+    const result = await component.keys('literal\\*key')
+    expect(result.sort()).toEqual(['literal*key'])
+  })
+})
+
+describe('when acquireLock receives invalid lock options', () => {
+  describe('and retries is negative', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: -1 })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retries is not an integer', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: 1.5 })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retries is NaN', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(component.acquireLock('k', { retries: NaN })).rejects.toThrow(
+        /'retries' must be a non-negative integer/
+      )
+    })
+  })
+
+  describe('and retryDelayInMilliseconds is negative', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { retryDelayInMilliseconds: -5 })
+      ).rejects.toThrow(/'retryDelayInMilliseconds' must be a non-negative finite number/)
+    })
+  })
+
+  describe('and retryDelayInMilliseconds is Infinity', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { retryDelayInMilliseconds: Infinity })
+      ).rejects.toThrow(/'retryDelayInMilliseconds' must be a non-negative finite number/)
+    })
+  })
+
+  describe('and ttlInMilliseconds is NaN', () => {
+    it('should reject with a descriptive TypeError', async () => {
+      await expect(
+        component.acquireLock('k', { ttlInMilliseconds: NaN })
+      ).rejects.toThrow(/'ttlInMilliseconds' must be a finite number/)
+    })
+  })
+})
+
+describe('when acquireLock is handed an AbortSignal', () => {
+  let contendedKey: string
+
+  beforeEach(async () => {
+    contendedKey = 'abortable-lock'
+    await component.acquireLock(contendedKey, { ttlInMilliseconds: 60_000 })
+  })
+
+  afterEach(async () => {
+    await component.tryReleaseLock(contendedKey)
+  })
+
+  describe('and the signal is already aborted at the call site', () => {
+    let controller: AbortController
+
+    beforeEach(() => {
+      controller = new AbortController()
+      controller.abort(new Error('cancelled before call'))
+    })
+
+    it('should reject with the abort reason without ever attempting to acquire', async () => {
+      await expect(
+        component.acquireLock(contendedKey, { signal: controller.signal, retries: 50 })
+      ).rejects.toThrow('cancelled before call')
+    })
+  })
+
+  describe('and the signal is aborted mid-contention', () => {
+    let controller: AbortController
+
+    beforeEach(() => {
+      controller = new AbortController()
+    })
+
+    it('should reject promptly rather than wait out the remaining retries', async () => {
+      const pending = component
+        .acquireLock(contendedKey, {
+          signal: controller.signal,
+          retries: 100,
+          retryDelayInMilliseconds: 100
+        })
+        .catch((err) => err)
+
+      // Let the loop reach its first sleep, then abort.
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      controller.abort()
+
+      const result = await pending
+      // Node's AbortError is a DOMException (not a plain Error
+      // subclass in every environment), so we inspect the portable
+      // `.name` invariant instead of instanceof.
+      expect((result as { name: string }).name).toBe('AbortError')
+    })
+  })
+})
+
+describe('when a logger is supplied to the component', () => {
+  let loggerComponent: { getLogger: jest.Mock }
+  let loggerInstance: { debug: jest.Mock; info: jest.Mock; warn: jest.Mock; error: jest.Mock; log: jest.Mock }
+  let loggedComponent: ICacheStorageComponent
+
+  beforeEach(async () => {
+    loggerInstance = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      log: jest.fn()
+    }
+    loggerComponent = { getLogger: jest.fn().mockReturnValue(loggerInstance) }
+    loggedComponent = createInMemoryCacheComponent({ logs: loggerComponent as any })
+  })
+
+  it('should request a logger scoped to the memory-cache component', () => {
+    expect(loggerComponent.getLogger).toHaveBeenCalledWith('memory-cache-component')
+  })
+
+  it('should emit a debug line when a lock is successfully acquired', async () => {
+    await loggedComponent.acquireLock('some-lock')
+
+    expect(loggerInstance.debug).toHaveBeenCalledWith('Successfully acquired lock', { key: 'some-lock' })
   })
 })
