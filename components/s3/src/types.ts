@@ -1,12 +1,63 @@
+import type { Readable } from 'stream'
+import type { ObjectCannedACL, ServerSideEncryption } from '@aws-sdk/client-s3'
+
+/**
+ * Optional upload controls. `cacheControl` and `acl` are forwarded directly to
+ * the `PutObjectCommand` so callers that need CDN-visible cache semantics or a
+ * canned ACL don't have to reach for the raw SDK.
+ */
+export interface UploadObjectOptions {
+  serverSideEncryption?: ServerSideEncryption
+  cacheControl?: string
+  acl?: ObjectCannedACL
+}
+
+/**
+ * Optional copy controls. `sourceBucket` defaults to the component's own
+ * bucket (same-bucket copy). `metadataDirective: 'REPLACE'` is required if
+ * callers want to override the source's `contentType` / `cacheControl` on the
+ * destination; with the default `'COPY'` those options are ignored by S3.
+ * `serverSideEncryption` falls back to the `AWS_S3_SERVER_SIDE_ENCRYPTION`
+ * default, mirroring `uploadObject` so a bucket-wide default isn't silently
+ * dropped on server-side rewrites.
+ */
+export interface CopyObjectOptions {
+  sourceBucket?: string
+  metadataDirective?: 'COPY' | 'REPLACE'
+  acl?: ObjectCannedACL
+  cacheControl?: string
+  contentType?: string
+  serverSideEncryption?: ServerSideEncryption
+}
+
 export interface IS3Component {
   /**
    * Uploads an object to S3.
    * @param key - The key (path) where the object will be stored.
-   * @param body - The content to upload (string, Buffer, or stream).
+   * @param body - The content to upload (string, Buffer, or Readable stream).
    * @param contentType - Optional content type (MIME type).
+   * @param options - Optional upload options (server-side encryption, cache control, ACL).
    * @returns Promise resolving to the upload result with ETag.
    */
-  uploadObject(key: string, body: string | Buffer, contentType?: string): Promise<{ ETag?: string }>
+  uploadObject(
+    key: string,
+    body: string | Buffer | Readable,
+    contentType?: string,
+    options?: UploadObjectOptions
+  ): Promise<{ ETag?: string }>
+
+  /**
+   * Server-side copies an object within S3 (no download + re-upload). Useful
+   * for migrations that rename keys in place across millions of objects.
+   * @param sourceKey - The key of the object to copy.
+   * @param destKey - The destination key.
+   * @param options - Optional copy options. `sourceBucket` defaults to the
+   *   component's bucket; pass it only for cross-bucket copies (caller must
+   *   hold permissions on both). `metadataDirective: 'REPLACE'` is required
+   *   to override `contentType` / `cacheControl` on the destination.
+   * @returns Promise resolving to the copy result with ETag.
+   */
+  copyObject(sourceKey: string, destKey: string, options?: CopyObjectOptions): Promise<{ ETag?: string }>
 
   /**
    * Downloads an object from S3 as a string.
@@ -60,6 +111,17 @@ export interface IS3Component {
   listObjects(prefix?: string, maxKeys?: number): Promise<string[]>
 
   /**
+   * Streams object keys one at a time across pagination boundaries. Use this
+   * instead of `listObjects` when the total result set is unbounded or large
+   * enough that buffering it in memory isn't acceptable — the iterator only
+   * holds one S3 page worth of keys at a time and requests the next page
+   * lazily.
+   * @param prefix - Optional prefix to filter objects.
+   * @returns An async iterable that yields object keys as pages arrive.
+   */
+  listObjectsIterable(prefix?: string): AsyncIterable<string>
+
+  /**
    * Gets metadata for an object.
    * @param key - The key (path) of the object.
    * @returns Promise resolving to object metadata or null if not found.
@@ -85,4 +147,3 @@ export interface IS3Component {
    */
   multipleObjectsExist(keys: string[]): Promise<Record<string, boolean>>
 }
-
