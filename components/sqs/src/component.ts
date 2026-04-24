@@ -32,7 +32,7 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
   }
   const client = new SQSClient(clientConfig)
 
-  async function sendMessage(message: any): Promise<void> {
+  async function sendMessage(message: unknown): Promise<void> {
     const sendCommand = new SendMessageCommand({
       QueueUrl: queueUrl,
       MessageBody: JSON.stringify(message)

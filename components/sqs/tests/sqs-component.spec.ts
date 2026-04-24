@@ -115,12 +115,12 @@ describe('when receiving messages', () => {
       mockMessages = [
         {
           MessageId: 'msg-1',
-          Body: JSON.stringify({ Message: JSON.stringify({ type: 'test1' }) }),
+          Body: JSON.stringify({ type: 'test1' }),
           ReceiptHandle: 'receipt-1'
         },
         {
           MessageId: 'msg-2',
-          Body: JSON.stringify({ Message: JSON.stringify({ type: 'test2' }) }),
+          Body: JSON.stringify({ type: 'test2' }),
           ReceiptHandle: 'receipt-2'
         }
       ]

@@ -125,7 +125,7 @@ export interface IQueueComponent {
    * Sends a message to the queue.
    * @param message - The message to send.
    */
-  sendMessage(message: any): Promise<void>
+  sendMessage(message: unknown): Promise<void>
   /**
    * Receives messages from the queue.
    * @param amount - The number of messages to receive.
