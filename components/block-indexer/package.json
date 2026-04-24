@@ -1,0 +1,32 @@
+{
+  "name": "@dcl/block-indexer",
+  "version": "1.1.0",
+  "description": "On-chain block indexer component — finds the block at the tip of the blockchain at a given timestamp",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest --detectOpenHandles --colors --runInBand --coverage",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@well-known-components/interfaces": "^1.5.1",
+    "lru-cache": "~11.2.2"
+  },
+  "devDependencies": {
+    "@well-known-components/logger": "^3.1.3",
+    "@well-known-components/metrics": "^2.1.0",
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

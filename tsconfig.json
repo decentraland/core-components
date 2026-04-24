@@ -12,6 +12,7 @@
   "references": [
     { "path": "./shared/commons" },
     { "path": "./components/analytics" },
+    { "path": "./components/block-indexer" },
     { "path": "./components/job" },
     { "path": "./components/slack" }
   ]
