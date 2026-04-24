@@ -1,0 +1,31 @@
+{
+  "name": "@dcl/cached-fetch-component",
+  "version": "0.0.1",
+  "description": "Cached fetch component with LRU caching for core components library",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@well-known-components/fetch-component": "3.0.0",
+    "@well-known-components/interfaces": "1.5.2",
+    "lru-cache": "10.4.3",
+    "node-fetch": "2.7.0"
+  },
+  "devDependencies": {
+    "@types/node-fetch": "2.6.12",
+    "typescript": "5.9.3",
+    "undici": "^7.16.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
