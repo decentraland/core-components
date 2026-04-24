@@ -6,17 +6,22 @@ export interface IAnalyticsDependencies {
   config: IConfigComponent
 }
 
-export interface IAnalyticsComponent<T extends Record<string, any> = Record<string, any>> {
+/**
+ * Maps event names to their body shapes. Event bodies must be objects — primitives cannot be safely spread into the outgoing payload.
+ */
+export type AnalyticsEventMap = Record<string, Record<string, any>>
+
+export interface IAnalyticsComponent<T extends AnalyticsEventMap = AnalyticsEventMap> {
   /**
    * Send an event and wait for the response.
    * @param name - The name of the event.
-   * @param body - The body of the event.
+   * @param body - The body of the event, typed against the event name.
    */
-  sendEvent: (name: keyof T, body: T[keyof T]) => Promise<void>
+  sendEvent: <K extends keyof T>(name: K, body: T[K]) => Promise<void>
   /**
-   * Send and event without waiting for the response.
+   * Send an event without waiting for the response.
    * @param name - The name of the event.
-   * @param body - The body of the event.
+   * @param body - The body of the event, typed against the event name.
    */
-  fireEvent: (name: keyof T, body: T[keyof T]) => void
+  fireEvent: <K extends keyof T>(name: K, body: T[K]) => void
 }
