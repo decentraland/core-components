@@ -1,7 +1,8 @@
-import { 
-  DeleteObjectCommand, 
-  GetObjectCommand, 
-  HeadObjectCommand, 
+import {
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client
@@ -17,6 +18,7 @@ export function setupS3Mocks(): void {
   ;(DeleteObjectCommand as any).mockImplementation((params: any) => ({ input: params }))
   ;(ListObjectsV2Command as any).mockImplementation((params: any) => ({ input: params }))
   ;(HeadObjectCommand as any).mockImplementation((params: any) => ({ input: params }))
+  ;(CopyObjectCommand as any).mockImplementation((params: any) => ({ input: params }))
 }
 
 /**

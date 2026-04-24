@@ -126,6 +126,75 @@ describe('when uploading objects', () => {
     })
   })
 
+  describe('and cacheControl is provided via options', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ ETag: '"abc123"' })
+    })
+
+    it('should forward the value as the CacheControl field on the PutObjectCommand', async () => {
+      await component.uploadObject(key, body, contentType, { cacheControl: 'private, max-age=0, no-cache' })
+
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual(
+        expect.objectContaining({
+          Bucket: bucketName,
+          Key: key,
+          Body: body,
+          ContentType: contentType,
+          CacheControl: 'private, max-age=0, no-cache'
+        })
+      )
+    })
+  })
+
+  describe('and acl is provided via options', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ ETag: '"abc123"' })
+    })
+
+    it('should forward the value as the ACL field on the PutObjectCommand', async () => {
+      await component.uploadObject(key, body, contentType, { acl: 'public-read' })
+
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual(
+        expect.objectContaining({
+          Bucket: bucketName,
+          Key: key,
+          Body: body,
+          ContentType: contentType,
+          ACL: 'public-read'
+        })
+      )
+    })
+  })
+
+  describe('and cacheControl, acl, and serverSideEncryption are all provided together', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ ETag: '"abc123"' })
+    })
+
+    it('should forward every option on the same PutObjectCommand', async () => {
+      await component.uploadObject(key, body, contentType, {
+        cacheControl: 'public, max-age=31536000, immutable',
+        acl: 'public-read',
+        serverSideEncryption: 'AES256'
+      })
+
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual(
+        expect.objectContaining({
+          Bucket: bucketName,
+          Key: key,
+          Body: body,
+          ContentType: contentType,
+          CacheControl: 'public, max-age=31536000, immutable',
+          ACL: 'public-read',
+          ServerSideEncryption: 'AES256'
+        })
+      )
+    })
+  })
+
   describe('and the upload fails', () => {
     beforeEach(() => {
       sendMock.mockRejectedValueOnce(new Error('S3 upload failed'))
@@ -146,6 +215,119 @@ describe('when uploading objects', () => {
         Body: body,
         ContentType: contentType
       })
+    })
+  })
+})
+
+describe('when copying objects', () => {
+  let sourceKey: string
+  let destKey: string
+
+  beforeEach(() => {
+    sourceKey = 'source/file.txt'
+    destKey = 'dest/file.txt'
+  })
+
+  describe('and the copy succeeds with default options', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ CopyObjectResult: { ETag: '"copy-etag"' } })
+    })
+
+    it('should return the destination ETag from the CopyObjectResult', async () => {
+      const result = await component.copyObject(sourceKey, destKey)
+
+      expect(result.ETag).toEqual('"copy-etag"')
+    })
+
+    it('should send CopyObjectCommand with same-bucket CopySource defaulting to the component bucket', async () => {
+      await component.copyObject(sourceKey, destKey)
+
+      expect(sendMock).toHaveBeenCalledTimes(1)
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual({
+        Bucket: bucketName,
+        Key: destKey,
+        CopySource: `/${bucketName}/source/file.txt`,
+        MetadataDirective: undefined,
+        ACL: undefined,
+        CacheControl: undefined,
+        ContentType: undefined
+      })
+    })
+  })
+
+  describe('and the source key contains reserved characters', () => {
+    beforeEach(() => {
+      sourceKey = 'a b+c/special?key.txt'
+      sendMock.mockResolvedValueOnce({ CopyObjectResult: { ETag: '"copy-etag"' } })
+    })
+
+    it('should URL-encode the source key while preserving its path separators', async () => {
+      await component.copyObject(sourceKey, destKey)
+
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual(
+        expect.objectContaining({
+          CopySource: `/${bucketName}/a%20b%2Bc/special%3Fkey.txt`
+        })
+      )
+    })
+  })
+
+  describe('and sourceBucket is provided via options', () => {
+    let sourceBucket: string
+
+    beforeEach(() => {
+      sourceBucket = 'other-bucket'
+      sendMock.mockResolvedValueOnce({ CopyObjectResult: { ETag: '"copy-etag"' } })
+    })
+
+    it('should use the provided bucket in the CopySource', async () => {
+      await component.copyObject(sourceKey, destKey, { sourceBucket })
+
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual(
+        expect.objectContaining({
+          Bucket: bucketName,
+          CopySource: `/${sourceBucket}/source/file.txt`
+        })
+      )
+    })
+  })
+
+  describe('and metadataDirective is REPLACE with contentType and cacheControl', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ CopyObjectResult: { ETag: '"copy-etag"' } })
+    })
+
+    it('should forward every override on the CopyObjectCommand', async () => {
+      await component.copyObject(sourceKey, destKey, {
+        metadataDirective: 'REPLACE',
+        contentType: 'application/json',
+        cacheControl: 'max-age=3600',
+        acl: 'public-read'
+      })
+
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual({
+        Bucket: bucketName,
+        Key: destKey,
+        CopySource: `/${bucketName}/source/file.txt`,
+        MetadataDirective: 'REPLACE',
+        ACL: 'public-read',
+        CacheControl: 'max-age=3600',
+        ContentType: 'application/json'
+      })
+    })
+  })
+
+  describe('and the copy fails', () => {
+    beforeEach(() => {
+      sendMock.mockRejectedValueOnce(new Error('S3 copy failed'))
+    })
+
+    it('should throw error with failure message', async () => {
+      await expect(component.copyObject(sourceKey, destKey)).rejects.toThrow('S3 copy failed')
     })
   })
 })
@@ -766,6 +948,136 @@ describe('when listing objects', () => {
           input: expect.objectContaining({ ContinuationToken: 'token-1' })
         })
       )
+    })
+  })
+})
+
+describe('when iterating objects as a stream', () => {
+  describe('and the results fit in a single page', () => {
+    let pageKeys: string[]
+
+    beforeEach(() => {
+      pageKeys = ['a/file1.txt', 'a/file2.txt', 'a/file3.txt']
+      sendMock.mockResolvedValueOnce({
+        Contents: pageKeys.map((Key) => ({ Key })),
+        IsTruncated: false
+      })
+    })
+
+    it('should yield every returned key in order', async () => {
+      const yielded: string[] = []
+      for await (const key of component.listObjectsIterable()) {
+        yielded.push(key)
+      }
+
+      expect(yielded).toEqual(pageKeys)
+    })
+  })
+
+  describe('and the total number of objects exceeds a single S3 page', () => {
+    let firstPageKeys: string[]
+    let secondPageKeys: string[]
+
+    beforeEach(() => {
+      firstPageKeys = Array.from({ length: 1000 }, (_, i) => `file-${i}.txt`)
+      secondPageKeys = Array.from({ length: 500 }, (_, i) => `file-${1000 + i}.txt`)
+      sendMock
+        .mockResolvedValueOnce({
+          Contents: firstPageKeys.map((Key) => ({ Key })),
+          IsTruncated: true,
+          NextContinuationToken: 'token-1'
+        })
+        .mockResolvedValueOnce({
+          Contents: secondPageKeys.map((Key) => ({ Key })),
+          IsTruncated: false
+        })
+    })
+
+    it('should paginate lazily, yielding keys across both pages', async () => {
+      const yielded: string[] = []
+      for await (const key of component.listObjectsIterable()) {
+        yielded.push(key)
+      }
+
+      expect(yielded).toHaveLength(1500)
+      expect(yielded[0]).toBe('file-0.txt')
+      expect(yielded[1499]).toBe('file-1499.txt')
+      expect(sendMock).toHaveBeenCalledTimes(2)
+      expect(sendMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          input: expect.objectContaining({ ContinuationToken: 'token-1' })
+        })
+      )
+    })
+  })
+
+  describe('and the consumer stops iterating early', () => {
+    let firstPageKeys: string[]
+
+    beforeEach(() => {
+      firstPageKeys = Array.from({ length: 1000 }, (_, i) => `file-${i}.txt`)
+      sendMock.mockResolvedValueOnce({
+        Contents: firstPageKeys.map((Key) => ({ Key })),
+        IsTruncated: true,
+        NextContinuationToken: 'token-1'
+      })
+    })
+
+    it('should not fetch the next page after the consumer breaks out of the loop', async () => {
+      const yielded: string[] = []
+      for await (const key of component.listObjectsIterable()) {
+        yielded.push(key)
+        if (yielded.length === 5) break
+      }
+
+      expect(yielded).toHaveLength(5)
+      expect(sendMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and a prefix is supplied', () => {
+    let prefix: string
+
+    beforeEach(() => {
+      prefix = 'manifest/'
+      sendMock.mockResolvedValueOnce({
+        Contents: [{ Key: 'manifest/a.json' }],
+        IsTruncated: false
+      })
+    })
+
+    it('should forward the prefix on the ListObjectsV2Command', async () => {
+      const yielded: string[] = []
+      for await (const key of component.listObjectsIterable(prefix)) {
+        yielded.push(key)
+      }
+
+      const command = sendMock.mock.calls[0][0]
+      expect(command.input).toEqual(
+        expect.objectContaining({
+          Bucket: bucketName,
+          Prefix: prefix
+        })
+      )
+    })
+  })
+
+  describe('and an object in the response has no Key', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({
+        Contents: [{ Key: 'a.txt' }, { Key: undefined }, { Key: '' }, { Key: 'b.txt' }],
+        IsTruncated: false
+      })
+    })
+
+    it('should skip the entries without a key and yield only the real ones', async () => {
+      const yielded: string[] = []
+      for await (const key of component.listObjectsIterable()) {
+        yielded.push(key)
+      }
+
+      expect(yielded).toEqual(['a.txt', 'b.txt'])
     })
   })
 })

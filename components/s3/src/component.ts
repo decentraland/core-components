@@ -7,12 +7,13 @@ import {
   DeleteObjectCommand,
   ListObjectsV2Command,
   HeadObjectCommand,
+  CopyObjectCommand,
   ServerSideEncryption,
   NoSuchKey,
   NotFound
 } from '@aws-sdk/client-s3'
 
-import { IS3Component } from './types'
+import { CopyObjectOptions, IS3Component, UploadObjectOptions } from './types'
 
 const S3_LIST_PAGE_SIZE = 1000
 // Upper bound on keys processed per `Promise.all` group in `multipleObjectsExist`.
@@ -75,7 +76,7 @@ export async function createS3Component({ config }: { config: IConfigComponent }
     key: string,
     body: string | Buffer | Readable,
     contentType?: string,
-    options?: { serverSideEncryption?: ServerSideEncryption }
+    options?: UploadObjectOptions
   ): Promise<{ ETag?: string }> {
     const sse = options?.serverSideEncryption ?? defaultServerSideEncryption
 
@@ -84,11 +85,39 @@ export async function createS3Component({ config }: { config: IConfigComponent }
       Key: key,
       Body: body,
       ContentType: contentType,
+      CacheControl: options?.cacheControl,
+      ACL: options?.acl,
       ServerSideEncryption: sse
     })
 
     const response = await client.send(command)
     return { ETag: response.ETag }
+  }
+
+  async function copyObject(
+    sourceKey: string,
+    destKey: string,
+    options?: CopyObjectOptions
+  ): Promise<{ ETag?: string }> {
+    const srcBucket = options?.sourceBucket ?? bucketName
+    // S3's CopySource wants `/<bucket>/<url-encoded-key>`. encodeURIComponent
+    // escapes `/` too, but object keys use `/` as a path separator inside the
+    // key itself, so we restore them after encoding. All other reserved
+    // characters (spaces, `+`, `?`, etc.) stay encoded as AWS requires.
+    const copySource = `/${srcBucket}/${encodeURIComponent(sourceKey).replace(/%2F/g, '/')}`
+
+    const command = new CopyObjectCommand({
+      Bucket: bucketName,
+      Key: destKey,
+      CopySource: copySource,
+      MetadataDirective: options?.metadataDirective,
+      ACL: options?.acl,
+      CacheControl: options?.cacheControl,
+      ContentType: options?.contentType
+    })
+
+    const response = await client.send(command)
+    return { ETag: response.CopyObjectResult?.ETag }
   }
 
   async function downloadObjectAsString(key: string): Promise<string | null> {
@@ -224,6 +253,28 @@ export async function createS3Component({ config }: { config: IConfigComponent }
     return keys.slice(0, maxKeys)
   }
 
+  async function* listObjectsIterable(prefix?: string): AsyncGenerator<string, void, void> {
+    let continuationToken: string | undefined
+    do {
+      const command = new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: prefix,
+        MaxKeys: S3_LIST_PAGE_SIZE,
+        ContinuationToken: continuationToken
+      })
+
+      const response = await client.send(command)
+
+      for (const obj of response.Contents ?? []) {
+        if (typeof obj.Key === 'string' && obj.Key.length > 0) {
+          yield obj.Key
+        }
+      }
+
+      continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined
+    } while (continuationToken)
+  }
+
   async function getObjectMetadata(key: string): Promise<{
     contentLength?: number
     contentType?: string
@@ -274,12 +325,14 @@ export async function createS3Component({ config }: { config: IConfigComponent }
 
   return {
     uploadObject,
+    copyObject,
     downloadObjectAsString,
     downloadObjectAsJson,
     downloadObjectAsBuffer,
     downloadObjectAsStream,
     deleteObject,
     listObjects,
+    listObjectsIterable,
     getObjectMetadata,
     objectExists,
     multipleObjectsExist
