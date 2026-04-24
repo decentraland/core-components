@@ -1,6 +1,6 @@
 {
   "name": "@dcl/block-indexer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "On-chain block indexer component — finds the block at the tip of the blockchain at a given timestamp",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",

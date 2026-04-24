@@ -1,5 +1,13 @@
 # @dcl/sns-component
 
+## 3.1.1
+
+### Patch Changes
+
+- 852b490: Thread `AWS_REGION` through the SNS client configuration so deploys that rely on an explicit region config key (rather than the AWS SDK's env-var resolution) pick up the right region without extra wiring. Also replaces the `reduce`-based `chunk()` helper with a simple `for` loop and makes `PublishCommandOutput` a type-only import.
+- Updated dependencies [fcef9b9]
+  - @dcl/core-commons@0.7.0
+
 ## 3.1.0
 
 ### Minor Changes

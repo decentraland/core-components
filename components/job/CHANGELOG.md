@@ -1,5 +1,12 @@
 # @dcl/job-component
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [fcef9b9]
+  - @dcl/core-commons@0.7.0
+
 ## 0.3.0
 
 ### Minor Changes
