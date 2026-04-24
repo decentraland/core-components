@@ -105,6 +105,7 @@ export async function createS3Component({ config }: { config: IConfigComponent }
     // key itself, so we restore them after encoding. All other reserved
     // characters (spaces, `+`, `?`, etc.) stay encoded as AWS requires.
     const copySource = `/${srcBucket}/${encodeURIComponent(sourceKey).replace(/%2F/g, '/')}`
+    const sse = options?.serverSideEncryption ?? defaultServerSideEncryption
 
     const command = new CopyObjectCommand({
       Bucket: bucketName,
@@ -113,7 +114,8 @@ export async function createS3Component({ config }: { config: IConfigComponent }
       MetadataDirective: options?.metadataDirective,
       ACL: options?.acl,
       CacheControl: options?.cacheControl,
-      ContentType: options?.contentType
+      ContentType: options?.contentType,
+      ServerSideEncryption: sse
     })
 
     const response = await client.send(command)
@@ -156,7 +158,11 @@ export async function createS3Component({ config }: { config: IConfigComponent }
       }
 
       const bodyContents = await response.Body.transformToString()
-      if (!bodyContents) {
+      // Treat whitespace-only bodies the same as empty: JSON.parse of `'  '`
+      // or `'\n'` throws SyntaxError, which would escape the try/catch and
+      // surface as an error instead of a null — inconsistent with the empty
+      // string path.
+      if (!bodyContents || !bodyContents.trim()) {
         return null
       }
       return JSON.parse(bodyContents) as T

@@ -3,6 +3,7 @@ import { createConfigMockedComponent } from '@dcl/core-commons'
 import { createS3Component } from '../src/component'
 import { IS3Component } from '../src/types'
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -243,16 +244,18 @@ describe('when copying objects', () => {
       await component.copyObject(sourceKey, destKey)
 
       expect(sendMock).toHaveBeenCalledTimes(1)
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
-        Bucket: bucketName,
-        Key: destKey,
-        CopySource: `/${bucketName}/source/file.txt`,
-        MetadataDirective: undefined,
-        ACL: undefined,
-        CacheControl: undefined,
-        ContentType: undefined
-      })
+      expect(sendMock).toHaveBeenCalledWith(
+        new CopyObjectCommand({
+          Bucket: bucketName,
+          Key: destKey,
+          CopySource: `/${bucketName}/source/file.txt`,
+          MetadataDirective: undefined,
+          ACL: undefined,
+          CacheControl: undefined,
+          ContentType: undefined,
+          ServerSideEncryption: undefined
+        })
+      )
     })
   })
 
@@ -308,16 +311,32 @@ describe('when copying objects', () => {
         acl: 'public-read'
       })
 
-      const command = sendMock.mock.calls[0][0]
-      expect(command.input).toEqual({
-        Bucket: bucketName,
-        Key: destKey,
-        CopySource: `/${bucketName}/source/file.txt`,
-        MetadataDirective: 'REPLACE',
-        ACL: 'public-read',
-        CacheControl: 'max-age=3600',
-        ContentType: 'application/json'
-      })
+      expect(sendMock).toHaveBeenCalledWith(
+        new CopyObjectCommand({
+          Bucket: bucketName,
+          Key: destKey,
+          CopySource: `/${bucketName}/source/file.txt`,
+          MetadataDirective: 'REPLACE',
+          ACL: 'public-read',
+          CacheControl: 'max-age=3600',
+          ContentType: 'application/json',
+          ServerSideEncryption: undefined
+        })
+      )
+    })
+  })
+
+  describe('and an explicit serverSideEncryption is provided via options', () => {
+    beforeEach(() => {
+      sendMock.mockResolvedValueOnce({ CopyObjectResult: { ETag: '"copy-etag"' } })
+    })
+
+    it('should forward the encryption value on the CopyObjectCommand', async () => {
+      await component.copyObject(sourceKey, destKey, { serverSideEncryption: 'AES256' })
+
+      expect(sendMock.mock.calls[0][0].input).toEqual(
+        expect.objectContaining({ ServerSideEncryption: 'AES256' })
+      )
     })
   })
 
@@ -541,6 +560,24 @@ describe('when downloading objects as JSON', () => {
       const result = await component.downloadObjectAsJson(key)
 
       expect(result).toBeNull()
+    })
+  })
+
+  describe('and the object body is a whitespace-only string', () => {
+    describe.each(['   ', '\n', '\t\n '])('and the body is %p', (whitespace) => {
+      beforeEach(() => {
+        sendMock.mockResolvedValueOnce({
+          Body: {
+            transformToString: jest.fn().mockResolvedValue(whitespace)
+          }
+        })
+      })
+
+      it('should return null instead of throwing a JSON.parse error', async () => {
+        const result = await component.downloadObjectAsJson(key)
+
+        expect(result).toBeNull()
+      })
     })
   })
 })
@@ -1360,6 +1397,26 @@ describe('when checking if multiple objects exist', () => {
       expect(sendMock).not.toHaveBeenCalled()
     })
   })
+
+  describe('and the key count exceeds a single batch', () => {
+    // 51 keys forces two slices: 0..49 then 50. Locks in the batch-boundary
+    // behavior against accidental off-by-one regressions in the slice loop.
+    const largeKeys = Array.from({ length: 51 }, (_, i) => `bulk/file-${i}.txt`)
+
+    beforeEach(() => {
+      sendMock.mockResolvedValue({ ContentLength: 1, ContentType: 'text/plain' })
+    })
+
+    it('should issue one HeadObject per key across batches', async () => {
+      const result = await component.multipleObjectsExist(largeKeys)
+
+      expect(sendMock).toHaveBeenCalledTimes(largeKeys.length)
+      expect(Object.keys(result)).toHaveLength(largeKeys.length)
+      largeKeys.forEach((key) => {
+        expect(result[key]).toBe(true)
+      })
+    })
+  })
 })
 
 describe('when creating the component with AWS_S3_SERVER_SIDE_ENCRYPTION configured', () => {
@@ -1386,6 +1443,17 @@ describe('when creating the component with AWS_S3_SERVER_SIDE_ENCRYPTION configu
         sendMock.mockResolvedValueOnce({ ETag: '"abc123"' })
 
         await sseComponent.uploadObject('k', 'body')
+
+        expect(sendMock.mock.calls[0][0].input).toEqual(
+          expect.objectContaining({ ServerSideEncryption: validValue })
+        )
+      })
+
+      it('should apply the encryption to copies without an explicit option', async () => {
+        const sseComponent = await createS3Component({ config: sseConfig })
+        sendMock.mockResolvedValueOnce({ CopyObjectResult: { ETag: '"copy-etag"' } })
+
+        await sseComponent.copyObject('source.txt', 'dest.txt')
 
         expect(sendMock.mock.calls[0][0].input).toEqual(
           expect.objectContaining({ ServerSideEncryption: validValue })

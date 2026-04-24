@@ -17,6 +17,9 @@ export interface UploadObjectOptions {
  * bucket (same-bucket copy). `metadataDirective: 'REPLACE'` is required if
  * callers want to override the source's `contentType` / `cacheControl` on the
  * destination; with the default `'COPY'` those options are ignored by S3.
+ * `serverSideEncryption` falls back to the `AWS_S3_SERVER_SIDE_ENCRYPTION`
+ * default, mirroring `uploadObject` so a bucket-wide default isn't silently
+ * dropped on server-side rewrites.
  */
 export interface CopyObjectOptions {
   sourceBucket?: string
@@ -24,6 +27,7 @@ export interface CopyObjectOptions {
   acl?: ObjectCannedACL
   cacheControl?: string
   contentType?: string
+  serverSideEncryption?: ServerSideEncryption
 }
 
 export interface IS3Component {
