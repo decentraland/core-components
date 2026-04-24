@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { sleep } from '@dcl/core-commons'
-import { IQueueComponent, ReceiveMessagesOptions } from '@dcl/core-commons'
+import { IQueueComponent, ReceiveMessagesOptions, SendMessageOptions } from '@dcl/core-commons'
 import { MemoryQueueOptions, StoredMessage, QueueMessage } from './types'
 
 /**
@@ -39,17 +39,23 @@ export function createMemoryQueueComponent(options: MemoryQueueOptions = {}): IQ
 
   const queue: Map<string, StoredMessage> = new Map()
 
-  async function sendMessage(message: unknown): Promise<void> {
+  async function sendMessage(message: unknown, options?: SendMessageOptions): Promise<void> {
     const receiptHandle = randomUUID()
     const messageId = randomUUID()
 
-    const body = wrapInSnsFormat ? JSON.stringify({ Message: JSON.stringify(message) }) : JSON.stringify(message)
+    // Per-call `isRawMessage` wins. If not specified, fall back to the
+    // component-level `wrapInSnsFormat` default so existing callers keep
+    // their current behavior.
+    const isRaw = options?.isRawMessage ?? !wrapInSnsFormat
+    const body = isRaw ? JSON.stringify(message) : JSON.stringify({ Message: JSON.stringify(message) })
+
+    const delaySeconds = options?.delaySeconds ?? 0
 
     queue.set(receiptHandle, {
       MessageId: messageId,
       ReceiptHandle: receiptHandle,
       Body: body,
-      visibleAt: Date.now()
+      visibleAt: Date.now() + delaySeconds * 1000
     })
   }
 

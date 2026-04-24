@@ -78,21 +78,21 @@ describe('when sending messages', () => {
       expect(sendMock).toHaveBeenCalledTimes(1)
     })
 
-    it('should serialize the message body as a single JSON payload', async () => {
+    it('should wrap the message body in an SNS-style envelope by default', async () => {
       await component.sendMessage(testMessage)
 
       expect(SendMessageCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           QueueUrl: queueUrl,
-          MessageBody: JSON.stringify(testMessage)
+          MessageBody: JSON.stringify({ Message: JSON.stringify(testMessage) })
         })
       )
     })
 
-    it('should not set a delay on sent messages', async () => {
+    it('should leave DelaySeconds undefined when no delay option is provided', async () => {
       await component.sendMessage(testMessage)
 
-      expect(SendMessageCommand).toHaveBeenCalledWith(expect.not.objectContaining({ DelaySeconds: expect.anything() }))
+      expect(SendMessageCommand).toHaveBeenCalledWith(expect.objectContaining({ DelaySeconds: undefined }))
     })
   })
 
@@ -105,6 +105,69 @@ describe('when sending messages', () => {
       await expect(component.sendMessage(testMessage)).rejects.toThrow('SQS send failed')
     })
   })
+
+  describe('and isRawMessage is explicitly true', () => {
+    beforeEach(() => {
+      testMessage = { type: 'test', data: 'test data' }
+      sendMock.mockResolvedValue({ MessageId: 'msg-123' })
+      ;(SendMessageCommand as unknown as jest.Mock).mockClear()
+    })
+
+    it('should serialize the message body as a single JSON payload', async () => {
+      await component.sendMessage(testMessage, { isRawMessage: true })
+
+      expect(SendMessageCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          QueueUrl: queueUrl,
+          MessageBody: JSON.stringify(testMessage)
+        })
+      )
+    })
+  })
+
+  describe('and isRawMessage is false', () => {
+    beforeEach(() => {
+      testMessage = { type: 'test', data: 'test data' }
+      sendMock.mockResolvedValue({ MessageId: 'msg-123' })
+      ;(SendMessageCommand as unknown as jest.Mock).mockClear()
+    })
+
+    it('should wrap the message body in an SNS-style envelope', async () => {
+      await component.sendMessage(testMessage, { isRawMessage: false })
+
+      expect(SendMessageCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          QueueUrl: queueUrl,
+          MessageBody: JSON.stringify({ Message: JSON.stringify(testMessage) })
+        })
+      )
+    })
+  })
+
+  describe('and a delaySeconds option is provided', () => {
+    beforeEach(() => {
+      testMessage = { type: 'test', data: 'test data' }
+      sendMock.mockResolvedValue({ MessageId: 'msg-123' })
+      ;(SendMessageCommand as unknown as jest.Mock).mockClear()
+    })
+
+    it('should forward the value to SendMessageCommand.DelaySeconds', async () => {
+      await component.sendMessage(testMessage, { delaySeconds: 30 })
+
+      expect(SendMessageCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          QueueUrl: queueUrl,
+          DelaySeconds: 30
+        })
+      )
+    })
+
+    it('should forward 0 explicitly so callers can override a queue-level default', async () => {
+      await component.sendMessage(testMessage, { delaySeconds: 0 })
+
+      expect(SendMessageCommand).toHaveBeenCalledWith(expect.objectContaining({ DelaySeconds: 0 }))
+    })
+  })
 })
 
 describe('when receiving messages', () => {
@@ -115,12 +178,12 @@ describe('when receiving messages', () => {
       mockMessages = [
         {
           MessageId: 'msg-1',
-          Body: JSON.stringify({ type: 'test1' }),
+          Body: JSON.stringify({ Message: JSON.stringify({ type: 'test1' }) }),
           ReceiptHandle: 'receipt-1'
         },
         {
           MessageId: 'msg-2',
-          Body: JSON.stringify({ type: 'test2' }),
+          Body: JSON.stringify({ Message: JSON.stringify({ type: 'test2' }) }),
           ReceiptHandle: 'receipt-2'
         }
       ]
