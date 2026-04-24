@@ -1,25 +1,26 @@
-# Block Indexer
+# @dcl/block-indexer
 
-[![Coverage Status](https://coveralls.io/repos/github/decentraland/block-indexer/badge.svg?branch=main)](https://coveralls.io/github/decentraland/block-indexer?branch=main)
+Find the block that was the tip of the chain at a given timestamp.
 
-A component to find the block in the blockchain that was the tip of the blockchain at a given timestamp.
-
-## Installation 
+## Installation
 
 `npm i @dcl/block-indexer`
 
 ## Usage
 
 ```ts
-import { createBlockSearch } from "./block-search"
-import { createBlockRepository } from "./block-repository"
-import { createCachingEthereumProvider } from "./caching-ethereum-provider"
+import {
+  createAvlBlockSearch,
+  createBlockRepository,
+  createCachingEthereumProvider
+} from "@dcl/block-indexer"
 
-it("should find the block for given timestamp", async function () {
-  const ethereumProvider = createCachingEthereumProvider(
-    new Web3("https://rpc.decentraland.org/mainnet?project=block-indexer").eth
-  )
-  const blockSearch = createBlockSearch(createBlockRepository(ethereumProvider))
-  expect(await blockSearch.findBlockForTimestamp(1612524240)).toEqual({ block: 11795935, timestamp: 1612524239 })
-}, 30_000)
+const ethereumProvider = createCachingEthereumProvider(
+  new Web3("https://rpc.decentraland.org/mainnet?project=block-indexer").eth
+)
+const blockRepository = createBlockRepository({ logs, metrics, ethereumProvider })
+const blockSearch = createAvlBlockSearch({ logs, metrics, blockRepository })
+
+const block = await blockSearch.findBlockForTimestamp(1612524240)
+// { block: 11795935, timestamp: 1612524239 }
 ```

@@ -92,6 +92,20 @@ describe("when using the caching ethereum provider", () => {
       })
     })
 
+    describe("and the underlying provider returns a block whose timestamp is 0", () => {
+      beforeEach(() => {
+        eth = {
+          getBlock: jest.fn().mockResolvedValue({ timestamp: 0 }),
+          getBlockNumber: jest.fn(),
+        }
+        cachingEth = createCachingEthereumProvider(eth)
+      })
+
+      it("should resolve to that block instead of treating the 0 timestamp as missing", async () => {
+        await expect(cachingEth.getBlock(42)).resolves.toEqual({ timestamp: 0 })
+      })
+    })
+
     describe("and the underlying provider rejects", () => {
       let underlyingError: Error
 

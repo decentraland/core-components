@@ -1,7 +1,7 @@
 export class Node<K, V> {
   public left: Node<K, V> | null = null
   public right: Node<K, V> | null = null
-  public height: number | null = null
+  public height: number = 0
 
   /**
    * Creates a new AVL Tree node.
@@ -57,7 +57,7 @@ export class Node<K, V> {
     if (this.left === null) {
       return -1
     }
-    return this.left.height || 0
+    return this.left.height
   }
 
   /**
@@ -69,6 +69,6 @@ export class Node<K, V> {
     if (this.right === null) {
       return -1
     }
-    return this.right.height || 0
+    return this.right.height
   }
 }

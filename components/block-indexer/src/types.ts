@@ -1,4 +1,3 @@
-import { AvlTree } from './avl-tree/types'
 import { ILoggerComponent, IMetricsComponent } from '@well-known-components/interfaces'
 import { metricsDefinitions } from './metrics'
 
@@ -14,7 +13,6 @@ export type BlockInfo = {
  * @public
  */
 export type BlockSearch = {
-  tree: AvlTree<number, BlockInfo>
   findBlockForTimestamp(ts: number): Promise<BlockInfo | undefined>
 }
 

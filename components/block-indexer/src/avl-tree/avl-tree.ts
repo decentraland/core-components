@@ -29,12 +29,10 @@ export const createAvlTree = <K, V>(
   let _root: Node<K, V> | null = null
 
   /**
-   * Compares two keys with each other.
-   * @param a The first key to compare.
-   * @param b The second key to compare.
-   * @return -1, 0 or 1 if a < b, a == b or a > b respectively.
+   * Default comparator used for both keys and partial values when the caller
+   * doesn't supply one. Returns -1, 0 or 1 for a < b, a === b, a > b.
    */
-  const _defaultCompare = (a: K, b: K): number => {
+  const _defaultOrdering = <T>(a: T, b: T): number => {
     if (a > b) {
       return 1
     }
@@ -44,24 +42,8 @@ export const createAvlTree = <K, V>(
     return 0
   }
 
-  /**
-   * Compares two keys with each other.
-   * @param a The first key to compare.
-   * @param b The second key to compare.
-   * @return -1, 0 or 1 if a < b, a == b or a > b respectively.
-   */
-  const _defaultCompareByValue = (a: Partial<V>, b: Partial<V>): number => {
-    if (a > b) {
-      return 1
-    }
-    if (a < b) {
-      return -1
-    }
-    return 0
-  }
-
-  const _compare: CompareFunction<K> = compare ? compare : _defaultCompare
-  const _compareByValue: PartialCompareFunction<V> = compareByValue ? compareByValue : _defaultCompareByValue
+  const _compare: CompareFunction<K> = compare ?? _defaultOrdering
+  const _compareByValue: PartialCompareFunction<V> = compareByValue ?? _defaultOrdering
 
   /**
    * Inserts a new node with a specific key into the tree.

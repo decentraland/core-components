@@ -110,7 +110,6 @@ export const createAvlBlockSearch = ({ metrics, logs, blockRepository }: BlockSe
   }
 
   return {
-    tree,
     findBlockForTimestamp
   }
 }

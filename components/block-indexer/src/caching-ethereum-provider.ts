@@ -9,7 +9,9 @@ export const createCachingEthereumProvider = (eth: EthereumProvider): EthereumPr
     max: 10000,
     fetchMethod: async (block: number): Promise<string | number> => {
       const found = await eth.getBlock(block)
-      if (found) {
+      // Accept a legitimate genesis-era `0` timestamp while rejecting
+      // missing/null fields that indicate a real "not retrievable" case.
+      if (found && found.timestamp != null) {
         return found.timestamp
       }
 
@@ -23,7 +25,8 @@ export const createCachingEthereumProvider = (eth: EthereumProvider): EthereumPr
 
   async function getBlock(block: number): Promise<{ timestamp: string | number }> {
     const found = await cache.fetch(block)
-    if (found) {
+    // `found` is the cached timestamp value; `!= null` preserves `0`.
+    if (found != null) {
       return {
         timestamp: found
       }

@@ -9,21 +9,6 @@ export const createBlockRepository = ({
   metrics
 }: BlockRepositoryComponents): BlockRepository => {
   const logger = logs.getLogger('block-repository')
-  async function currentBlock(): Promise<BlockInfo> {
-    try {
-      const block = await ethereumProvider.getBlockNumber()
-      metrics.increment('block_indexer_rpc_requests')
-      const found = await findBlock(block)
-      if (!found) {
-        throw Error(`Current block (${block}) could not be retrieved.`)
-      }
-
-      return found
-    } catch (e: any) {
-      logger.error(e)
-      throw e
-    }
-  }
 
   async function findBlock(block: number): Promise<BlockInfo> {
     const tsStart = Date.now()
@@ -31,21 +16,32 @@ export const createBlockRepository = ({
       const { timestamp } = await ethereumProvider.getBlock(block)
       metrics.increment('block_indexer_rpc_requests')
 
-      if (timestamp) {
+      // `timestamp` is `string | number`; `!= null` accepts a legitimate
+      // genesis-era `0` while still rejecting `undefined`/`null` that
+      // indicate a missing field.
+      if (timestamp != null) {
         return {
-          block: block,
+          block,
           timestamp: Number(timestamp)
         }
       }
+      throw Error(`Block ${block} could not be retrieved.`)
     } catch (e: any) {
       logger.error(e)
       throw e
     } finally {
-      const tsEnd = Date.now()
-      metrics.observe('block_indexer_find_block_duration_ms', {}, tsEnd - tsStart)
+      metrics.observe('block_indexer_find_block_duration_ms', {}, Date.now() - tsStart)
     }
+  }
 
-    throw Error(`Block ${block} could not be retrieved.`)
+  async function currentBlock(): Promise<BlockInfo> {
+    // `findBlock` already logs + rethrows on its own path; letting the
+    // `getBlockNumber` error propagate unlogged here avoids the double
+    // `logger.error` the previous implementation produced when
+    // `findBlock` failed.
+    const block = await ethereumProvider.getBlockNumber()
+    metrics.increment('block_indexer_rpc_requests')
+    return findBlock(block)
   }
 
   return {

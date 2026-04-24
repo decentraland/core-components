@@ -58,11 +58,28 @@ describe("when using the block repository", () => {
       })
     })
 
-    describe("and the provider returns a block with a falsy timestamp", () => {
+    describe("and the provider returns a block whose timestamp is 0", () => {
       beforeEach(() => {
         ethereumProvider = {
           getBlockNumber: jest.fn().mockResolvedValue(500),
           getBlock: jest.fn().mockResolvedValue({ timestamp: 0 }),
+        }
+        blockRepository = createBlockRepository({ logs, metrics, ethereumProvider })
+      })
+
+      it("should resolve to that block instead of treating the 0 timestamp as missing", async () => {
+        await expect(blockRepository.currentBlock()).resolves.toEqual({
+          block: 500,
+          timestamp: 0,
+        })
+      })
+    })
+
+    describe("and the provider returns a block with a missing timestamp", () => {
+      beforeEach(() => {
+        ethereumProvider = {
+          getBlockNumber: jest.fn().mockResolvedValue(500),
+          getBlock: jest.fn().mockResolvedValue({ timestamp: undefined as unknown as number }),
         }
         blockRepository = createBlockRepository({ logs, metrics, ethereumProvider })
       })
@@ -127,11 +144,28 @@ describe("when using the block repository", () => {
       })
     })
 
-    describe("and the provider returns a block with a falsy timestamp", () => {
+    describe("and the provider returns a block whose timestamp is 0", () => {
       beforeEach(() => {
         ethereumProvider = {
           getBlockNumber: jest.fn(),
           getBlock: jest.fn().mockResolvedValue({ timestamp: 0 }),
+        }
+        blockRepository = createBlockRepository({ logs, metrics, ethereumProvider })
+      })
+
+      it("should resolve to that block instead of treating the 0 timestamp as missing", async () => {
+        await expect(blockRepository.findBlock(42)).resolves.toEqual({
+          block: 42,
+          timestamp: 0,
+        })
+      })
+    })
+
+    describe("and the provider returns a block with a missing timestamp", () => {
+      beforeEach(() => {
+        ethereumProvider = {
+          getBlockNumber: jest.fn(),
+          getBlock: jest.fn().mockResolvedValue({ timestamp: undefined as unknown as number }),
         }
         blockRepository = createBlockRepository({ logs, metrics, ethereumProvider })
       })
