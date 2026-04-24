@@ -4,12 +4,11 @@ import { IConfigComponent } from '@well-known-components/interfaces'
 import { IPublisherComponent, CustomMessageAttributes, MessageAttribute, PublishableEvent } from './types'
 
 function chunk<T>(theArray: T[], size: number): T[][] {
-  return theArray.reduce((acc: T[][], _, i) => {
-    if (i % size === 0) {
-      acc.push(theArray.slice(i, i + size))
-    }
-    return acc
-  }, [])
+  const out: T[][] = []
+  for (let i = 0; i < theArray.length; i += size) {
+    out.push(theArray.slice(i, i + size))
+  }
+  return out
 }
 
 function validateCustomAttributes(customMessageAttributes?: CustomMessageAttributes): void {
@@ -51,9 +50,11 @@ export async function createSnsComponent({ config }: { config: IConfigComponent 
   const MAX_BATCH_SIZE = 10
   const snsArn = await config.requireString('AWS_SNS_ARN')
   const optionalEndpoint = await config.getString('AWS_SNS_ENDPOINT')
+  const region = await config.getString('AWS_REGION')
 
   const client = new SNSClient({
-    endpoint: optionalEndpoint ? optionalEndpoint : undefined
+    endpoint: optionalEndpoint || undefined,
+    region: region || undefined
   })
 
   async function publishMessage(
