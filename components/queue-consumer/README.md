@@ -44,6 +44,13 @@ messagesHandler.removeMessageHandler(Events.Type.CLIENT, Events.SubType.Client.L
 - **Exponential backoff**: Automatic retry with backoff when queue polling fails
 - **Error isolation**: Handler errors are logged but don't affect other handlers or message processing
 
+## Message format
+
+The consumer parses each message body with a single `JSON.parse(Body)` and expects `{ type, subType, ... }` at the top level. Two delivery paths produce that shape:
+
+- Direct writes via `@dcl/sqs-component`'s `sendMessage(event, { isRawMessage: true })` — the SQS component's default sends an SNS-style envelope for compatibility with legacy consumers, so this consumer requires the explicit opt-in.
+- SNS → SQS subscriptions with **Raw Message Delivery enabled**. Without it, SNS wraps the payload in a `Notification` envelope (`{ "Type": "Notification", "Message": "<stringified event>", ... }`) and the consumer will not match any handler.
+
 ## Configuration
 
 | Option                            | Type     | Default | Description                                                                                                  |

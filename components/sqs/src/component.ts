@@ -11,7 +11,7 @@ import {
   SendMessageCommand
 } from '@aws-sdk/client-sqs'
 
-import type { IQueueComponent, QueueStatus, ReceiveMessagesOptions } from '@dcl/core-commons'
+import type { IQueueComponent, QueueStatus, ReceiveMessagesOptions, SendMessageOptions } from '@dcl/core-commons'
 
 // Helper function to chunk arrays for batch operations
 function chunks<T>(array: T[], size: number): T[][] {
@@ -24,7 +24,7 @@ function chunks<T>(array: T[], size: number): T[][] {
 
 export async function createSqsComponent(config: IConfigComponent): Promise<IQueueComponent> {
   const queueUrl = await config.requireString('AWS_SQS_QUEUE_URL')
-  const endpoint = await config.getString?.('AWS_SQS_ENDPOINT')
+  const endpoint = await config.getString('AWS_SQS_ENDPOINT')
 
   const clientConfig: { endpoint?: string } = {}
   if (endpoint) {
@@ -32,11 +32,17 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
   }
   const client = new SQSClient(clientConfig)
 
-  async function sendMessage(message: any): Promise<void> {
+  async function sendMessage(message: unknown, options?: SendMessageOptions): Promise<void> {
+    // Default to the SNS-envelope shape. Production consumers read that
+    // shape today; opting into raw (`isRawMessage: true`) is for newer
+    // consumers like `@dcl/queue-consumer-component` that expect a single
+    // `JSON.parse(Body)`.
+    const isRaw = options?.isRawMessage ?? false
+    const body = isRaw ? JSON.stringify(message) : JSON.stringify({ Message: JSON.stringify(message) })
     const sendCommand = new SendMessageCommand({
       QueueUrl: queueUrl,
-      MessageBody: JSON.stringify({ Message: JSON.stringify(message) }),
-      DelaySeconds: 10
+      MessageBody: body,
+      DelaySeconds: options?.delaySeconds
     })
     await client.send(sendCommand)
   }

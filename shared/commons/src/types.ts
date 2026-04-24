@@ -109,6 +109,43 @@ export type ReceiveMessagesOptions = {
 }
 
 /**
+ * Options for sending a message to a queue.
+ */
+export type SendMessageOptions = {
+  /**
+   * Controls the shape of the SQS `MessageBody`.
+   *
+   * When `false` (the default) the body is written as
+   * `JSON.stringify({ Message: JSON.stringify(message) })` — the
+   * SNS-envelope shape that existing production consumers have been
+   * reading for a long time. Keeping this as the default preserves
+   * compatibility with those consumers.
+   *
+   * When `true` the body is written as a single `JSON.stringify(message)`,
+   * which is the shape SNS delivers when Raw Message Delivery is
+   * enabled on the subscription, and the shape
+   * `@dcl/queue-consumer-component` decodes with one `JSON.parse(Body)`.
+   * Set this to `true` when the downstream consumer expects the raw
+   * payload.
+   *
+   * @default false
+   */
+  isRawMessage?: boolean
+
+  /**
+   * Seconds to defer delivery of the message. In SQS this maps to
+   * `SendMessageCommand.DelaySeconds`; AWS caps it at 900 (15 minutes)
+   * per request. When omitted (or `0`), the message is immediately
+   * available for receive. For a queue-level default, configure
+   * `DelaySeconds` on the queue itself.
+   *
+   * Callers that need a long-running schedule should use a scheduling
+   * component rather than stacking `delaySeconds` on each send.
+   */
+  delaySeconds?: number
+}
+
+/**
  * The status of a queue.
  */
 export type QueueStatus = {
@@ -124,8 +161,9 @@ export interface IQueueComponent {
   /**
    * Sends a message to the queue.
    * @param message - The message to send.
+   * @param options - Optional send options (e.g. `isRawMessage`).
    */
-  sendMessage(message: any): Promise<void>
+  sendMessage(message: unknown, options?: SendMessageOptions): Promise<void>
   /**
    * Receives messages from the queue.
    * @param amount - The number of messages to receive.

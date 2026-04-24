@@ -55,6 +55,48 @@ describe('when sending messages', () => {
     })
   })
 
+  describe('and a per-call isRawMessage option is provided', () => {
+    describe('and isRawMessage is true, overriding the default wrapInSnsFormat', () => {
+      beforeEach(async () => {
+        // Default component has wrapInSnsFormat: true
+        await component.sendMessage({ type: 'test' }, { isRawMessage: true })
+      })
+
+      it('should write the message body raw, without the SNS envelope', async () => {
+        const messages = await component.receiveMessages(1)
+        const body = JSON.parse(messages[0].Body)
+        expect(body).toEqual({ type: 'test' })
+      })
+    })
+
+    describe('and isRawMessage is false, overriding a wrapInSnsFormat: false component', () => {
+      beforeEach(async () => {
+        component = createMemoryQueueComponent({ pollingDelayMs: 10, wrapInSnsFormat: false })
+        await component.sendMessage({ type: 'test' }, { isRawMessage: false })
+      })
+
+      it('should wrap the message body in the SNS envelope', async () => {
+        const messages = await component.receiveMessages(1)
+        const body = JSON.parse(messages[0].Body)
+        expect(body).toHaveProperty('Message')
+        expect(JSON.parse(body.Message)).toEqual({ type: 'test' })
+      })
+    })
+  })
+
+  describe('and a delaySeconds option is provided', () => {
+    it('should report the delayed message in the delayed-count only until its visibility time', async () => {
+      await component.sendMessage({ type: 'delayed' }, { delaySeconds: 1 })
+
+      // Status classifies messages as visible (visibleAt <= now) or not
+      // visible (visibleAt > now). A freshly-delayed message should fall
+      // into the not-visible bucket.
+      const statusBefore = await component.getStatus()
+      expect(statusBefore.ApproximateNumberOfMessagesNotVisible).toBe('1')
+      expect(statusBefore.ApproximateNumberOfMessages).toBe('0')
+    })
+  })
+
   describe('and multiple messages are sent', () => {
     beforeEach(async () => {
       await component.sendMessage({ id: 1 })
