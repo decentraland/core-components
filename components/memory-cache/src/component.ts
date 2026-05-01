@@ -11,11 +11,36 @@ import {
   LockNotReleasedError
 } from '@dcl/core-commons'
 
-export function createInMemoryCacheComponent(): ICacheStorageComponent {
-  const cache = new LRUCache<string, any>({
-    max: 10000,
-    ttl: 1000 * 60 * 60 // 1 hour default TTL
-  })
+export type InMemoryCacheOptions = {
+  /** Maximum number of items the cache will hold. Must be a positive integer. Defaults to 10_000. */
+  max?: number
+  /**
+   * Default TTL in **milliseconds** applied to every entry. When omitted, defaults to one hour.
+   * Pass `0` to disable TTL entirely so entries live until evicted by the LRU cap. Must not be negative.
+   *
+   * Note: the per-call `ttl` argument on `set(key, value, ttl)` is interpreted in **seconds** (it goes
+   * through `fromSecondsToMilliseconds`); only this constructor option is in milliseconds.
+   */
+  ttl?: number
+}
+
+export const DEFAULT_MAX = 10_000
+export const DEFAULT_TTL_MS = 1000 * 60 * 60
+
+export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): ICacheStorageComponent {
+  const max = options?.max ?? DEFAULT_MAX
+  const ttl = options?.ttl ?? DEFAULT_TTL_MS
+
+  if (!Number.isInteger(max) || max < 1) {
+    throw new TypeError(`createInMemoryCacheComponent: "max" must be a positive integer, got ${options?.max}`)
+  }
+  if (!Number.isFinite(ttl) || ttl < 0) {
+    throw new TypeError(
+      `createInMemoryCacheComponent: "ttl" must be a non-negative finite number of milliseconds, got ${options?.ttl}`
+    )
+  }
+
+  const cache = new LRUCache<string, any>(ttl > 0 ? { max, ttl } : { max })
 
   const randomValue = randomUUID()
 

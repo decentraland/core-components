@@ -7,6 +7,157 @@ beforeEach(() => {
   component = createInMemoryCacheComponent()
 })
 
+describe('when constructing the component with options', () => {
+  describe('and ttl is set to 0', () => {
+    let cache: ICacheStorageComponent
+    let key: string
+    let value: string
+    let waitMs: number
+
+    beforeEach(async () => {
+      key = 'persistent-key'
+      value = 'persistent-value'
+      // Wait long enough that the positive-ttl contrast test below DOES expire its entry,
+      // proving the cache *would* drop entries on this wait when TTL is enabled.
+      waitMs = 80
+      cache = createInMemoryCacheComponent({ ttl: 0 })
+      await cache.set(key, value)
+      await sleep(waitMs)
+    })
+
+    it('should keep the entry past a wait that expires a positive-ttl cache', async () => {
+      const result = await cache.get<string>(key)
+      expect(result).toBe(value)
+    })
+  })
+
+  describe('and ttl is set to a positive value below the wait', () => {
+    let cache: ICacheStorageComponent
+    let key: string
+    let value: string
+    let ttlMs: number
+    let waitMs: number
+
+    beforeEach(async () => {
+      key = 'expiring-key'
+      value = 'expiring-value'
+      ttlMs = 30
+      waitMs = 80
+      cache = createInMemoryCacheComponent({ ttl: ttlMs })
+      await cache.set(key, value)
+      await sleep(waitMs)
+    })
+
+    it('should drop the entry once the constructor TTL elapses', async () => {
+      const result = await cache.get<string>(key)
+      expect(result).toBeNull()
+    })
+  })
+
+  describe('and max is below the default cap', () => {
+    let cache: ICacheStorageComponent
+    let firstKey: string
+    let secondKey: string
+    let thirdKey: string
+
+    beforeEach(async () => {
+      firstKey = 'a'
+      secondKey = 'b'
+      thirdKey = 'c'
+      cache = createInMemoryCacheComponent({ max: 2, ttl: 0 })
+      await cache.set(firstKey, 1)
+      await cache.set(secondKey, 2)
+      await cache.set(thirdKey, 3)
+    })
+
+    it('should evict the least-recently-used entry when the cap is exceeded', async () => {
+      const a = await cache.get<number>(firstKey)
+      const b = await cache.get<number>(secondKey)
+      const c = await cache.get<number>(thirdKey)
+
+      expect(a).toBeNull()
+      expect(b).toBe(2)
+      expect(c).toBe(3)
+    })
+  })
+
+  describe('and max is invalid', () => {
+    describe('and max is zero', () => {
+      let max: number
+
+      beforeEach(() => {
+        max = 0
+      })
+
+      it('should throw a TypeError at construction', () => {
+        expect(() => createInMemoryCacheComponent({ max })).toThrow(TypeError)
+      })
+    })
+
+    describe('and max is negative', () => {
+      let max: number
+
+      beforeEach(() => {
+        max = -1
+      })
+
+      it('should throw a TypeError at construction', () => {
+        expect(() => createInMemoryCacheComponent({ max })).toThrow(TypeError)
+      })
+    })
+
+    describe('and max is a non-integer', () => {
+      let max: number
+
+      beforeEach(() => {
+        max = 1.5
+      })
+
+      it('should throw a TypeError at construction', () => {
+        expect(() => createInMemoryCacheComponent({ max })).toThrow(TypeError)
+      })
+    })
+  })
+
+  describe('and ttl is invalid', () => {
+    describe('and ttl is negative', () => {
+      let ttl: number
+
+      beforeEach(() => {
+        ttl = -1
+      })
+
+      it('should throw a TypeError at construction', () => {
+        expect(() => createInMemoryCacheComponent({ ttl })).toThrow(TypeError)
+      })
+    })
+
+    describe('and ttl is NaN', () => {
+      let ttl: number
+
+      beforeEach(() => {
+        ttl = NaN
+      })
+
+      it('should throw a TypeError at construction', () => {
+        expect(() => createInMemoryCacheComponent({ ttl })).toThrow(TypeError)
+      })
+    })
+
+    describe('and ttl is Infinity', () => {
+      let ttl: number
+
+      beforeEach(() => {
+        ttl = Infinity
+      })
+
+      it('should throw a TypeError at construction', () => {
+        expect(() => createInMemoryCacheComponent({ ttl })).toThrow(TypeError)
+      })
+    })
+  })
+})
+
 describe('when storing and retrieving values', () => {
   let testKey: string
   let testValue: { id: number; name: string }
