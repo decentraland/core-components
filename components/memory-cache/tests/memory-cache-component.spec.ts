@@ -7,6 +7,43 @@ beforeEach(() => {
   component = createInMemoryCacheComponent()
 })
 
+describe('when constructing the component with options', () => {
+  describe('and ttl is set to 0', () => {
+    let cache: ICacheStorageComponent
+
+    beforeEach(() => {
+      cache = createInMemoryCacheComponent({ ttl: 0 })
+    })
+
+    it('should keep entries past the default 1h TTL boundary', async () => {
+      await cache.set('persistent-key', 'persistent-value')
+      const result = await cache.get('persistent-key')
+      expect(result).toBe('persistent-value')
+    })
+  })
+
+  describe('and max is below the default cap', () => {
+    let cache: ICacheStorageComponent
+
+    beforeEach(async () => {
+      cache = createInMemoryCacheComponent({ max: 2, ttl: 0 })
+      await cache.set('a', 1)
+      await cache.set('b', 2)
+      await cache.set('c', 3)
+    })
+
+    it('should evict the least-recently-used entry once the cap is exceeded', async () => {
+      const a = await cache.get<number>('a')
+      const b = await cache.get<number>('b')
+      const c = await cache.get<number>('c')
+
+      expect(a).toBeNull()
+      expect(b).toBe(2)
+      expect(c).toBe(3)
+    })
+  })
+})
+
 describe('when storing and retrieving values', () => {
   let testKey: string
   let testValue: { id: number; name: string }
