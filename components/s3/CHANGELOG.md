@@ -1,5 +1,12 @@
 # @dcl/s3-component
 
+## 2.1.1
+
+### Patch Changes
+
+- Updated dependencies [f79563a]
+  - @dcl/core-commons@0.8.0
+
 ## 2.1.0
 
 ### Minor Changes
