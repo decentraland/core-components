@@ -238,19 +238,20 @@ describe('when storing and retrieving values', () => {
   })
 
   describe('and checking the existence of a key after its TTL elapses', () => {
+    // Per-call TTL is interpreted in seconds (via fromSecondsToMilliseconds),
+    // so anything sub-second isn't accepted by `set` — use the constructor
+    // TTL with a millisecond value for a fast test. Pattern mirrors the
+    // existing "ttl is set to a positive value below the wait" test above.
+    let cache: ICacheStorageComponent
+
     beforeEach(async () => {
-      // Per-call TTL is interpreted in seconds, so anything less than 1 isn't
-      // accepted by `set` — use the constructor TTL instead so we can pick a
-      // sub-second value for a fast test.
-      const shortLived = createInMemoryCacheComponent({ ttl: 20 })
-      await shortLived.set(testKey, testValue)
-      await new Promise((r) => setTimeout(r, 40))
-      // Re-bind component to the short-lived instance for the assertion.
-      component = shortLived
+      cache = createInMemoryCacheComponent({ ttl: 30 })
+      await cache.set(testKey, testValue)
+      await sleep(80)
     })
 
     it('should return false (LRUCache.has respects expiry)', async () => {
-      expect(await component.exists(testKey)).toBe(false)
+      expect(await cache.exists(testKey)).toBe(false)
     })
   })
 })
