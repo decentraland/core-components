@@ -209,6 +209,50 @@ describe('when storing and retrieving values', () => {
       expect(result).toBeNull()
     })
   })
+
+  describe('and checking the existence of a key that was set', () => {
+    beforeEach(async () => {
+      await component.set(testKey, testValue)
+    })
+
+    it('should return true', async () => {
+      expect(await component.exists(testKey)).toBe(true)
+    })
+  })
+
+  describe('and checking the existence of a key that was never set', () => {
+    it('should return false', async () => {
+      expect(await component.exists('never-set-key')).toBe(false)
+    })
+  })
+
+  describe('and checking the existence of a key after it was removed', () => {
+    beforeEach(async () => {
+      await component.set(testKey, testValue)
+      await component.remove(testKey)
+    })
+
+    it('should return false', async () => {
+      expect(await component.exists(testKey)).toBe(false)
+    })
+  })
+
+  describe('and checking the existence of a key after its TTL elapses', () => {
+    beforeEach(async () => {
+      // Per-call TTL is interpreted in seconds, so anything less than 1 isn't
+      // accepted by `set` — use the constructor TTL instead so we can pick a
+      // sub-second value for a fast test.
+      const shortLived = createInMemoryCacheComponent({ ttl: 20 })
+      await shortLived.set(testKey, testValue)
+      await new Promise((r) => setTimeout(r, 40))
+      // Re-bind component to the short-lived instance for the assertion.
+      component = shortLived
+    })
+
+    it('should return false (LRUCache.has respects expiry)', async () => {
+      expect(await component.exists(testKey)).toBe(false)
+    })
+  })
 })
 
 describe('when scanning keys', () => {

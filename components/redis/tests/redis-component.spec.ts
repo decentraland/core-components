@@ -16,6 +16,7 @@ let quitMock: jest.Mock
 let getMock: jest.Mock
 let setMock: jest.Mock
 let delMock: jest.Mock
+let existsMock: jest.Mock
 let scanMock: jest.Mock
 let hSetMock: jest.Mock
 let hGetMock: jest.Mock
@@ -36,6 +37,7 @@ beforeEach(async () => {
   getMock = jest.fn()
   setMock = jest.fn().mockResolvedValue('OK')
   delMock = jest.fn().mockResolvedValue(1)
+  existsMock = jest.fn()
   scanMock = jest.fn()
   hSetMock = jest.fn().mockResolvedValue(1)
   hGetMock = jest.fn()
@@ -58,6 +60,7 @@ beforeEach(async () => {
     get: getMock,
     set: setMock,
     del: delMock,
+    exists: existsMock,
     scan: scanMock,
     hSet: hSetMock,
     hGet: hGetMock,
@@ -139,6 +142,46 @@ describe('when storing and retrieving values', () => {
 
     it('should call Redis del command', () => {
       expect(delMock).toHaveBeenCalledWith(testKey.toLowerCase())
+    })
+  })
+
+  describe('and checking the existence of a key that is present', () => {
+    let result: boolean
+
+    beforeEach(async () => {
+      existsMock.mockResolvedValue(1)
+      result = await component.exists(testKey)
+    })
+
+    it('should call Redis exists with the lowercased key', () => {
+      expect(existsMock).toHaveBeenCalledWith(testKey.toLowerCase())
+    })
+
+    it('should return true', () => {
+      expect(result).toBe(true)
+    })
+  })
+
+  describe('and checking the existence of a key that is absent', () => {
+    let result: boolean
+
+    beforeEach(async () => {
+      existsMock.mockResolvedValue(0)
+      result = await component.exists(testKey)
+    })
+
+    it('should return false', () => {
+      expect(result).toBe(false)
+    })
+  })
+
+  describe('and checking the existence of a key when Redis errors', () => {
+    beforeEach(() => {
+      existsMock.mockRejectedValue(new Error('boom'))
+    })
+
+    it('should rethrow the error', async () => {
+      await expect(component.exists(testKey)).rejects.toThrow('boom')
     })
   })
 })

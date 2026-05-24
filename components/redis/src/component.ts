@@ -164,6 +164,18 @@ export async function createRedisComponent(
     }
   }
 
+  async function exists(key: string): Promise<boolean> {
+    try {
+      // node-redis returns the count of keys that exist among the args; for a
+      // single key we get 0 or 1. Coerce to boolean for the interface.
+      const count = await client.exists(key.toLowerCase())
+      return count > 0
+    } catch (err: any) {
+      logger.error(`Error checking existence of key "${key}"`, err)
+      throw err
+    }
+  }
+
   async function keys(pattern: string = '*'): Promise<string[]> {
     try {
       const allKeys: string[] = []
@@ -217,6 +229,7 @@ export async function createRedisComponent(
     get,
     set,
     remove,
+    exists,
     keys,
     setInHash,
     getFromHash,

@@ -25,6 +25,15 @@ export interface ICacheStorageComponent extends IBaseComponent {
    */
   remove(key: string): Promise<void>
   /**
+   * Checks whether a key is present in the cache. Useful when callers only
+   * need to know about presence (e.g. set-based existence checks like a
+   * "have we seen this hash before?" cache) and would rather not transfer
+   * the value over the wire.
+   * @param key - The key to look up.
+   * @returns Promise resolving to `true` if the key exists, `false` otherwise.
+   */
+  exists(key: string): Promise<boolean>
+  /**
    * Retrieves all keys from cache.
    * @returns Promise resolving to an array of all keys.
    */
