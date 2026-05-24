@@ -59,6 +59,13 @@ export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): IC
       cache.delete(key)
     },
 
+    async exists(key: string): Promise<boolean> {
+      // `LRUCache.has` returns false for expired entries and (by default) does
+      // not refresh the LRU position, so the call is read-only with respect to
+      // both expiry and recency — exactly what an existence check should be.
+      return cache.has(key)
+    },
+
     async keys(pattern?: string): Promise<string[]> {
       const allKeys = Array.from(cache.keys()) as string[]
       if (!pattern) return allKeys

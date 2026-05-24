@@ -209,6 +209,51 @@ describe('when storing and retrieving values', () => {
       expect(result).toBeNull()
     })
   })
+
+  describe('and checking the existence of a key that was set', () => {
+    beforeEach(async () => {
+      await component.set(testKey, testValue)
+    })
+
+    it('should return true', async () => {
+      expect(await component.exists(testKey)).toBe(true)
+    })
+  })
+
+  describe('and checking the existence of a key that was never set', () => {
+    it('should return false', async () => {
+      expect(await component.exists('never-set-key')).toBe(false)
+    })
+  })
+
+  describe('and checking the existence of a key after it was removed', () => {
+    beforeEach(async () => {
+      await component.set(testKey, testValue)
+      await component.remove(testKey)
+    })
+
+    it('should return false', async () => {
+      expect(await component.exists(testKey)).toBe(false)
+    })
+  })
+
+  describe('and checking the existence of a key after its TTL elapses', () => {
+    // Per-call TTL is interpreted in seconds (via fromSecondsToMilliseconds),
+    // so anything sub-second isn't accepted by `set` — use the constructor
+    // TTL with a millisecond value for a fast test. Pattern mirrors the
+    // existing "ttl is set to a positive value below the wait" test above.
+    let cache: ICacheStorageComponent
+
+    beforeEach(async () => {
+      cache = createInMemoryCacheComponent({ ttl: 30 })
+      await cache.set(testKey, testValue)
+      await sleep(80)
+    })
+
+    it('should return false (LRUCache.has respects expiry)', async () => {
+      expect(await cache.exists(testKey)).toBe(false)
+    })
+  })
 })
 
 describe('when scanning keys', () => {
