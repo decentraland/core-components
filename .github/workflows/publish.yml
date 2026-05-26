@@ -58,6 +58,10 @@ jobs:
           title: 'chore: version packages'
           commit: 'chore: version packages [skip ci]'
           publish: pnpm ci:publish
+          createGithubReleases: true
           commitMode: 'github-api'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # changeset publish shells through `npm publish`; this env flips on
+          # provenance the same way the previous `--provenance` flag did.
+          NPM_CONFIG_PROVENANCE: 'true'
