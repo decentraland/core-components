@@ -2,6 +2,11 @@
   "name": "@dcl/pg-component",
   "version": "0.2.0",
   "description": "PG component for core components library",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/pg"
+  },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "files": [

@@ -2,6 +2,11 @@
   "name": "@dcl/block-indexer",
   "version": "1.2.0",
   "description": "On-chain block indexer component — finds the block at the tip of the blockchain at a given timestamp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/block-indexer"
+  },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "files": [

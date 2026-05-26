@@ -2,6 +2,11 @@
   "name": "@dcl/metrics",
   "version": "1.0.1",
   "description": "metrics component",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/metrics"
+  },
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
   "files": [

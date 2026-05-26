@@ -2,6 +2,11 @@
   "name": "@dcl/core-commons",
   "version": "0.8.0",
   "description": "Shared utilities and types for core components",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "shared/commons"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
