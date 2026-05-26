@@ -2,6 +2,11 @@
   "name": "@dcl/queue-consumer-component",
   "version": "3.0.1",
   "description": "Queue consumer component for core components library",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/queue-consumer"
+  },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "files": [
