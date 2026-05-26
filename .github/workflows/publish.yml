@@ -53,7 +53,10 @@ jobs:
 
       - name: Create Release Pull Request or Publish
         id: changesets
-        uses: changesets/action@v1
+        # Pinned to v1.8.0 by commit SHA. Tags on third-party actions are
+        # mutable; a SHA is not. Bump deliberately when reviewing a new
+        # release rather than tracking a floating tag.
+        uses: changesets/action@63a615b9cd06ba9a3e6d13796c7fbcb080a60a0b # v1.8.0
         with:
           title: 'chore: version packages'
           commit: 'chore: version packages [skip ci]'
