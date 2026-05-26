@@ -32,6 +32,14 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
+      # Node 20 ships with npm 10.x; Trusted Publishing landed in npm 11.5.1.
+      # pnpm publish shells through npm under the hood, so the npm CLI on the
+      # runner is what needs to support the OIDC exchange. Pin to a known-good
+      # version that has trusted publishing rather than tracking @latest, so a
+      # future npm release can't break this workflow without us noticing.
+      - name: Install npm with Trusted Publishing support
+        run: npm install -g npm@^11.5.1
+
       - name: Get pnpm store directory
         shell: bash
         run: |
