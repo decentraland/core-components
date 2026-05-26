@@ -9,6 +9,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # Required so the runner can mint an OIDC token; pnpm exchanges it
+      # with the npm registry for a short-lived publish credential (Trusted
+      # Publishing). Replaces the long-lived NPM_TOKEN secret that used to
+      # be written into ~/.npmrc.
+      id-token: write
     runs-on: ubuntu-latest
     # Prevents multiple jobs from running at the same time
     concurrency:
@@ -38,14 +43,6 @@ jobs:
       - name: Build packages
         run: pnpm build
 
-      - name: Creating .npmrc
-        run: |
-          cat << EOF > "$HOME/.npmrc"
-            //registry.npmjs.org/:_authToken=$NPM_TOKEN
-          EOF
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Create Release Pull Request or Publish
         id: changesets
         uses: changesets/action@v1
@@ -55,5 +52,4 @@ jobs:
           publish: pnpm ci:publish
           commitMode: 'github-api'
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
