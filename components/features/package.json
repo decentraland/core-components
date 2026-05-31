@@ -1,0 +1,35 @@
+{
+  "name": "@dcl/features-component",
+  "version": "0.0.0",
+  "description": "Feature flags component for core components library",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/features"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/core-commons": "workspace:*",
+    "@well-known-components/interfaces": "^1.5.2"
+  },
+  "devDependencies": {
+    "@well-known-components/env-config-provider": "^1.2.0",
+    "@well-known-components/logger": "^3.1.3",
+    "@well-known-components/test-helpers": "^1.5.8",
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
