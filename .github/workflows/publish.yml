@@ -32,7 +32,7 @@ jobs:
       - name: Setup node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'pnpm'
 
       # Node 20 ships with npm 10.x; Trusted Publishing landed in npm 11.5.1.
