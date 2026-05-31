@@ -166,6 +166,16 @@ importers:
         specifier: ^8.12.1
         version: 8.18.3
 
+  components/http-tracer:
+    dependencies:
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   components/job:
     dependencies:
       '@dcl/core-commons':
