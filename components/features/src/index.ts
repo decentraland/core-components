@@ -50,15 +50,12 @@ export async function createFeaturesComponent(
     return !!featureFlags?.flags[`${app}-${feature}`]
   }
 
-  async function getFeatureVariant<FeatureFlagVariant>(
-    app: string,
-    feature: string
-  ): Promise<FeatureFlagVariant | null> {
+  async function getFeatureVariant(app: string, feature: string): Promise<FeatureFlagVariant | null> {
     const ffKey = `${app}-${feature}`
     const featureFlags = await fetchFeatureFlags(app)
 
     if (featureFlags?.flags[ffKey] && featureFlags?.variants[ffKey]) {
-      return featureFlags.variants[ffKey] as unknown as FeatureFlagVariant
+      return featureFlags.variants[ffKey]
     }
 
     return null
