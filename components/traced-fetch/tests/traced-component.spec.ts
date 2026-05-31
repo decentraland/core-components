@@ -1,9 +1,10 @@
-import { ITracerComponent, IFetchComponent } from '@well-known-components/interfaces'
+import { ITracerComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 import { createTracedFetcherComponent } from '../src/component'
-import { createFetchComponent } from '@well-known-components/fetch-component'
+import { createFetchComponent } from '@dcl/fetch-component'
 
 // Mock the fetch component module
-jest.mock('@well-known-components/fetch-component', () => ({
+jest.mock('@dcl/fetch-component', () => ({
   createFetchComponent: jest.fn()
 }))
 

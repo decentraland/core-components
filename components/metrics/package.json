@@ -23,6 +23,7 @@
     "prom-client": "^15.1.0"
   },
   "devDependencies": {
+    "@dcl/core-commons": "workspace:*",
     "@dcl/http-server": "^1.0.0",
     "@types/node-fetch": "^2.6.12",
     "@well-known-components/env-config-provider": "^1.1.0",

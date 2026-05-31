@@ -5,6 +5,34 @@ export interface ASharedType {
   a: string
 }
 
+// Fetch component types
+
+/**
+ * Options for an outbound fetch request.
+ *
+ * Extends the native Node `fetch` `RequestInit` with the retry and timeout
+ * controls understood by the fetch component. The component targets the
+ * default Node fetch API, so `RequestInit`, `Request` and `Response` are the
+ * global (undici) types shipped with Node, not `node-fetch`.
+ */
+export type RequestOptions = RequestInit & {
+  /** Controller used to abort the request (e.g. on timeout). */
+  abortController?: AbortController
+  /** Milliseconds to wait before aborting the request. */
+  timeout?: number
+  /** Number of attempts for idempotent requests before giving up. */
+  attempts?: number
+  /** Milliseconds to wait between retry attempts. */
+  retryDelay?: number
+}
+
+/**
+ * A fetch component backed by the default Node `fetch` API.
+ */
+export type IFetchComponent = {
+  fetch(url: string | URL | Request, init?: RequestOptions): Promise<Response>
+}
+
 export interface ICacheStorageComponent extends IBaseComponent {
   /**
    * Retrieves a value from cache by key.

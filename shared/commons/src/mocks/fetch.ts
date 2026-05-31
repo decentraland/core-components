@@ -1,4 +1,4 @@
-import { IFetchComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '../types'
 
 export const createFetchMockedComponent = (
   overrides?: Partial<jest.Mocked<IFetchComponent>>
