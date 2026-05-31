@@ -22,7 +22,3 @@ It wraps the server with a middleware that:
 1. Parses the incoming `traceparent` and `tracestate` headers
 2. Opens a trace span for the request
 3. Injects the resulting `traceparent` (and `tracestate`) headers into the response
-
-## License
-
-Apache-2.0
