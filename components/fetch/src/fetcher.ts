@@ -5,8 +5,11 @@ const NON_RETRYABLE_STATUS_CODES = [400, 401, 403, 404]
 const IDEMPOTENT_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE']
 
 async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: RequestOptions): Promise<Response> {
-  const { timeout, abortController, signal: timeoutSignal, retryDelay } = options
-  let attempts = options.attempts!
+  // Split the component-specific controls (timeout, retries, abort controller) from
+  // the standard `RequestInit` keys that are forwarded as-is to the native fetch.
+  const { timeout, abortController, retryDelay, attempts: attemptsOption, ...fetchInit } = options
+  const timeoutSignal = fetchInit.signal
+  let attempts = attemptsOption!
   let timer: NodeJS.Timeout | null = null
   let response: Response | undefined = undefined
 
@@ -18,10 +21,7 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
         }, timeout)
       }
 
-      const fetchPromise = fetch(url, {
-        ...options,
-        signal: timeoutSignal
-      })
+      const fetchPromise = fetch(url, fetchInit)
 
       const racePromise = Promise.race([
         fetchPromise,

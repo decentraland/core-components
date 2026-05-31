@@ -28,6 +28,10 @@ export type RequestOptions = RequestInit & {
 
 /**
  * A fetch component backed by the default Node `fetch` API.
+ *
+ * `Request`, `Response` and `RequestInit` are the global types provided by Node
+ * (via `@types/node`), so consumers must run on Node 18+ where `fetch` is part
+ * of the runtime.
  */
 export type IFetchComponent = {
   fetch(url: string | URL | Request, init?: RequestOptions): Promise<Response>
