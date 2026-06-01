@@ -20,7 +20,7 @@ export const metrics = {
   },
   http_request_size_bytes: {
     type: IMetricsComponent.HistogramType,
-    help: 'Duration of HTTP requests size in bytes',
+    help: 'Size of HTTP requests in bytes',
     labelNames: httpLabels
   }
 }

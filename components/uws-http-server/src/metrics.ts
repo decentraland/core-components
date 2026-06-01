@@ -33,22 +33,30 @@ export async function createMetricsHandler(
   return {
     path: metricsPath,
     handler: async (res: uws.HttpResponse, req: uws.HttpRequest) => {
-      const body = await registry.metrics()
+      // uWebSockets.js invalidates `res` once the client disconnects; writing to
+      // it afterwards throws and crashes the process. Track aborts so the async
+      // section below can bail out before touching `res` again.
+      let aborted = false
+      res.onAborted(() => {
+        aborted = true
+      })
 
+      // The request object is only valid synchronously (before the first
+      // `await`), so authorization is checked here. This also avoids serializing
+      // the metrics for unauthorized callers.
       if (bearerToken) {
         const header = req.getHeader('authorization')
-        if (!header) {
-          res.writeStatus('401 Forbidden')
-          res.end()
-          return
-        }
-        const [_, value] = header.split(' ')
-        if (value !== bearerToken) {
-          res.writeStatus('401 Forbidden')
+        const [scheme, value] = header ? header.split(' ') : []
+        if (scheme !== 'Bearer' || value !== bearerToken) {
+          res.writeStatus('401 Unauthorized')
           res.end()
           return
         }
       }
+
+      const body = await registry.metrics()
+
+      if (aborted) return
 
       // heavy-metric servers that run for long hours tend to generate precision problems
       // and memory degradation for histograms if not cleared enough. this method
