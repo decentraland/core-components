@@ -24,7 +24,6 @@ describe('integration test', () => {
 
     expect(await res.text()).toEqual('ok')
 
-    // `stop` is optional on IBaseComponent but always provided by createUWsComponent
-    await server.stop!()
+    await server.stop()
   })
 })

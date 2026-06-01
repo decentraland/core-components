@@ -42,6 +42,7 @@ export type PromRegistry = {
 
 export type IUWsComponent = IBaseComponent & {
   start(): Promise<void>
+  stop(): Promise<void>
   app: uws.TemplatedApp
 }
 
