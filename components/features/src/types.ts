@@ -1,4 +1,4 @@
-import { IConfigComponent, ILoggerComponent } from "@well-known-components/interfaces"
+import { IBaseComponent, IConfigComponent, ILoggerComponent } from "@well-known-components/interfaces"
 import { IFetchComponent } from "@dcl/core-commons"
 
 /**
@@ -31,9 +31,24 @@ export type FeaturesComponents = {
 }
 
 /**
+ * Options for the features component.
  * @public
  */
-export type IFeaturesComponent = {
+export type FeaturesComponentOptions = {
+  /**
+   * Applications whose feature flags are preloaded on start and continuously
+   * refreshed in the background. Reads for these applications are served from
+   * the in-memory cache. Applications that are not registered are still
+   * supported, but their flags are fetched on every call (with in-flight
+   * de-duplication).
+   */
+  apps?: string[]
+}
+
+/**
+ * @public
+ */
+export type IFeaturesComponent = IBaseComponent & {
   /**
    * Helper to get whether a feature flag is enabled or disabled.
    * It will first look into your env file for the feature flag, if it is not defined there,
