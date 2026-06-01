@@ -25,7 +25,8 @@ core-components/
 │   ├── slack/            # Slack messaging component
 │   ├── sns/              # AWS SNS publisher component
 │   ├── sqs/              # AWS SQS queue component
-│   └── traced-fetch/     # Traced fetch component with distributed tracing
+│   ├── traced-fetch/     # Traced fetch component with distributed tracing
+│   └── uws-http-server/  # uWebSockets.js based HTTP server component
 └── shared/             # Shared utilities and types
     └── commons/          # Common utilities, types, and constants
 ```
@@ -35,6 +36,7 @@ core-components/
 ### Infrastructure
 
 - **HTTP Server Component** (`@dcl/http-server`) - HTTP server with routing, middleware, CORS, and WebSocket support
+- **uWS HTTP Server Component** (`@dcl/uws-http-server`) - uWebSockets.js based HTTP server with lifecycle management and Prometheus metrics helpers
 
 ### Observability
 
@@ -166,6 +168,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/sns-component`
 - `@dcl/sqs-component`
 - `@dcl/traced-fetch-component`
+- `@dcl/uws-http-server`
 - `@dcl/core-commons`
 
 ### Publishing Workflow
