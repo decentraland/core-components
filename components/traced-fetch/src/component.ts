@@ -1,5 +1,6 @@
-import { createFetchComponent } from '@well-known-components/fetch-component'
-import type { IFetchComponent, ITracerComponent } from '@well-known-components/interfaces'
+import { createFetchComponent } from '@dcl/fetch-component'
+import type { IFetchComponent } from '@dcl/core-commons'
+import type { ITracerComponent } from '@well-known-components/interfaces'
 
 /**
  * Type guard to check if the headers object is a Headers-like object.

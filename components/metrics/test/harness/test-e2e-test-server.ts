@@ -9,7 +9,7 @@ import {
 } from '@dcl/http-server'
 import { createRunner } from '@well-known-components/test-helpers'
 import { mockedRouter } from './mockedServer'
-import { IFetchComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 
 // creates a "jest-like" describe function to run tests using the test components
 export const describeTestE2E = createRunner({
@@ -29,7 +29,9 @@ async function initComponents(): Promise<TestComponents> {
 
   const server = createTestServerComponent<any>()
 
-  const fetch: IFetchComponent = server
+  // createTestServerComponent returns a node-fetch based component; bridge it to
+  // the shared (native) fetch type used by the components.
+  const fetch: IFetchComponent = server as unknown as IFetchComponent
   const metrics = await createMetricsComponent(metricDeclarations, { config })
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 

@@ -1,5 +1,10 @@
-import { ILoggerComponent, IFetchComponent, IConfigComponent } from '@well-known-components/interfaces'
-import { createFetchMockedComponent, createLoggerMockedComponent, createConfigMockedComponent } from '@dcl/core-commons'
+import { ILoggerComponent, IConfigComponent } from '@well-known-components/interfaces'
+import {
+  IFetchComponent,
+  createFetchMockedComponent,
+  createLoggerMockedComponent,
+  createConfigMockedComponent
+} from '@dcl/core-commons'
 import { createAnalyticsComponent } from '../src/component'
 import { IAnalyticsComponent } from '../src/types'
 

@@ -11,6 +11,7 @@ core-components/
 ├── components/          # Reusable components
 │   ├── analytics/        # Analytics component for event tracking
 │   ├── block-indexer/    # On-chain block indexer component
+│   ├── fetch/            # Fetch component using the native Node fetch API
 │   ├── http-server/      # HTTP server component
 │   ├── job/              # Job scheduling and execution component
 │   ├── memory-cache/     # In-memory LRU cache component
@@ -67,6 +68,7 @@ core-components/
 
 - **Job Component** (`@dcl/job-component`) - Job scheduling and execution
 - **Schema Validator Component** (`@dcl/schema-validator-component`) - JSON schema validation middleware
+- **Fetch Component** (`@dcl/fetch-component`) - HTTP client with retries and timeouts on the native Node fetch API
 - **Traced Fetch Component** (`@dcl/traced-fetch-component`) - HTTP requests with distributed tracing
 - **Core Commons** (`@dcl/core-commons`) - Shared utilities, types, and constants
 
@@ -155,6 +157,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/queue-consumer-component`
 - `@dcl/redis-component`
 - `@dcl/s3-component`
+- `@dcl/fetch-component`
 - `@dcl/schema-validator-component`
 - `@dcl/slack-component`
 - `@dcl/sns-component`

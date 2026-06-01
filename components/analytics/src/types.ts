@@ -1,4 +1,5 @@
-import { IConfigComponent, IFetchComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { IConfigComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 
 export interface IAnalyticsDependencies {
   logs: ILoggerComponent

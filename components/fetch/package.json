@@ -1,11 +1,11 @@
 {
-  "name": "@dcl/traced-fetch-component",
-  "version": "1.0.4",
-  "description": "Traced fetch component for core components library",
+  "name": "@dcl/fetch-component",
+  "version": "0.0.0",
+  "description": "Fetch component for core components library",
   "repository": {
     "type": "git",
     "url": "https://github.com/decentraland/core-components",
-    "directory": "components/traced-fetch"
+    "directory": "components/fetch"
   },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -20,9 +20,7 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
-    "@dcl/core-commons": "workspace:*",
-    "@dcl/fetch-component": "workspace:*",
-    "@well-known-components/interfaces": "^1.5.2"
+    "@dcl/core-commons": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

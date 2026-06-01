@@ -2,9 +2,9 @@ import {
   IConfigComponent,
   IHttpServerComponent,
   ILoggerComponent,
-  IMetricsComponent,
-  IFetchComponent
+  IMetricsComponent
 } from "@well-known-components/interfaces"
+import { IFetchComponent } from "@dcl/core-commons"
 import { metricDeclarations } from "./defaultMetrics"
 
 export type TestComponents = {

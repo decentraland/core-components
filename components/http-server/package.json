@@ -31,6 +31,7 @@
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
+    "@dcl/core-commons": "workspace:*",
     "@types/busboy": "^1.5.4",
     "@types/destroy": "^1.0.0",
     "@types/jest": "^30.0.0",

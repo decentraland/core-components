@@ -7,7 +7,7 @@ import { createMockedLifecycleComponent } from './mockedLifecycleComponent'
 import { TestComponents, TestComponentsWithStatus } from './test-helpers'
 import wsLib, { WebSocketServer } from 'ws'
 import * as undici from 'undici'
-import { IFetchComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 
 let currentPort = 19000
 

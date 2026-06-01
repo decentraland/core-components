@@ -7,7 +7,7 @@ import { createMetricsComponent } from '../../src'
 import { metricDeclarations } from './defaultMetrics'
 import { mockedRouter } from './mockedServer'
 import { TestComponents } from './test-helpers'
-import { IFetchComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 
 let currentPort = 19000
 
@@ -40,8 +40,10 @@ async function initComponents(): Promise<TestComponents> {
   const server = await createServerComponent<any>({ logs, config }, {})
 
   const fetch: IFetchComponent = {
+    // The metrics e2e harness exercises a real node-fetch runtime; its node-fetch
+    // Response is bridged to the shared (native) fetch type used by the components.
     async fetch(url, initRequest?) {
-      return nodeFetch(protocolHostAndProtocol + url, initRequest ? initRequest : {})
+      return nodeFetch(protocolHostAndProtocol + url, (initRequest ?? {}) as any) as unknown as Response
     }
   }
 
