@@ -13,6 +13,7 @@ core-components/
 │   ├── block-indexer/    # On-chain block indexer component
 │   ├── fetch/            # Fetch component using the native Node fetch API
 │   ├── http-server/      # HTTP server component
+│   ├── http-tracer/      # HTTP tracer component (W3C trace context propagation)
 │   ├── job/              # Job scheduling and execution component
 │   ├── memory-cache/     # In-memory LRU cache component
 │   ├── metrics/          # Prometheus metrics component handler
@@ -38,6 +39,7 @@ core-components/
 ### Observability
 
 - **Metrics Component** (`@dcl/metrics`) - Prometheus metrics collection and instrumentation
+- **HTTP Tracer Component** (`@dcl/http-tracer-component`) - Adds tracing spans to request handlers and propagates W3C trace context headers
 
 ### Communication & Messaging
 
@@ -149,6 +151,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/analytics-component`
 - `@dcl/block-indexer`
 - `@dcl/http-server`
+- `@dcl/http-tracer-component`
 - `@dcl/job-component`
 - `@dcl/memory-cache-component`
 - `@dcl/memory-queue-component`
