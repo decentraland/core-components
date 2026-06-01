@@ -35,9 +35,11 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
       --attempts
 
       response = await racePromise
-
-      if (timer) clearTimeout(timer)
     } finally {
+      // Clear the timeout timer on every exit (success, retryable failure or a
+      // rejected fetch) so a pending timer can't later abort a controller that
+      // is reused by the caller or by a subsequent retry.
+      if (timer) clearTimeout(timer)
       if (!!response && (response.ok || NON_RETRYABLE_STATUS_CODES.includes(response.status) || attempts === 0)) break
       else await new Promise((resolve) => setTimeout(resolve, retryDelay))
     }
@@ -52,11 +54,18 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
  * @param defaultOptions - default headers and request options injected on every call performed by this component
  */
 export function createFetchComponent(defaultOptions?: FetcherOptions): IFetchComponent {
-  async function fetch(url: string | URL | Request, options?: RequestOptions): Promise<Response> {
+  async function wrappedFetch(url: string | URL | Request, options?: RequestOptions): Promise<Response> {
     // Parse options
     const optionsWithDefault = { ...defaultOptions?.defaultFetcherOptions, ...options }
-    const { timeout, method = 'GET', retryDelay = 0, abortController, ...fetchOptions } = optionsWithDefault
-    let attempts = fetchOptions.attempts || 1
+    const {
+      timeout,
+      method = 'GET',
+      retryDelay = 0,
+      abortController,
+      attempts: attemptsOption,
+      ...fetchOptions
+    } = optionsWithDefault
+    let attempts = attemptsOption ?? 1
     const controller = abortController || new AbortController()
     const { signal } = controller
 
@@ -88,5 +97,5 @@ export function createFetchComponent(defaultOptions?: FetcherOptions): IFetchCom
     return response
   }
 
-  return { fetch }
+  return { fetch: wrappedFetch }
 }

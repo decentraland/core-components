@@ -247,4 +247,23 @@ describe('when fetching with the fetch component', () => {
       await expect(fetchPromise).rejects.toThrow('Request aborted (timed out)')
     })
   })
+
+  describe('and the fetch rejects while a timeout is configured', () => {
+    let controller: AbortController
+
+    beforeEach(() => {
+      controller = new AbortController()
+      fetchMock.mockRejectedValueOnce(new Error('network error'))
+    })
+
+    it('should clear the timeout so the provided controller is not aborted after the failure', async () => {
+      await expect(
+        sut.fetch('https://example.com', { timeout: 50, abortController: controller })
+      ).rejects.toThrow('network error')
+
+      await new Promise((resolve) => setTimeout(resolve, 100))
+
+      expect(controller.signal.aborted).toBe(false)
+    })
+  })
 })
