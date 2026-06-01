@@ -2,7 +2,7 @@ import type { Trace } from '@well-known-components/interfaces'
 
 /**
  * Parses the tracestate header into an object.
- * @param traceParent - The tracestate header.
+ * @param traceState - The tracestate header.
  * @returns An object which contains each property and its value found in the tracestate header or null.
  */
 export function parseTraceState(traceState: string): Record<string, string> | null {
