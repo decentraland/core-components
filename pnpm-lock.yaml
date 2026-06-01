@@ -397,6 +397,34 @@ importers:
         specifier: ^5.8.3
         version: 5.8.3
 
+  components/uws-http-server:
+    dependencies:
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
+      uWebSockets.js:
+        specifier: github:uNetworking/uWebSockets.js#v20.68.0
+        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/624987739d4da0acb628aaf2a10fc43e7ce27c5c
+    devDependencies:
+      '@types/node-fetch':
+        specifier: ^2.6.12
+        version: 2.6.12
+      '@well-known-components/env-config-provider':
+        specifier: ^1.2.0
+        version: 1.2.0(@well-known-components/interfaces@1.5.2)
+      '@well-known-components/logger':
+        specifier: ^3.1.3
+        version: 3.1.3(@well-known-components/interfaces@1.5.2)
+      '@well-known-components/test-helpers':
+        specifier: ^1.5.8
+        version: 1.5.8(@babel/core@7.27.4)(@jest/transform@30.0.2)(@jest/types@30.2.0)(babel-jest@30.0.2(@babel/core@7.27.4))(jest-util@30.2.0)(typescript@5.9.3)
+      node-fetch:
+        specifier: ^2.6.12
+        version: 2.7.0
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   shared/commons:
     dependencies:
       '@well-known-components/interfaces':
@@ -2109,41 +2137,49 @@ packages:
     resolution: {integrity: sha512-UYA0MA8ajkEDCFRQdng/FVx3F6szBvk3EPnkTTQuuO9lV1kPGuTB+V9TmbDxy5ikaEgyWKxa4CI3ySjklZ9lFA==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@unrs/resolver-binding-linux-arm64-musl@1.9.2':
     resolution: {integrity: sha512-P/CO3ODU9YJIHFqAkHbquKtFst0COxdphc8TKGL5yCX75GOiVpGqd1d15ahpqu8xXVsqP4MGFP2C3LRZnnL5MA==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@unrs/resolver-binding-linux-ppc64-gnu@1.9.2':
     resolution: {integrity: sha512-uKStFlOELBxBum2s1hODPtgJhY4NxYJE9pAeyBgNEzHgTqTiVBPjfTlPFJkfxyTjQEuxZbbJlJnMCrRgD7ubzw==}
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   '@unrs/resolver-binding-linux-riscv64-gnu@1.9.2':
     resolution: {integrity: sha512-LkbNnZlhINfY9gK30AHs26IIVEZ9PEl9qOScYdmY2o81imJYI4IMnJiW0vJVtXaDHvBvxeAgEy5CflwJFIl3tQ==}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@unrs/resolver-binding-linux-riscv64-musl@1.9.2':
     resolution: {integrity: sha512-vI+e6FzLyZHSLFNomPi+nT+qUWN4YSj8pFtQZSFTtmgFoxqB6NyjxSjAxEC1m93qn6hUXhIsh8WMp+fGgxCoRg==}
     cpu: [riscv64]
     os: [linux]
+    libc: [musl]
 
   '@unrs/resolver-binding-linux-s390x-gnu@1.9.2':
     resolution: {integrity: sha512-sSO4AlAYhSM2RAzBsRpahcJB1msc6uYLAtP6pesPbZtptF8OU/CbCPhSRW6cnYOGuVmEmWVW5xVboAqCnWTeHQ==}
     cpu: [s390x]
     os: [linux]
+    libc: [glibc]
 
   '@unrs/resolver-binding-linux-x64-gnu@1.9.2':
     resolution: {integrity: sha512-jkSkwch0uPFva20Mdu8orbQjv2A3G88NExTN2oPTI1AJ+7mZfYW3cDCTyoH6OnctBKbBVeJCEqh0U02lTkqD5w==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@unrs/resolver-binding-linux-x64-musl@1.9.2':
     resolution: {integrity: sha512-Uk64NoiTpQbkpl+bXsbeyOPRpUoMdcUqa+hDC1KhMW7aN1lfW8PBlBH4mJ3n3Y47dYE8qi0XTxy1mBACruYBaw==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@unrs/resolver-binding-wasm32-wasi@1.9.2':
     resolution: {integrity: sha512-EpBGwkcjDicjR/ybC0g8wO5adPNdVuMrNalVgYcWi+gYtC1XYNuxe3rufcO7dA76OHGeVabcO6cSkPJKVcbCXQ==}
@@ -4434,6 +4470,10 @@ packages:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
+
+  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/624987739d4da0acb628aaf2a10fc43e7ce27c5c:
+    resolution: {tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/624987739d4da0acb628aaf2a10fc43e7ce27c5c}
+    version: 20.68.0
 
   undici-types@5.26.5:
     resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
@@ -10678,6 +10718,8 @@ snapshots:
   typescript@5.8.3: {}
 
   typescript@5.9.3: {}
+
+  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/624987739d4da0acb628aaf2a10fc43e7ce27c5c: {}
 
   undici-types@5.26.5: {}
 
