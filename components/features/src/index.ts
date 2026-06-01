@@ -33,7 +33,7 @@ export async function createFeaturesComponent(
         throw new Error(`Could not fetch features service from ${FF_URL}`)
       }
     } catch (error) {
-      logger.error(error as Error)
+      logger.error(error instanceof Error ? error : new Error(String(error)))
     }
 
     return null
@@ -42,7 +42,7 @@ export async function createFeaturesComponent(
   async function getIsFeatureEnabled(app: string, feature: string): Promise<boolean> {
     const envFeatureFlag = await getEnvFeature(app, feature)
     if (envFeatureFlag) {
-      return envFeatureFlag === "1" ? true : false
+      return envFeatureFlag === "1"
     }
 
     const featureFlags = await fetchFeatureFlags(app)
