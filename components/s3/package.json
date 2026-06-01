@@ -1,6 +1,6 @@
 {
   "name": "@dcl/s3-component",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "AWS S3 component for core components library",
   "repository": {
     "type": "git",

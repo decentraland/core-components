@@ -1,6 +1,6 @@
 {
   "name": "@dcl/memory-queue-component",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "In-memory queue component for local development and testing",
   "repository": {
     "type": "git",

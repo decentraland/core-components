@@ -1,5 +1,12 @@
 # @dcl/schema-validator-component
 
+## 0.3.3
+
+### Patch Changes
+
+- Updated dependencies [ecae771]
+  - @dcl/core-commons@0.9.0
+
 ## 0.3.2
 
 ### Patch Changes
