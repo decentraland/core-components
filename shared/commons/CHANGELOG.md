@@ -1,5 +1,11 @@
 # @dcl/core-commons
 
+## 0.9.0
+
+### Minor Changes
+
+- ecae771: add the shared `IFetchComponent` and `RequestOptions` types, backed by the default node `fetch` api, so server components share a single fetch type instead of importing it from `@well-known-components/interfaces`.
+
 ## 0.8.0
 
 ### Minor Changes

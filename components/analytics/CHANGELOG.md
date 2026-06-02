@@ -1,5 +1,13 @@
 # @dcl/analytics-component
 
+## 1.0.2
+
+### Patch Changes
+
+- ecae771: use the shared `IFetchComponent` type from `@dcl/core-commons`. `@dcl/traced-fetch-component` now wraps `@dcl/fetch-component` instead of `@well-known-components/fetch-component`.
+- Updated dependencies [ecae771]
+  - @dcl/core-commons@0.9.0
+
 ## 1.0.1
 
 ### Patch Changes

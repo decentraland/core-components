@@ -1,5 +1,12 @@
 # @dcl/sqs-component
 
+## 2.2.2
+
+### Patch Changes
+
+- Updated dependencies [ecae771]
+  - @dcl/core-commons@0.9.0
+
 ## 2.2.1
 
 ### Patch Changes

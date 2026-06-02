@@ -1,6 +1,6 @@
 {
   "name": "@dcl/memory-cache-component",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "In-memory cache component for core components library",
   "repository": {
     "type": "git",
