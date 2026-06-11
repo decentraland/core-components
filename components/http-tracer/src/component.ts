@@ -1,4 +1,7 @@
-import type { IHttpServerComponent, ITracerComponent, TraceContext } from '@well-known-components/interfaces'
+import type { ITracerComponent, TraceContext } from '@well-known-components/interfaces'
+// Source IHttpServerComponent from @dcl/core-commons so this tracer accepts an @dcl/http-server v2
+// server (native-fetch request/response types) without casts.
+import type { IHttpServerComponent } from '@dcl/core-commons'
 import { parseTraceParentHeader, parseTraceState } from './logic'
 import { IHttpTracerComponent } from './types'
 

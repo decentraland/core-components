@@ -168,6 +168,9 @@ importers:
 
   components/http-tracer:
     dependencies:
+      '@dcl/core-commons':
+        specifier: workspace:*
+        version: link:../../shared/commons
       '@well-known-components/interfaces':
         specifier: ^1.5.2
         version: 1.5.2
