@@ -8,6 +8,7 @@ import FormData from 'form-data'
 import * as undici from 'undici'
 import nodeFetch from 'node-fetch'
 import { multipartParserWrapper } from './busboy'
+import { createCorsMiddleware } from '../src/cors'
 
 describeE2E('integration sanity tests using http backend', integrationSuite)
 describeTestE2E('integration sanity tests using test server', integrationSuite)
@@ -326,6 +327,31 @@ function integrationSuite({ components }: { components: TestComponents }) {
         }
       })
     }
+  })
+
+  it('handles a CORS preflight (OPTIONS) request', async () => {
+    const { fetch, server } = components
+    server.resetMiddlewares()
+    server.use(createCorsMiddleware({ origin: '*', methods: ['GET', 'POST'] }))
+
+    const res = await fetch.fetch(`/any-resource`, { method: 'OPTIONS' })
+    expect(res.status).toEqual(204)
+    expect(res.headers.get('access-control-allow-origin')).toEqual('*')
+  })
+
+  it('responds without hanging when the handler ignores the request body', async () => {
+    const { fetch, server } = components
+    server.resetMiddlewares()
+
+    const routes = new Router()
+    // Handler never reads ctx.request.body; the server must still respond (Node drains the
+    // unconsumed body). Guards the eager `Readable.toWeb(req)` body adaptation against hangs.
+    routes.post('/ignore-body', async () => ({ status: 200, body: 'handled' }))
+    server.use(routes.middleware())
+
+    const res = await fetch.fetch(`/ignore-body`, { method: 'POST', body: 'x'.repeat(4096) })
+    expect(res.status).toEqual(200)
+    expect(await res.text()).toEqual('handled')
   })
 
   it('unknown route should yield 404', async () => {
