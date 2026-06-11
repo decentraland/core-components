@@ -63,6 +63,12 @@ jobs:
         with:
           title: 'chore: version packages'
           commit: 'chore: version packages [skip ci]'
+          # `version-packages` runs `changeset version` AND refreshes the lockfile
+          # (`pnpm install --lockfile-only`). Without the refresh the bumped package.json
+          # files and pnpm-lock.yaml drift apart, and the next `pnpm install --frozen-lockfile`
+          # (CI default) fails with ERR_PNPM_OUTDATED_LOCKFILE. The action commits the updated
+          # lockfile alongside the version bumps into the "Version Packages" PR.
+          version: pnpm version-packages
           publish: pnpm ci:publish
           createGithubReleases: true
           commitMode: 'github-api'

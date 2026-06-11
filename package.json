@@ -11,7 +11,7 @@
     "lint": "pnpm -r lint",
     "clean": "pnpm -r clean",
     "changeset": "changeset",
-    "version-packages": "changeset version",
+    "version-packages": "changeset version && pnpm install --no-frozen-lockfile --lockfile-only",
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
