@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.3
+
+### Patch Changes
+
+- Updated dependencies [f8b96d7]
+  - @dcl/core-commons@0.10.0
+
 ## 2.1.2
 
 ### Patch Changes

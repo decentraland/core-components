@@ -1,6 +1,6 @@
 {
   "name": "@dcl/queue-consumer-component",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "Queue consumer component for core components library",
   "repository": {
     "type": "git",

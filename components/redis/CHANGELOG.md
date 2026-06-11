@@ -1,5 +1,12 @@
 # @dcl/redis-component
 
+## 3.1.2
+
+### Patch Changes
+
+- Updated dependencies [f8b96d7]
+  - @dcl/core-commons@0.10.0
+
 ## 3.1.1
 
 ### Patch Changes
