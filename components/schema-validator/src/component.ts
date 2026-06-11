@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import Ajv, { Schema } from 'ajv'
 import addFormats from 'ajv-formats'
-import { IHttpServerComponent } from '@well-known-components/interfaces'
+import { IHttpServerComponent } from '@dcl/core-commons'
 import { ISchemaValidatorComponent, Validation } from './types'
 
 // RFC 6839 structured-suffix match: non-empty type and subtype separated by `/`,
