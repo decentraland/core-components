@@ -66,10 +66,19 @@ export function success(data: NormalizedResponse, res: http.ServerResponse) {
   if (data.status) res.statusCode = data.status
 
   data.headers.forEach((value: string, key: string) => {
-    if (value !== undefined) {
+    // Set-Cookie is handled separately below. Multiple cookies must be emitted as distinct
+    // `Set-Cookie` headers; setting them one-by-one here would overwrite (res.setHeader replaces
+    // by name) and leave only the last cookie.
+    if (key !== 'set-cookie') {
       res.setHeader(key, value)
     }
   })
+
+  // `res.setHeader` accepts an array, which Node serializes as one `Set-Cookie` header per element.
+  const setCookies = typeof data.headers.getSetCookie === 'function' ? data.headers.getSetCookie() : []
+  if (setCookies.length > 0) {
+    res.setHeader('set-cookie', setCookies)
+  }
 
   const body = data.body
 
