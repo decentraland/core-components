@@ -1,9 +1,41 @@
-import type { IHttpServerComponent } from '@well-known-components/interfaces'
-import * as fetch from 'node-fetch'
+import type { IFetchComponent, IHttpServerComponent } from '@dcl/core-commons'
 import { createServerHandler } from './server-handler'
-import { PassThrough, pipeline, Stream } from 'stream'
-import { IFetchComponent } from '@well-known-components/interfaces'
+import { NormalizedResponse } from './logic'
+import { PassThrough, pipeline, Readable } from 'stream'
 import type { WebSocket as WS } from 'ws'
+
+/**
+ * Converts the server's internal {@link NormalizedResponse} into a native `Response` for test callers.
+ *
+ * Informational statuses (e.g. `101` from a WebSocket upgrade) cannot be represented by the native
+ * `Response` constructor (it only accepts 200–599), so we build a placeholder and shadow `status` to
+ * preserve the value tests assert on.
+ */
+function toFetchResponse(res: NormalizedResponse): Response {
+  const status = res.status ?? 200
+  const isNullBodyStatus = status === 204 || status === 205 || status === 304
+  let body: BodyInit | null = null
+  if (status >= 200 && !isNullBodyStatus && res.body != null) {
+    if (Buffer.isBuffer(res.body)) {
+      body = res.body
+    } else {
+      // Node Readable -> web stream. Decouple via PassThrough (parity with a socket-backed body) and
+      // route through `pipeline` so a source error destroys the PassThrough and surfaces to the body
+      // reader instead of becoming an unhandled error.
+      const passthrough = new PassThrough()
+      pipeline(res.body, passthrough, () => undefined)
+      body = Readable.toWeb(passthrough) as unknown as ReadableStream
+    }
+  }
+
+  if (status < 200) {
+    const response = new Response(null, { statusText: res.statusText, headers: res.headers })
+    Object.defineProperty(response, 'status', { value: status, configurable: true })
+    return response
+  }
+
+  return new Response(body, { status, statusText: res.statusText, headers: res.headers })
+}
 
 /** @alpha */
 export type IWebSocketComponent<W = WS> = {
@@ -34,36 +66,36 @@ export function createTestServerComponent<Context extends object = {}>(): ITestH
 
   const ret: ITestHttpServerComponent<Context> = {
     async fetch(url: any, initRequest?: any) {
-      let req: fetch.Request
+      let req: Request
 
-      if (url instanceof fetch.Request) {
+      if (url instanceof Request) {
         req = url
       } else {
-        const tempHeaders = new fetch.Headers(initRequest?.headers)
+        const tempHeaders = new Headers(initRequest?.headers)
         const hostname = tempHeaders.get('X-Forwarded-Host') || tempHeaders.get('host') || '0.0.0.0'
         const protocol = tempHeaders.get('X-Forwarded-Proto') == 'https' ? 'https' : 'http'
         let newUrl = new URL(protocol + '://' + hostname + url)
         try {
           newUrl = new URL(url, protocol + '://' + hostname)
         } catch {}
-        req = new fetch.Request(newUrl.toString(), initRequest)
+
+        let init = initRequest
+        // The native `Request` constructor doesn't understand the `form-data` package (it would set a
+        // `text/plain` body). Serialize it to a buffer and merge its multipart headers, the way
+        // node-fetch used to, so multipart requests keep working against the in-memory test server.
+        const maybeForm = initRequest?.body
+        if (maybeForm && typeof maybeForm.getHeaders === 'function' && typeof maybeForm.getBuffer === 'function') {
+          init = { ...initRequest, body: maybeForm.getBuffer(), headers: { ...maybeForm.getHeaders(), ...initRequest.headers } }
+        }
+        req = new Request(newUrl.toString(), init)
       }
 
       try {
         const res = await serverHandler.processRequest(currentContext, req)
-        if (res.body instanceof Stream) {
-          // since we have no server and actual socket pipes, what we receive here
-          // is a readable stream that needs to be decoupled from it's original
-          // stream to ensure a consistent behavior with real servers
-          return new Promise<fetch.Response>((resolve, reject) => {
-            resolve(new fetch.Response(pipeline(res.body!, new PassThrough(), reject), res))
-          })
-        }
-
-        return res
+        return toFetchResponse(res)
       } catch (error: any) {
         console.error(error)
-        return new fetch.Response('DEV-SERVER-ERROR: ' + (error.stack || error.toString()), { status: 500 })
+        return new Response('DEV-SERVER-ERROR: ' + (error.stack || error.toString()), { status: 500 })
       }
     },
     use: serverHandler.use,

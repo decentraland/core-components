@@ -1,11 +1,10 @@
 import {
   IBaseComponent,
   IConfigComponent,
-  IHttpServerComponent,
   ILoggerComponent,
   IStatusCheckCapableComponent
 } from '@well-known-components/interfaces'
-import { IFetchComponent } from '@dcl/core-commons'
+import { IFetchComponent, IHttpServerComponent } from '@dcl/core-commons'
 import { IWebSocketComponent } from '../src'
 import wsLib from 'ws'
 

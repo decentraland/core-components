@@ -20,18 +20,17 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
+    "@dcl/core-commons": "workspace:*",
     "@types/http-errors": "^2.0.4",
     "destroy": "^1.2.0",
     "fp-future": "^1.0.1",
     "http-errors": "^2.0.0",
     "mitt": "^3.0.0",
-    "node-fetch": "^2.6.9",
     "on-finished": "^2.4.1",
     "path-to-regexp": "^6.3.0",
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
-    "@dcl/core-commons": "workspace:*",
     "@types/busboy": "^1.5.4",
     "@types/destroy": "^1.0.0",
     "@types/jest": "^30.0.0",
@@ -47,6 +46,7 @@
     "busboy": "^1.6.0",
     "form-data": "^4.0.0",
     "jest": "^30.0.2",
+    "node-fetch": "^2.6.9",
     "ts-jest": "^29.4.0",
     "typescript": "^5.8.2",
     "undici": "^7.4.0",

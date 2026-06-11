@@ -1,4 +1,4 @@
-import { IHttpServerComponent } from '@well-known-components/interfaces'
+import { IHttpServerComponent } from '@dcl/core-commons'
 import busboy, { FieldInfo, FileInfo } from 'busboy'
 import { Readable } from 'stream'
 
@@ -63,7 +63,12 @@ export function multipartParserWrapper<Ctx extends FormDataContext, T extends IH
       })
     })
 
-    ctx.request.body.pipe(formDataParser)
+    // The native `Request` body is a web `ReadableStream`; adapt it to a Node stream to pipe to busboy.
+    if (ctx.request.body) {
+      Readable.fromWeb(ctx.request.body as unknown as Parameters<typeof Readable.fromWeb>[0]).pipe(formDataParser)
+    } else {
+      formDataParser.end()
+    }
 
     const newContext: Ctx = Object.assign(Object.create(ctx), { formData: { fields, files } })
 

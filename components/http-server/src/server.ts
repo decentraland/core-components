@@ -2,9 +2,9 @@ import {
   START_COMPONENT,
   STOP_COMPONENT,
   type IBaseComponent,
-  type IHttpServerComponent,
   type IStatusCheckCapableComponent
 } from '@well-known-components/interfaces'
+import type { IHttpServerComponent } from '@dcl/core-commons'
 import { _setUnderlyingServer } from './injectors'
 import { getServer, success, getRequestFromNodeMessage } from './logic'
 import type { ServerComponents, IHttpServerOptions } from './types'

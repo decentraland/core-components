@@ -1,8 +1,9 @@
 import { createConfigComponent } from '@well-known-components/env-config-provider'
-import { IConfigComponent, IHttpServerComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { IConfigComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { IHttpServerComponent } from '@dcl/core-commons'
 import { createLogComponent } from '@well-known-components/logger'
 import { defaultServerConfig } from '@well-known-components/test-helpers'
-import { Headers } from 'node-fetch'
+// `Headers` is the native (undici) global provided by Node.
 import { Readable } from 'stream'
 import { createServerComponent, Router } from '.'
 

@@ -1,9 +1,5 @@
-import {
-  IBaseComponent,
-  IConfigComponent,
-  IHttpServerComponent,
-  IStatusCheckCapableComponent
-} from '@well-known-components/interfaces'
+import { IBaseComponent, IConfigComponent, IStatusCheckCapableComponent } from '@well-known-components/interfaces'
+import { IHttpServerComponent } from '@dcl/core-commons'
 import { Router } from './router'
 
 /**

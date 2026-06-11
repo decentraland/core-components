@@ -1,4 +1,4 @@
-import { IHttpServerComponent as http } from '@well-known-components/interfaces'
+import { IHttpServerComponent as http } from '@dcl/core-commons'
 
 export type MethodsMapType = {
   [key in http.HTTPMethod]: key
