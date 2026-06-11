@@ -1,5 +1,12 @@
 # @dcl/http-server
 
+## 2.0.1
+
+### Patch Changes
+
+- e833fce: fix the HTTP metrics middleware: derive the request size from the `Content-Length` header instead of the non-standard `node-fetch` `Request.size` property. After the native-fetch migration that property is `undefined` on the native `Request`, which made `prom-client` throw `Value is not a valid number` and return a `500` on every instrumented request.
+- e833fce: fix multiple `Set-Cookie` response headers being collapsed to the last one. The response writer set each header with `res.setHeader('set-cookie', value)`, which overwrites by header name, so only the final cookie survived. Set-Cookie values are now emitted as an array (one `Set-Cookie` header per cookie).
+
 ## 2.0.0
 
 ### Major Changes
