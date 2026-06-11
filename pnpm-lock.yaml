@@ -228,8 +228,8 @@ importers:
         specifier: workspace:*
         version: link:../../shared/commons
       '@dcl/http-server':
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: workspace:*
+        version: link:../http-server
       '@types/node-fetch':
         specifier: ^2.6.12
         version: 2.6.12
@@ -1043,9 +1043,6 @@ packages:
 
   '@dcl/eslint-config@2.2.1':
     resolution: {integrity: sha512-9GBeC0+bzfAHsCtXGqgx5UnQDAzCym5lQGt0hysx3yNNcujcWswFaBU1iPMfp58qRFJangLonZmoP80SM3AMgg==}
-
-  '@dcl/http-server@1.0.0':
-    resolution: {integrity: sha512-Dq7hjrOfwUY2VztmZlk70OwOFkwiLO360BgJw4h2BFfYc0RACmw7TFI/uq/nHMJPNSs2Zi1htzuWQQsPAg1RQw==}
 
   '@dcl/schemas@26.1.0':
     resolution: {integrity: sha512-BrtZm/BNEpDde1U5yCfbRsp8IMajYiThNj5QCgilXCcqO2JYB6RL5FZj+9KRZPyW+/zzeYgLVDAnn/eiSW6dmA==}
@@ -6122,20 +6119,6 @@ snapshots:
       - eslint-plugin-import-x
       - supports-color
       - typescript
-
-  '@dcl/http-server@1.0.0':
-    dependencies:
-      '@types/http-errors': 2.0.5
-      destroy: 1.2.0
-      fp-future: 1.0.1
-      http-errors: 2.0.1
-      mitt: 3.0.1
-      node-fetch: 2.7.0
-      on-finished: 2.4.1
-      path-to-regexp: 6.3.0
-      reflect-metadata: 0.2.2
-    transitivePeerDependencies:
-      - encoding
 
   '@dcl/schemas@26.1.0':
     dependencies:

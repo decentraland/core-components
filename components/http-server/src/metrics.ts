@@ -121,7 +121,11 @@ export async function instrumentHttpServerWithPromClientRegistry<K extends strin
         labels.handler = (ctx as any).routerPath
       }
 
-      options.metrics.observe('http_request_size_bytes', labels, ctx.request.size)
+      // Derive the request size from the Content-Length header. The previous `ctx.request.size`
+      // relied on a non-standard `node-fetch` Request property that does not exist on the native
+      // `Request`, which made prom-client throw on every request ("Value is not a valid number").
+      const requestSize = Number(ctx.request.headers.get('content-length')) || 0
+      options.metrics.observe('http_request_size_bytes', labels, requestSize)
       options.metrics.increment('http_requests_total', labels)
       end(labels)
     }
