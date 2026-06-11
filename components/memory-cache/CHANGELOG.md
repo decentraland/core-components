@@ -1,5 +1,12 @@
 # @dcl/memory-cache-component
 
+## 2.4.2
+
+### Patch Changes
+
+- Updated dependencies [f8b96d7]
+  - @dcl/core-commons@0.10.0
+
 ## 2.4.1
 
 ### Patch Changes

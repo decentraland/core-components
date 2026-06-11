@@ -1,6 +1,6 @@
 {
   "name": "@dcl/schema-validator-component",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Schema validator component for core components library",
   "repository": {
     "type": "git",

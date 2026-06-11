@@ -1,6 +1,6 @@
 {
   "name": "@dcl/fetch-component",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Fetch component for core components library",
   "repository": {
     "type": "git",
