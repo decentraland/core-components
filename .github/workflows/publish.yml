@@ -21,7 +21,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # Pinned by commit SHA (tags are mutable). Bump deliberately when reviewing a new release.
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Setup pnpm
         # Pinned to v6.0.8 by commit SHA. Tags on third-party actions are
@@ -30,7 +31,8 @@ jobs:
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
 
       - name: Setup node.js
-        uses: actions/setup-node@v4
+        # Pinned by commit SHA (tags are mutable). Bump deliberately when reviewing a new release.
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
           cache: 'pnpm'
@@ -56,13 +58,19 @@ jobs:
 
       - name: Create Release Pull Request or Publish
         id: changesets
-        # Pinned to v1.8.0 by commit SHA. Tags on third-party actions are
+        # Pinned to v1.9.0 by commit SHA. Tags on third-party actions are
         # mutable; a SHA is not. Bump deliberately when reviewing a new
         # release rather than tracking a floating tag.
-        uses: changesets/action@63a615b9cd06ba9a3e6d13796c7fbcb080a60a0b # v1.8.0
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
           title: 'chore: version packages'
           commit: 'chore: version packages [skip ci]'
+          # `version-packages` runs `changeset version` AND refreshes the lockfile
+          # (`pnpm install --lockfile-only`). Without the refresh the bumped package.json
+          # files and pnpm-lock.yaml drift apart, and the next `pnpm install --frozen-lockfile`
+          # (CI default) fails with ERR_PNPM_OUTDATED_LOCKFILE. The action commits the updated
+          # lockfile alongside the version bumps into the "Version Packages" PR.
+          version: pnpm version-packages
           publish: pnpm ci:publish
           createGithubReleases: true
           commitMode: 'github-api'

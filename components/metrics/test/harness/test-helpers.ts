@@ -1,10 +1,5 @@
-import {
-  IConfigComponent,
-  IHttpServerComponent,
-  ILoggerComponent,
-  IMetricsComponent
-} from "@well-known-components/interfaces"
-import { IFetchComponent } from "@dcl/core-commons"
+import { IConfigComponent, ILoggerComponent, IMetricsComponent } from "@well-known-components/interfaces"
+import { IFetchComponent, IHttpServerComponent } from "@dcl/core-commons"
 import { metricDeclarations } from "./defaultMetrics"
 
 export type TestComponents = {

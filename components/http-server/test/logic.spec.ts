@@ -1,4 +1,5 @@
-import { getRequestFromNodeMessage, normalizeResponseBody, NormalizedResponse } from '../src/logic'
+import { getRequestFromNodeMessage, normalizeResponseBody, NormalizedResponse, success } from '../src/logic'
+import type { ServerResponse } from 'http'
 import { Readable } from 'stream'
 
 describe('when normalizing a handler response that is already a native Response', () => {
@@ -44,6 +45,26 @@ describe('when normalizing a handler response that is already a native Response'
     it('should leave the normalized body undefined', () => {
       expect(normalized.body).toBeUndefined()
     })
+  })
+})
+
+describe('when writing a successful response with multiple Set-Cookie headers', () => {
+  let res: { statusCode?: number; statusMessage?: string; setHeader: jest.Mock; end: jest.Mock }
+
+  beforeEach(() => {
+    res = { setHeader: jest.fn(), end: jest.fn() }
+    const headers = new Headers()
+    headers.append('set-cookie', 'a=1; Path=/')
+    headers.append('set-cookie', 'b=2; Path=/')
+    success({ status: 200, headers }, res as unknown as ServerResponse)
+  })
+
+  afterEach(() => {
+    jest.resetAllMocks()
+  })
+
+  it('should emit every cookie as a single array-valued Set-Cookie header', () => {
+    expect(res.setHeader).toHaveBeenCalledWith('set-cookie', ['a=1; Path=/', 'b=2; Path=/'])
   })
 })
 
