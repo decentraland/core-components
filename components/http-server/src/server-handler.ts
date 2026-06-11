@@ -1,7 +1,6 @@
-import { contextFromRequest, defaultHandler, getDefaultMiddlewares, normalizeResponseBody } from './logic'
+import { contextFromRequest, defaultHandler, getDefaultMiddlewares, normalizeResponseBody, NormalizedResponse } from './logic'
 import { Middleware, compose } from './middleware'
-import * as fetch from 'node-fetch'
-import { IHttpServerComponent as http } from '@well-known-components/interfaces'
+import { IHttpServerComponent as http } from '@dcl/core-commons'
 
 // @internal
 export function createServerHandler<Context extends object>() {
@@ -25,7 +24,7 @@ export function createServerHandler<Context extends object>() {
     doMiddlewareComposition()
   }
 
-  async function processRequest(currentContext: Context, req: http.IRequest): Promise<fetch.Response> {
+  async function processRequest(currentContext: Context, req: http.IRequest): Promise<NormalizedResponse> {
     const ctx = contextFromRequest(currentContext, req)
     const res = await theFinalHandler(ctx, defaultHandler)
     return normalizeResponseBody(req, res)

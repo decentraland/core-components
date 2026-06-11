@@ -1,4 +1,5 @@
-import { IConfigComponent, IHttpServerComponent, IMetricsComponent } from '@well-known-components/interfaces'
+import { IConfigComponent, IMetricsComponent } from '@well-known-components/interfaces'
+import { IHttpServerComponent } from '@dcl/core-commons'
 import { Router } from './router'
 
 const httpLabels = ['method', 'handler', 'code'] as const

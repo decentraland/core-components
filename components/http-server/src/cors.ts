@@ -1,7 +1,7 @@
 // Temporary fix to enable local develoment until this CORS module is merged into http-server
 
-import { Headers, Request, Response } from 'node-fetch'
-import { IHttpServerComponent } from '@well-known-components/interfaces'
+// `Headers`, `Request` and `Response` are the native (undici) globals provided by Node.
+import { IHttpServerComponent } from '@dcl/core-commons'
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

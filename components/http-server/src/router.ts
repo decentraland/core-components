@@ -1,7 +1,7 @@
 import HttpError from 'http-errors'
 import { Layer, LayerOptions } from './layer'
 import { Key, pathToRegexp } from 'path-to-regexp'
-import type { IHttpServerComponent } from '@well-known-components/interfaces'
+import type { IHttpServerComponent } from '@dcl/core-commons'
 import { compose, Middleware } from './middleware'
 import { methodsList } from './methods'
 

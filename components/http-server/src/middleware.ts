@@ -1,4 +1,5 @@
-import { IHttpServerComponent as http, IMiddlewareAdapterHandler } from '@well-known-components/interfaces'
+import type { IMiddlewareAdapterHandler } from '@well-known-components/interfaces'
+import type { IHttpServerComponent as http } from '@dcl/core-commons'
 
 /**
  * @public

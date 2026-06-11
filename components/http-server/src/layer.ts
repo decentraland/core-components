@@ -1,4 +1,4 @@
-import { IHttpServerComponent as http } from '@well-known-components/interfaces'
+import { IHttpServerComponent as http } from '@dcl/core-commons'
 import { pathToRegexp, Key } from 'path-to-regexp'
 import { Middleware } from './middleware'
 import { RoutedContext } from './router'

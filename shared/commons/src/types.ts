@@ -1,8 +1,95 @@
 // Shared types for core components
-import { IBaseComponent } from '@well-known-components/interfaces'
+import type * as stream from 'stream'
+import {
+  IBaseComponent,
+  IMiddlewareAdapterHandler,
+  IHttpServerComponent as WkcHttpServerComponent
+} from '@well-known-components/interfaces'
 
 export interface ASharedType {
   a: string
+}
+
+// HTTP server component types
+//
+// This mirrors `@well-known-components/interfaces`' `IHttpServerComponent` but binds the
+// request/response types to the **native Node `fetch` API** (`Request`/`Response`/`ResponseInit`
+// provided by `@types/node`) instead of `node-fetch`. Consumers (e.g. `@dcl/http-server`) can
+// therefore implement the component without depending on `node-fetch`. `ParseUrlParams` and
+// `IMiddlewareAdapterHandler` are pure type-level helpers re-used from the interfaces package
+// (they carry no `node-fetch` coupling).
+
+/**
+ * @public
+ */
+export namespace IHttpServerComponent {
+  export type JsonBody = Record<string, any>
+  export type ResponseBody = JsonBody | stream.Readable | Uint8Array | Buffer | string
+  export type QueryParams = Record<string, any>
+  export type UrlParams = Record<string, string | string[]>
+
+  /** The incoming request. This is the global (undici) `Request` shipped with Node, not `node-fetch`. */
+  export type IRequest = Request
+
+  /** A handler response. `ResponseInit` is the global (undici) type shipped with Node. */
+  export type IResponse = ResponseInit & {
+    body?: ResponseBody
+  }
+
+  export type DefaultContext<Context = {}> = Context & {
+    request: IRequest
+    url: URL
+  }
+
+  export type PathAwareContext<Context = {}, Path extends string = string> = Context & {
+    params: string extends Path ? any : IHttpServerComponent.ParseUrlParams<Path>
+  }
+
+  export type IRequestHandler<Context = {}> = IMiddlewareAdapterHandler<DefaultContext<Context>, IResponse>
+
+  export type ParseUrlParams<State extends string, Memo extends Record<string, any> = {}> =
+    WkcHttpServerComponent.ParseUrlParams<State, Memo>
+
+  /**
+   * HTTP request methods.
+   * @public
+   */
+  export type HTTPMethod =
+    | 'CONNECT'
+    | 'DELETE'
+    | 'GET'
+    | 'HEAD'
+    | 'OPTIONS'
+    | 'PATCH'
+    | 'POST'
+    | 'PUT'
+    | 'TRACE'
+
+  export interface PathAwareHandler<Context> {
+    <Path extends string>(
+      path: Path,
+      handler: IHttpServerComponent.IRequestHandler<PathAwareContext<Context, Path>>
+    ): void
+  }
+
+  export type MethodHandlers<Context> = {
+    [key in Lowercase<HTTPMethod>]: PathAwareHandler<Context>
+  }
+}
+
+/**
+ * @public
+ */
+export interface IHttpServerComponent<Context extends object> {
+  /**
+   * Register a route handler.
+   */
+  use: (handler: IHttpServerComponent.IRequestHandler<Context>) => void
+  /**
+   * Sets a context to be passed on to the handlers. The original context should
+   * remain untouched after handler execution.
+   */
+  setContext(ctx: Context): void
 }
 
 // Fetch component types

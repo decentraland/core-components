@@ -1,6 +1,7 @@
 // this server shuts down after 10100 requests.
 
-import { IConfigComponent, IHttpServerComponent, ILoggerComponent, Lifecycle } from '@well-known-components/interfaces'
+import { IConfigComponent, ILoggerComponent, Lifecycle } from '@well-known-components/interfaces'
+import { IHttpServerComponent } from '@dcl/core-commons'
 import { createConfigComponent } from '@well-known-components/env-config-provider'
 import { createServerComponent } from './index'
 import { createLogComponent } from '@well-known-components/logger'

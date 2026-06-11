@@ -1,4 +1,4 @@
-import { IHttpServerComponent } from '@well-known-components/interfaces'
+import { IHttpServerComponent } from '@dcl/core-commons'
 import type { WebSocket as WS } from 'ws'
 
 const wsSymbol = Symbol('WebSocketResponse')
@@ -22,7 +22,7 @@ export function upgradeWebSocketResponse(cb: WebSocketCallback): IHttpServerComp
  * @internal
  * @deprecated Not stable
  */
-export function withWebSocketCallback<T extends object>(obj: T, cb: WebSocketCallback): T {
+export function withWebSocketCallback<T extends object>(obj: T, cb: WebSocketCallback | null): T {
   ;(obj as any)[wsSymbol] = cb
   return obj
 }

@@ -7,7 +7,7 @@ import path from 'path'
 import { createTestServerComponent, Router } from '../src'
 import { Layer } from '../src/layer'
 import { methodsList } from '../src/methods'
-import { IHttpServerComponent } from '@well-known-components/interfaces'
+import { IHttpServerComponent } from '@dcl/core-commons'
 const methods: Lowercase<IHttpServerComponent.HTTPMethod>[] = methodsList.map(($) => $.toLowerCase()) as any
 
 describe('Router', function () {

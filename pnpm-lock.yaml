@@ -77,9 +77,12 @@ importers:
 
   components/http-server:
     dependencies:
-      '@types/http-errors':
-        specifier: ^2.0.4
-        version: 2.0.5
+      '@dcl/core-commons':
+        specifier: workspace:*
+        version: link:../../shared/commons
+      '@well-known-components/interfaces':
+        specifier: ^1.5.1
+        version: 1.5.2
       destroy:
         specifier: ^1.2.0
         version: 1.2.0
@@ -92,9 +95,6 @@ importers:
       mitt:
         specifier: ^3.0.0
         version: 3.0.1
-      node-fetch:
-        specifier: ^2.6.9
-        version: 2.7.0
       on-finished:
         specifier: ^2.4.1
         version: 2.4.1
@@ -105,9 +105,6 @@ importers:
         specifier: ^0.2.2
         version: 0.2.2
     devDependencies:
-      '@dcl/core-commons':
-        specifier: workspace:*
-        version: link:../../shared/commons
       '@jest/test-sequencer':
         specifier: ^30.0.2
         version: 30.0.2
@@ -117,6 +114,9 @@ importers:
       '@types/destroy':
         specifier: ^1.0.0
         version: 1.0.3
+      '@types/http-errors':
+        specifier: ^2.0.4
+        version: 2.0.5
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
@@ -135,9 +135,6 @@ importers:
       '@well-known-components/env-config-provider':
         specifier: ^1.1.1
         version: 1.2.0(@well-known-components/interfaces@1.5.2)
-      '@well-known-components/interfaces':
-        specifier: ^1.5.1
-        version: 1.5.2
       '@well-known-components/logger':
         specifier: ^3.1.2
         version: 3.1.3(@well-known-components/interfaces@1.5.2)
@@ -153,6 +150,9 @@ importers:
       jest:
         specifier: ^30.0.2
         version: 30.0.2(@types/node@20.19.1)
+      node-fetch:
+        specifier: ^2.6.9
+        version: 2.7.0
       ts-jest:
         specifier: ^29.4.0
         version: 29.4.0(@babel/core@7.27.4)(@jest/transform@30.0.2)(@jest/types@30.2.0)(babel-jest@30.0.2(@babel/core@7.27.4))(jest-util@30.2.0)(jest@30.0.2(@types/node@20.19.1))(typescript@5.8.3)
