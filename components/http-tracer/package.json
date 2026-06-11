@@ -20,6 +20,7 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
+    "@dcl/core-commons": "workspace:*",
     "@well-known-components/interfaces": "^1.5.2"
   },
   "devDependencies": {

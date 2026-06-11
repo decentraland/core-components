@@ -1,4 +1,5 @@
-import type { ITracerComponent, IHttpServerComponent } from '@well-known-components/interfaces'
+import type { ITracerComponent } from '@well-known-components/interfaces'
+import type { IHttpServerComponent } from '@dcl/core-commons'
 import { createHttpTracerComponent } from '../src'
 import { parseTraceParentHeader } from '../src/logic'
 
