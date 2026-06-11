@@ -224,7 +224,7 @@ export function normalizeResponseBody(
     const cb = getWebSocketCallback(response)
     return withWebSocketCallback(
       { status: 101, headers: new Headers(response.headers as HeadersInit) } as NormalizedResponse,
-      cb!
+      cb
     )
   }
 
@@ -233,7 +233,7 @@ export function normalizeResponseBody(
       status: response.status,
       statusText: response.statusText,
       headers: new Headers(response.headers),
-      body: response.body ? (Readable.fromWeb(response.body as any) as Readable) : undefined
+      body: response.body && !response.bodyUsed ? (Readable.fromWeb(response.body as any) as Readable) : undefined
     }
   }
 
@@ -292,7 +292,7 @@ export function normalizeResponseBody(
 export function contextFromRequest<Ctx extends object>(baseCtx: Ctx, request: IHttpServerComponent.IRequest) {
   const newContext: IHttpServerComponent.DefaultContext<Ctx> = Object.create(baseCtx)
 
-  // hidrate context with the request
+  // hydrate context with the request
   newContext.request = request
   newContext.url = new URL(request.url)
 

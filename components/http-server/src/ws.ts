@@ -22,7 +22,7 @@ export function upgradeWebSocketResponse(cb: WebSocketCallback): IHttpServerComp
  * @internal
  * @deprecated Not stable
  */
-export function withWebSocketCallback<T extends object>(obj: T, cb: WebSocketCallback): T {
+export function withWebSocketCallback<T extends object>(obj: T, cb: WebSocketCallback | null): T {
   ;(obj as any)[wsSymbol] = cb
   return obj
 }
