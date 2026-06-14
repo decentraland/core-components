@@ -14,6 +14,8 @@ export interface SlackMessage {
   icon_url?: string
   thread_ts?: string
   reply_broadcast?: boolean
+  unfurl_links?: boolean
+  unfurl_media?: boolean
 }
 
 export interface ISlackComponent extends IBaseComponent {

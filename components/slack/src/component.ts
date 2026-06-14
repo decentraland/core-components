@@ -23,7 +23,9 @@ export function createSlackComponent(
         icon_emoji: message.icon_emoji,
         icon_url: message.icon_url,
         thread_ts: message.thread_ts,
-        reply_broadcast: message.reply_broadcast
+        reply_broadcast: message.reply_broadcast,
+        unfurl_links: message.unfurl_links,
+        unfurl_media: message.unfurl_media
       })
     } catch (error) {
       logger.debug(`Failed to send message: ${error}`)
