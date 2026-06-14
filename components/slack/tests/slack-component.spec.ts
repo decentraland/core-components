@@ -91,6 +91,27 @@ describe('when creating a slack component', () => {
     })
   })
 
+  describe('and omitting the unfurl options', () => {
+    let message: SlackMessage
+
+    beforeEach(() => {
+      token = 'xoxb-test-token'
+      slackComponent = createSlackComponent({ logs }, { token })
+      message = {
+        text: 'Test message',
+        channel: 'test-channel'
+      }
+    })
+
+    it('should not force a value, leaving Slack defaults to apply', async () => {
+      await slackComponent.sendMessage(message)
+
+      const sent = (mockClient.chat.postMessage as jest.Mock).mock.calls[0][0]
+      expect(sent.unfurl_links).toBeUndefined()
+      expect(sent.unfurl_media).toBeUndefined()
+    })
+  })
+
   describe('and API call fails', () => {
     let message: SlackMessage
 
