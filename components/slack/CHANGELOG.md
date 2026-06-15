@@ -1,5 +1,11 @@
 # @dcl/slack-component
 
+## 1.1.0
+
+### Minor Changes
+
+- 1919f92: add optional `unfurl_links` and `unfurl_media` fields to `SlackMessage`, forwarded to `chat.postMessage`. Lets callers disable Slack link/media preview unfurling (e.g. set both to `false`) without changing existing behavior — when omitted, Slack's defaults apply.
+
 ## 1.0.10
 
 ### Patch Changes
