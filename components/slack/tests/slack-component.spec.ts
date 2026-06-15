@@ -39,6 +39,8 @@ describe('when creating a slack component', () => {
         icon_url: 'https://example.com/icon.png',
         thread_ts: '1234567890.123456',
         reply_broadcast: true,
+        unfurl_links: true,
+        unfurl_media: true,
         blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Test' } }],
         attachments: [{ color: '#36a64f', text: 'Attachment' }]
       }
@@ -55,9 +57,58 @@ describe('when creating a slack component', () => {
         icon_url: 'https://example.com/icon.png',
         thread_ts: '1234567890.123456',
         reply_broadcast: true,
+        unfurl_links: true,
+        unfurl_media: true,
         blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Test' } }],
         attachments: [{ color: '#36a64f', text: 'Attachment' }]
       })
+    })
+  })
+
+  describe('and disabling link unfurling', () => {
+    let message: SlackMessage
+
+    beforeEach(() => {
+      token = 'xoxb-test-token'
+      slackComponent = createSlackComponent({ logs }, { token })
+      message = {
+        text: 'Test message',
+        channel: 'test-channel',
+        unfurl_links: false,
+        unfurl_media: false
+      }
+    })
+
+    it('should forward unfurl_links and unfurl_media as false to the API', async () => {
+      await slackComponent.sendMessage(message)
+
+      expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unfurl_links: false,
+          unfurl_media: false
+        })
+      )
+    })
+  })
+
+  describe('and omitting the unfurl options', () => {
+    let message: SlackMessage
+
+    beforeEach(() => {
+      token = 'xoxb-test-token'
+      slackComponent = createSlackComponent({ logs }, { token })
+      message = {
+        text: 'Test message',
+        channel: 'test-channel'
+      }
+    })
+
+    it('should not force a value, leaving Slack defaults to apply', async () => {
+      await slackComponent.sendMessage(message)
+
+      const sent = (mockClient.chat.postMessage as jest.Mock).mock.calls[0][0]
+      expect(sent.unfurl_links).toBeUndefined()
+      expect(sent.unfurl_media).toBeUndefined()
     })
   })
 
