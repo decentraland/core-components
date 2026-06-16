@@ -1,0 +1,37 @@
+{
+  "name": "@dcl/snapshots-synchronizer-component",
+  "version": "0.0.0",
+  "description": "Synchronizes Decentraland deployments from catalyst content servers (snapshots bootstrap + pointer-changes streaming) and schedules them on a deployer.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/snapshots-synchronizer"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/catalyst-storage": "^4.6.1",
+    "@dcl/content-downloader-component": "workspace:*",
+    "@dcl/metrics": "^1.0.0",
+    "@dcl/schemas": "^9.1.1",
+    "@well-known-components/interfaces": "^1.5.2",
+    "fp-future": "^1.0.1",
+    "p-queue": "^6.6.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
