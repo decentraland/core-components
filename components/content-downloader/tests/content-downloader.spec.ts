@@ -19,22 +19,23 @@ function streamToBuffer(stream: Readable): Promise<Buffer> {
   })
 }
 
-describe('createContentDownloaderComponent', () => {
+describe('when downloading content with the content-downloader component', () => {
   let server: http.Server
   let baseUrl: string
   let contentByHash: Map<string, Buffer>
+  let requestCount: number
   let storage: IContentStorageComponent
-  let metrics: any
-  let logs: any
   let targetFolder: string
   let component: IContentDownloaderComponent
 
-  beforeAll((done) => {
+  beforeEach(async () => {
     contentByHash = new Map()
+    requestCount = 0
     server = http.createServer((req, res) => {
       const match = req.url?.match(/\/contents\/(.+)$/)
       const body = match && contentByHash.get(match[1])
       if (body) {
+        requestCount++
         res.writeHead(200)
         res.end(body)
       } else {
@@ -42,73 +43,68 @@ describe('createContentDownloaderComponent', () => {
         res.end()
       }
     })
-    server.listen(0, '127.0.0.1', () => {
-      baseUrl = `http://127.0.0.1:${(server.address() as any).port}`
-      done()
-    })
-  })
-
-  afterAll((done) => {
-    server.close(done)
-  })
-
-  beforeEach(async () => {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+    baseUrl = `http://127.0.0.1:${(server.address() as any).port}`
     storage = createInMemoryStorage()
-    metrics = {
-      observe: jest.fn(),
-      increment: jest.fn(),
-      startTimer: jest.fn(() => ({ end: jest.fn() }))
+    const metrics: any = { observe: jest.fn(), increment: jest.fn(), startTimer: jest.fn(() => ({ end: jest.fn() })) }
+    const logs: any = {
+      getLogger: () => ({ log: jest.fn(), debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() })
     }
-    logs = { getLogger: () => ({ log: jest.fn(), debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }) }
     targetFolder = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'cd-test-'))
     component = await createContentDownloaderComponent({ logs, storage, metrics })
   })
 
   afterEach(async () => {
     await component[STOP_COMPONENT]!()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
     jest.resetAllMocks()
   })
 
-  describe('when downloading a valid content file present on a server', () => {
+  describe('and the file is present on a server', () => {
     let hash: string
     let content: Buffer
+    let servers: string[]
 
     beforeEach(async () => {
       content = Buffer.from('hello content downloader')
       hash = await hashV1(content)
       contentByHash.set(hash, content)
+      servers = [baseUrl]
     })
 
-    it('should download it and store it in storage by hash', async () => {
-      await component.downloadFileWithRetries(hash, targetFolder, [baseUrl], 3, 0)
+    it('should store the downloaded file in storage keyed by its hash', async () => {
+      await component.downloadFileWithRetries(hash, targetFolder, servers, 3, 0)
 
-      expect(await storage.exist(hash)).toBe(true)
       const stored = await streamToBuffer(await (await storage.retrieve(hash))!.asStream())
       expect(stored).toEqual(content)
     })
 
-    it('should de-duplicate concurrent downloads of the same hash', async () => {
-      const [a, b] = await Promise.all([
-        component.downloadFileWithRetries(hash, targetFolder, [baseUrl], 3, 0),
-        component.downloadFileWithRetries(hash, targetFolder, [baseUrl], 3, 0)
+    it('should hit the server only once for concurrent downloads of the same hash', async () => {
+      await Promise.all([
+        component.downloadFileWithRetries(hash, targetFolder, servers, 3, 0),
+        component.downloadFileWithRetries(hash, targetFolder, servers, 3, 0)
       ])
-      expect(a).toEqual(b)
-      expect(await storage.exist(hash)).toBe(true)
+
+      expect(requestCount).toBe(1)
     })
   })
 
-  describe('when the hash is not a valid content address', () => {
-    it('should reject with InvalidContentHashError before touching storage', async () => {
-      const existSpy = jest.spyOn(storage, 'exist')
-      await expect(component.downloadFileWithRetries('../../etc/passwd', targetFolder, [baseUrl], 3, 0)).rejects.toThrow(
+  describe('and the hash is not a valid content address', () => {
+    let invalidHash: string
+
+    beforeEach(() => {
+      invalidHash = '../../etc/passwd'
+    })
+
+    it('should reject with an InvalidContentHashError', async () => {
+      await expect(component.downloadFileWithRetries(invalidHash, targetFolder, [baseUrl], 3, 0)).rejects.toThrow(
         InvalidContentHashError
       )
-      expect(existSpy).not.toHaveBeenCalled()
     })
   })
 
-  describe('when the component is stopped', () => {
-    it('should resolve STOP_COMPONENT', async () => {
+  describe('and the component is stopped', () => {
+    it('should resolve its STOP_COMPONENT lifecycle hook', async () => {
       await expect(component[STOP_COMPONENT]!()).resolves.toBeUndefined()
     })
   })

@@ -5,29 +5,32 @@ import { Readable } from 'stream'
 import { createSnapshotsSynchronizerComponent } from '../src/component'
 import { ISnapshotsSynchronizerComponent, SnapshotsSynchronizerComponents, SynchronizerOptions } from '../src/types'
 
-const authChain = [{ type: AuthLinkType.SIGNER, payload: '0x3b21028719a4aca7ebee35b0157a6f1b0cf0d0c5', signature: '' }]
-
-function deployment(entityId: string, entityTimestamp: number) {
-  return { entityType: 'profile', entityId, entityTimestamp, authChain, pointers: ['0x1'] }
+function snapshotLine(entityId: string, entityTimestamp: number): string {
+  return JSON.stringify({
+    entityType: 'profile',
+    entityId,
+    entityTimestamp,
+    authChain: [{ type: AuthLinkType.SIGNER, payload: '0x3b21028719a4aca7ebee35b0157a6f1b0cf0d0c5', signature: '' }],
+    pointers: ['0x1']
+  })
 }
 
-const baseOptions: SynchronizerOptions = {
-  tmpDownloadFolder: '/tmp/snapshots-sync-test',
-  requestMaxRetries: 3,
-  requestRetryWaitTime: 0,
-  pointerChangesWaitTime: 0,
-  fromTimestamp: 0,
-  bootstrapReconnection: { reconnectTime: 1000, reconnectRetryTimeExponent: 1.5, maxReconnectionTime: 3_600_000 },
-  syncingReconnection: { reconnectTime: 1000, reconnectRetryTimeExponent: 1.2, maxReconnectionTime: 3_600_000 }
-}
-
-describe('createSnapshotsSynchronizerComponent', () => {
+describe('when synchronizing with the snapshots-synchronizer component', () => {
   let storage: IContentStorageComponent
-  let components: SnapshotsSynchronizerComponents
+  let options: SynchronizerOptions
   let component: ISnapshotsSynchronizerComponent
 
   beforeEach(async () => {
     storage = createInMemoryStorage()
+    options = {
+      tmpDownloadFolder: '/tmp/snapshots-sync-test',
+      requestMaxRetries: 3,
+      requestRetryWaitTime: 0,
+      pointerChangesWaitTime: 0,
+      fromTimestamp: 0,
+      bootstrapReconnection: { reconnectTime: 1000, reconnectRetryTimeExponent: 1.5, maxReconnectionTime: 3_600_000 },
+      syncingReconnection: { reconnectTime: 1000, reconnectRetryTimeExponent: 1.2, maxReconnectionTime: 3_600_000 }
+    }
     const metrics: any = { observe: jest.fn(), increment: jest.fn(), startTimer: jest.fn(() => ({ end: jest.fn() })) }
     const logs: any = {
       getLogger: () => ({ log: jest.fn(), debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() })
@@ -38,20 +41,20 @@ describe('createSnapshotsSynchronizerComponent', () => {
       downloadFileWithRetries: jest.fn().mockResolvedValue(undefined),
       downloadEntityAndContentFiles: jest.fn().mockResolvedValue({})
     }
-    components = {
+    const components: SnapshotsSynchronizerComponents = {
       logs,
       metrics,
       fetcher: { fetch: jest.fn() } as any,
       storage,
       contentDownloader,
-      deployer: { scheduleEntityDeployment: jest.fn(), onIdle: jest.fn(), prepareForDeploymentsIn: jest.fn() },
-      snapshotStorage: { has: jest.fn().mockResolvedValue(false) },
+      deployer: { scheduleEntityDeployment: jest.fn(), onIdle: jest.fn(), prepareForDeploymentsIn: jest.fn() } as any,
+      snapshotStorage: { has: jest.fn().mockResolvedValue(false) } as any,
       processedSnapshotStorage: {
         filterProcessedSnapshotsFrom: jest.fn().mockResolvedValue(new Set()),
         markSnapshotAsProcessed: jest.fn()
-      }
+      } as any
     }
-    component = await createSnapshotsSynchronizerComponent(components, baseOptions)
+    component = await createSnapshotsSynchronizerComponent(components, options)
   })
 
   afterEach(async () => {
@@ -59,30 +62,37 @@ describe('createSnapshotsSynchronizerComponent', () => {
     jest.resetAllMocks()
   })
 
-  describe('when streaming the deployments of a snapshot already present in storage', () => {
-    const snapshotHash = 'bafkreitestsnapshot'
-    const id1 = 'ba000000000000000000000000000000000000000000000000000000001'
-    const id2 = 'ba000000000000000000000000000000000000000000000000000000002'
+  describe('and streaming the deployments of a snapshot already present in storage', () => {
+    let snapshotHash: string
+    let entityIds: string[]
+    let servers: Set<string>
 
     beforeEach(async () => {
-      const file = [JSON.stringify(deployment(id1, 1)), JSON.stringify(deployment(id2, 2))].join('\n')
-      await storage.storeStream(snapshotHash, Readable.from([Buffer.from(file + '\n')]))
+      snapshotHash = 'bafkreitestsnapshot'
+      entityIds = [
+        'ba000000000000000000000000000000000000000000000000000000001',
+        'ba000000000000000000000000000000000000000000000000000000002'
+      ]
+      servers = new Set(['http://server.example.com'])
+      const file = entityIds.map((id, index) => snapshotLine(id, index + 1)).join('\n') + '\n'
+      await storage.storeStream(snapshotHash, Readable.from([Buffer.from(file)]))
     })
 
-    it('should yield each deployment annotated with the snapshot hash and servers', async () => {
-      const yielded: any[] = []
-      for await (const d of component.streamFromSnapshot(baseOptions, snapshotHash, new Set(['http://server.example.com']))) {
-        yielded.push(d)
+    it('should yield each deployment annotated with the snapshot hash and the servers it was found in', async () => {
+      const yielded: Array<{ entityId: string; snapshotHash?: string; servers: string[] }> = []
+      for await (const deployment of component.streamFromSnapshot(options, snapshotHash, servers)) {
+        yielded.push({ entityId: deployment.entityId, snapshotHash: deployment.snapshotHash, servers: deployment.servers })
       }
 
-      expect(yielded).toHaveLength(2)
-      expect(yielded[0]).toMatchObject({ entityId: id1, snapshotHash, servers: ['http://server.example.com'] })
-      expect(yielded[1]).toMatchObject({ entityId: id2, snapshotHash })
+      expect(yielded).toEqual([
+        { entityId: entityIds[0], snapshotHash, servers: ['http://server.example.com'] },
+        { entityId: entityIds[1], snapshotHash, servers: ['http://server.example.com'] }
+      ])
     })
   })
 
-  describe('when the component is stopped', () => {
-    it('should resolve STOP_COMPONENT', async () => {
+  describe('and the component is stopped', () => {
+    it('should resolve its STOP_COMPONENT lifecycle hook', async () => {
       await expect(component[STOP_COMPONENT]!()).resolves.toBeUndefined()
     })
   })
