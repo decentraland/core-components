@@ -1,0 +1,35 @@
+{
+  "name": "@dcl/content-downloader-component",
+  "version": "0.0.0",
+  "description": "Streaming content-addressed file downloader: downloads hashes from content servers into a storage component, with retries, dedup, hash verification, size cap and inactivity timeout.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/content-downloader"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/catalyst-storage": "^4.6.1",
+    "@dcl/hashing": "^3.0.3",
+    "@dcl/metrics": "^1.0.0",
+    "@well-known-components/interfaces": "^1.5.2",
+    "p-queue": "^6.6.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

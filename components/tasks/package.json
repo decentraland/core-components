@@ -1,0 +1,32 @@
+{
+  "name": "@dcl/tasks-component",
+  "version": "0.0.0",
+  "description": "Generic task scheduling primitives: concurrency-limited retry queue, serial lifecycle runner, desired-set lifecycle manager and exponential-backoff retry loop.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/tasks"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@well-known-components/interfaces": "^1.5.2",
+    "p-queue": "^6.6.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
