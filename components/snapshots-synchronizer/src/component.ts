@@ -17,9 +17,8 @@ import {
 } from './internal/deploy-entities'
 import { createExponentialFallofRetry } from './internal/exponential-falloff-retry'
 import { createJobLifecycleManagerComponent } from './internal/job-lifecycle-manager'
-import { createJobQueue } from './internal/job-queue'
+import { createJobQueue, createSerialJobRunner } from './internal/jobs'
 import { getSnapshots } from './internal/remote-entity-client'
-import { createSerialJobRunner } from './internal/serial-job-runner'
 import {
   getDeployedEntitiesStreamFromPointerChanges,
   getDeployedEntitiesStreamFromSnapshot
