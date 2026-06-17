@@ -1,11 +1,11 @@
 {
-  "name": "@dcl/snapshots-synchronizer-component",
+  "name": "@dcl/tasks-component",
   "version": "0.0.0",
-  "description": "Synchronizes Decentraland deployments from catalyst content servers (snapshots bootstrap + pointer-changes streaming) and schedules them on a deployer.",
+  "description": "Generic task scheduling primitives: concurrency-limited retry queue, serial lifecycle runner, desired-set lifecycle manager and exponential-backoff retry loop.",
   "repository": {
     "type": "git",
     "url": "https://github.com/decentraland/core-components",
-    "directory": "components/snapshots-synchronizer"
+    "directory": "components/tasks"
   },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -20,13 +20,7 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
-    "@dcl/catalyst-storage": "^4.6.1",
-    "@dcl/content-downloader-component": "workspace:*",
-    "@dcl/metrics": "^1.0.0",
-    "@dcl/schemas": "^9.1.1",
-    "@dcl/tasks-component": "workspace:*",
     "@well-known-components/interfaces": "^1.5.2",
-    "fp-future": "^1.0.1",
     "p-queue": "^6.6.2"
   },
   "devDependencies": {

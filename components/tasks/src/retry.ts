@@ -1,32 +1,33 @@
 import { ILoggerComponent } from '@well-known-components/interfaces'
-import { IJobWithLifecycle } from './job-lifecycle-manager'
+import { InvalidMaxIntervalError } from './errors'
+import { ITaskWithLifecycle } from './types'
 
-export type ExponentialFallofRetryComponent = IJobWithLifecycle & {
+export type ExponentialBackoffRetryComponent = ITaskWithLifecycle & {
   getRetryCount(): number
   isStopped(): boolean
 }
 
-export type ExponentialFallofRetryOptions = {
+export type ExponentialBackoffRetryOptions = {
   retryTime: number
   /** @default 1.1 */
   retryTimeExponent?: number
   action: () => Promise<void>
-  /** Maximum falloff interval in milliseconds. @default 86_400_000 one day */
+  /** Maximum backoff interval in milliseconds. @default 86_400_000 one day */
   maxInterval?: number
   exitOnSuccess?: boolean
 }
 
 /**
- * Creates a component that executes long-living tasks over and over until stopped, with
- * configurable exponential backoff.
+ * Creates a task that executes long-living actions over and over until stopped, with configurable
+ * exponential backoff between attempts.
  */
-export function createExponentialFallofRetry(
+export function createExponentialBackoffRetry(
   logs: ILoggerComponent.ILogger,
-  options: ExponentialFallofRetryOptions
-): ExponentialFallofRetryComponent {
+  options: ExponentialBackoffRetryOptions
+): ExponentialBackoffRetryComponent {
   let started: boolean = false
 
-  if (options.maxInterval && options.maxInterval < 0) throw new Error('options.maxInterval must be >= 0')
+  if (options.maxInterval && options.maxInterval < 0) throw new InvalidMaxIntervalError()
 
   const exitOnSuccess = options.exitOnSuccess || false
 
@@ -54,7 +55,7 @@ export function createExponentialFallofRetry(
     })
   }
 
-  async function start() {
+  async function loop() {
     let reconnectionTime = options.retryTime
 
     while (true) {
@@ -107,10 +108,10 @@ export function createExponentialFallofRetry(
       if (started === true) return
       started = true
       try {
-        await start()
+        await loop()
       } finally {
         // Reset so isStopped() is accurate once the loop exits (e.g. exitOnSuccess) and the
-        // component can be started again.
+        // task can be started again.
         started = false
       }
     },

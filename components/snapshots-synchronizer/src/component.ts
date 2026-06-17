@@ -15,9 +15,12 @@ import {
   deployEntitiesFromPointerChanges,
   deployEntitiesFromSnapshot
 } from './internal/deploy-entities'
-import { createExponentialFallofRetry } from './internal/exponential-falloff-retry'
-import { createJobLifecycleManagerComponent } from './internal/job-lifecycle-manager'
-import { createJobQueue, createSerialJobRunner } from './internal/jobs'
+import {
+  createExponentialBackoffRetry,
+  createSerialTaskRunner,
+  createTaskLifecycleManagerComponent,
+  createTaskQueue
+} from '@dcl/tasks-component'
 import { getSnapshots } from './internal/remote-entity-client'
 import {
   getDeployedEntitiesStreamFromPointerChanges,
@@ -38,8 +41,8 @@ export async function createSnapshotsSynchronizerComponent(
   options: SynchronizerOptions
 ): Promise<ISnapshotsSynchronizerComponent> {
   // Internally-owned concurrency-limited queue used for /snapshots requests.
-  const downloadQueue = createJobQueue({ autoStart: true, concurrency: 10, timeout: 60000 })
-  const components: InternalComponents = { ...publicComponents, downloadQueue }
+  const requestQueue = createTaskQueue({ autoStart: true, concurrency: 10, timeout: 60000 })
+  const components: InternalComponents = { ...publicComponents, requestQueue }
 
   const logger = components.logs.getLogger('snapshots-synchronizer')
   const genesisTimestamp = options.fromTimestamp || 0
@@ -48,11 +51,11 @@ export async function createSnapshotsSynchronizerComponent(
   const syncingServers: Set<string> = new Set()
   const lastEntityTimestampFromSnapshotsByServer: Map<string, number> = new Map()
   // Sync jobs are serialized: only one runs at a time, the rest queue (FIFO).
-  const syncJobsRunner = createSerialJobRunner(logger)
+  const syncJobsRunner = createSerialTaskRunner(logger)
   const pointerChangesShiftFix = 20 * 60_000
 
   let isStopped = false
-  const regularSyncFromSnapshotsAfterBootstrapJob = createExponentialFallofRetry(logger, {
+  const regularSyncFromSnapshotsAfterBootstrapJob = createExponentialBackoffRetry(logger, {
     async action() {
       if (isStopped) {
         return
@@ -60,7 +63,7 @@ export async function createSnapshotsSynchronizerComponent(
       try {
         await syncFromSnapshots(syncingServers)
       } catch (e: any) {
-        // The full error (with stack) is logged by createExponentialFallofRetry; here we add context.
+        // The full error (with stack) is logged by createExponentialBackoffRetry; here we add context.
         logger.error(`Error syncing snapshots: ${e?.message ?? JSON.stringify(e)}`)
         throw e
       }
@@ -103,7 +106,7 @@ export async function createSnapshotsSynchronizerComponent(
     const snapshotsByHash: Map<string, Snapshot[]> = new Map()
     const snapshotLastTimestampByServer: Map<string, number> = new Map()
     // Fetch all servers concurrently; getSnapshots already runs through the concurrency-limited
-    // downloadQueue. The synchronous map mutations below can't interleave (no await between them).
+    // requestQueue. The synchronous map mutations below can't interleave (no await between them).
     await Promise.all(
       Array.from(serversToSync).map(async (server) => {
         try {
@@ -232,9 +235,9 @@ export async function createSnapshotsSynchronizerComponent(
     reportServerStateMetric()
   }
 
-  const deployPointerChangesAfterBootstrapJobManager = createJobLifecycleManagerComponent(components, {
-    jobManagerName: 'SynchronizationJobManager',
-    createJob(contentServer) {
+  const deployPointerChangesAfterBootstrapJobManager = createTaskLifecycleManagerComponent(components, {
+    taskManagerName: 'SynchronizationJobManager',
+    createTask(contentServer) {
       const fromTimestamp = lastEntityTimestampFromSnapshotsByServer.get(contentServer)
       if (fromTimestamp === undefined) {
         throw new Error(
@@ -242,7 +245,7 @@ export async function createSnapshotsSynchronizerComponent(
         )
       }
       const metricsLabels = contentServerMetricLabels(contentServer)
-      return createExponentialFallofRetry(logger, {
+      return createExponentialBackoffRetry(logger, {
         async action() {
           if (isStopped) {
             return
@@ -272,7 +275,7 @@ export async function createSnapshotsSynchronizerComponent(
     const onFirstBootstrapFinishedCallbacks: Array<() => Promise<void>> = []
     let firstBootstrapTryFinished = false
     const syncFinished = future<void>()
-    const syncRetry = createExponentialFallofRetry(logger, {
+    const syncRetry = createExponentialBackoffRetry(logger, {
       async action() {
         if (isStopped) {
           return
@@ -296,7 +299,7 @@ export async function createSnapshotsSynchronizerComponent(
             await Promise.all(runningCallbacks)
           }
         }
-        deployPointerChangesAfterBootstrapJobManager.setDesiredJobs(syncingServers)
+        deployPointerChangesAfterBootstrapJobManager.setDesiredTasks(syncingServers)
         logger.info(`Syncing servers: ${Array.from(syncingServers)}`)
         if (bootstrappingServersFromSnapshots.size > 0 || bootstrappingServersFromPointerChanges.size > 0) {
           throw new Error(
@@ -374,7 +377,7 @@ export async function createSnapshotsSynchronizerComponent(
       if (snapshotsSyncTimeout) {
         clearTimeout(snapshotsSyncTimeout)
       }
-      await downloadQueue.stop?.()
+      await requestQueue.stop?.()
     }
   }
 

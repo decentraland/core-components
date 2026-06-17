@@ -27,13 +27,13 @@ function isValidSnapshotMetadata(snapshot: any): snapshot is SnapshotMetadata {
 }
 
 export async function getSnapshots(
-  components: Pick<InternalComponents, 'logs' | 'fetcher' | 'downloadQueue'>,
+  components: Pick<InternalComponents, 'logs' | 'fetcher' | 'requestQueue'>,
   server: string,
   retries: number
 ): Promise<SnapshotMetadata[]> {
   const logger = components.logs.getLogger('getSnapshots')
   const incrementalSnapshotsUrl = new URL(`${server}/snapshots`).toString()
-  const response = await components.downloadQueue.scheduleJobWithRetries(
+  const response = await components.requestQueue.scheduleWithRetries(
     () => fetchJson(incrementalSnapshotsUrl, components.fetcher, { timeout: 15000 }),
     retries
   )
