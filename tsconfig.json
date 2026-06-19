@@ -14,6 +14,7 @@
     { "path": "./components/analytics" },
     { "path": "./components/block-indexer" },
     { "path": "./components/job" },
-    { "path": "./components/slack" }
+    { "path": "./components/slack" },
+    { "path": "./components/thegraph" }
   ]
 }
