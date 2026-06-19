@@ -81,6 +81,75 @@ describe('when fetching with the fetch component', () => {
     })
   })
 
+  describe('and the first attempt fails with a network error', () => {
+    const expectedResponseBody = { mock: 'successful' }
+
+    beforeEach(() => {
+      fetchMock.mockRejectedValueOnce(new Error('network error')).mockResolvedValueOnce(
+        new Response(JSON.stringify(expectedResponseBody), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
+    })
+
+    it('should retry and resolve the successful response from the second attempt', async () => {
+      const response = await (await sut.fetch('https://example.com', { attempts: 3, retryDelay: 10 })).json()
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(response).toEqual(expectedResponseBody)
+    })
+  })
+
+  describe('and every attempt fails with a network error', () => {
+    beforeEach(() => {
+      fetchMock.mockRejectedValue(new Error('network error'))
+    })
+
+    it('should exhaust the retries and re-throw the last network error', async () => {
+      await expect(sut.fetch('https://example.com', { attempts: 3, retryDelay: 10 })).rejects.toThrow('network error')
+
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
+  })
+
+  describe('and a network error is followed by a retryable status', () => {
+    const expectedResponseBody = { mock: 'successful' }
+
+    beforeEach(() => {
+      fetchMock
+        .mockRejectedValueOnce(new Error('network error'))
+        .mockResolvedValueOnce(new Response('test error', { status: 503, headers: { 'Content-Type': 'text/plain' } }))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(expectedResponseBody), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+    })
+
+    it('should keep retrying across both failure types and resolve the successful response', async () => {
+      const response = await (await sut.fetch('https://example.com', { attempts: 3, retryDelay: 10 })).json()
+
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      expect(response).toEqual(expectedResponseBody)
+    })
+  })
+
+  describe('and a non-idempotent method fails with a network error', () => {
+    beforeEach(() => {
+      fetchMock.mockRejectedValue(new Error('network error'))
+    })
+
+    it('should not retry a POST request and re-throw the network error', async () => {
+      await expect(
+        sut.fetch('https://example.com', { method: 'POST', attempts: 3, retryDelay: 10 })
+      ).rejects.toThrow('network error')
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('and the request exceeds the configured timeout', () => {
     let timer: NodeJS.Timeout | undefined
 

@@ -12,8 +12,14 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
   let attempts = attemptsOption!
   let timer: NodeJS.Timeout | null = null
   let response: Response | undefined = undefined
+  let lastError: unknown = undefined
 
   do {
+    // Reset the per-attempt outcome so a previous attempt's value can't leak into
+    // the retry decision below.
+    response = undefined
+    lastError = undefined
+
     try {
       if (timeout) {
         timer = setTimeout(() => {
@@ -35,15 +41,35 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
       --attempts
 
       response = await racePromise
+    } catch (error) {
+      // A rejected fetch means a network-level failure (DNS resolution, connection
+      // refused/reset, socket hang up). Capture it so the request can be retried
+      // like a retryable status code instead of failing on the first blip.
+      lastError = error
     } finally {
       // Clear the timeout timer on every exit (success, retryable failure or a
       // rejected fetch) so a pending timer can't later abort a controller that
       // is reused by the caller or by a subsequent retry.
       if (timer) clearTimeout(timer)
-      if (!!response && (response.ok || NON_RETRYABLE_STATUS_CODES.includes(response.status) || attempts === 0)) break
-      else await new Promise((resolve) => setTimeout(resolve, retryDelay))
     }
-  } while ((!response || !response.ok) && attempts > 0)
+
+    // Stop on a successful or non-retryable response.
+    if (response && (response.ok || NON_RETRYABLE_STATUS_CODES.includes(response.status))) break
+    // Stop when the request was aborted (timeout or external controller): retrying
+    // would reuse an already-aborted signal, and the caller turns this into the
+    // "Request aborted (timed out)" error after the loop.
+    if (timeoutSignal?.aborted) break
+    // Stop once the retries are exhausted, keeping the latest response/error around.
+    if (attempts === 0) break
+
+    await new Promise((resolve) => setTimeout(resolve, retryDelay))
+  } while (true)
+
+  // The retries were exhausted on network failures and no response was ever
+  // produced: surface the last network error to the caller.
+  if (!response && lastError !== undefined && !timeoutSignal?.aborted) {
+    throw lastError
+  }
 
   return response as Response
 }
