@@ -1,0 +1,32 @@
+{
+  "name": "@dcl/thegraph-component",
+  "version": "0.0.0",
+  "description": "Component to query thegraph.com subgraphs over HTTP, with retries and timeouts.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/thegraph"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/core-commons": "workspace:*",
+    "@well-known-components/interfaces": "^1.5.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
