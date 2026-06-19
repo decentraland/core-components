@@ -3,7 +3,7 @@ import { IMetricsComponent } from '@well-known-components/interfaces'
 /**
  * Metrics declarations, needed for your IMetricsComponent
  */
-export const metricDeclarations: IMetricsComponent.MetricsRecordDefinition<string> = {
+export const metricDeclarations = {
   subgraph_ok_total: {
     help: 'Subgraph request counter',
     type: IMetricsComponent.CounterType,
@@ -17,6 +17,8 @@ export const metricDeclarations: IMetricsComponent.MetricsRecordDefinition<strin
   subgraph_query_duration_seconds: {
     type: IMetricsComponent.HistogramType,
     help: 'Request duration in seconds.',
-    labelNames: ['url']
+    labelNames: ['url'],
+    // Buckets cover the escalating per-attempt timeouts (default 10s, +10s per retry).
+    buckets: [0.1, 0.3, 0.5, 1, 2, 5, 10, 20, 30, 60]
   }
-}
+} satisfies IMetricsComponent.MetricsRecordDefinition<string>

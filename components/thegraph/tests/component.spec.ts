@@ -7,6 +7,7 @@ import {
 } from '@dcl/core-commons'
 import { setTimeout } from 'timers/promises'
 import { createSubgraphComponent, ISubgraphComponent, SubgraphResponse, Variables } from '../src'
+import { SubgraphQueryTimeoutError } from '../src/errors'
 import { metricDeclarations } from '../src/metrics'
 import { UNKNOWN_SUBGRAPH_PROVIDER } from '../src/utils'
 
@@ -130,6 +131,13 @@ describe('when querying a subgraph', () => {
           body: JSON.stringify({ query, variables }),
           abortController: expect.any(AbortController)
         })
+      })
+    })
+
+    describe('and a remainingAttempts greater than the configured retries is supplied', () => {
+      it('should start the first attempt with the base timeout rather than a negative one', async () => {
+        await subgraph.query(query, variables, 10)
+        expect(setTimeoutMock).toHaveBeenCalledWith(10000, 'Timeout', expect.anything())
       })
     })
   })
@@ -307,30 +315,31 @@ describe('when querying a subgraph', () => {
       await expect(subgraph.query('query', {}, 0)).rejects.toThrow()
       expect(metrics.increment).toHaveBeenCalledWith('subgraph_errors_total', { url: SUBGRAPH_URL, kind: expectedKind })
     })
+
+    it('should not retry the query even when retries are available', async () => {
+      await expect(subgraph.query('query', {}, 5)).rejects.toThrow()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('and the query times out', () => {
-    const errorMessage = 'Query timed out'
-
     beforeEach(() => {
-      let rejectFetch: (reason?: unknown) => void = () => undefined
-      const fetchPromise = new Promise<FetchResponse>((_resolve, reject) => {
-        rejectFetch = reject
-      })
-      fetchMock.mockReturnValue(fetchPromise)
-      // The `withTimeout` timer firing aborts the in-flight request, rejecting it with an AbortError.
-      setTimeoutMock.mockImplementation((_time: number, name?: string) => {
-        if (name === 'Timeout') {
-          const error = new Error(errorMessage)
-          error.name = 'AbortError'
-          rejectFetch(error)
-        }
-        return Promise.resolve()
-      })
+      // Simulate a fetch component like `@dcl/fetch-component`, which rejects an aborted request
+      // with a generic Error (not a native AbortError) once its abort controller fires.
+      fetchMock.mockImplementation(
+        (_url: string, options: { abortController: AbortController }) =>
+          new Promise((_resolve, reject) => {
+            options.abortController.signal.addEventListener('abort', () => {
+              reject(new Error('Request aborted (timed out)'))
+            })
+          })
+      )
+      // Fire the `withTimeout` timer immediately so the request is aborted; any other timer resolves.
+      setTimeoutMock.mockImplementation(() => Promise.resolve())
     })
 
-    it('should reject with the timeout error', async () => {
-      await expect(subgraph.query('query', {}, 0)).rejects.toThrow(errorMessage)
+    it('should reject with a SubgraphQueryTimeoutError', async () => {
+      await expect(subgraph.query('query', {}, 0)).rejects.toBeInstanceOf(SubgraphQueryTimeoutError)
     })
 
     it('should increment the subgraph_errors_total metric with a timeout kind', async () => {

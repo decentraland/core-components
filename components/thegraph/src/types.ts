@@ -1,8 +1,8 @@
 export type Variables = Record<string, string[] | string | number | boolean | undefined>
 
-export type Error = { message: string }
+export type GraphQLError = { message: string }
 
-export type SubgraphResponse<T> = { data: T; errors?: Error[] | Error }
+export type SubgraphResponse<T> = { data: T; errors?: GraphQLError[] | GraphQLError }
 
 export type SubgraphProvider = string
 
