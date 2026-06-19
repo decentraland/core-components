@@ -4,9 +4,6 @@ import { getUnderlyingServer, Router } from '../src'
 import { describeE2E } from './test-e2e-harness'
 import { describeTestE2E } from './test-e2e-test-server'
 import { TestComponents } from './test-helpers'
-import FormData from 'form-data'
-import * as undici from 'undici'
-import nodeFetch from 'node-fetch'
 import { multipartParserWrapper } from './busboy'
 import { createCorsMiddleware } from '../src/cors'
 
@@ -75,8 +72,9 @@ function integrationSuite({ components }: { components: TestComponents }) {
     const res = await fetch.fetch(`/test?a=true&tttttt=asd`, { headers: { host: 'localhost' } })
     const { url, agent } = await res.json()
 
-    // undici decided that we cannot set the 'host' header anymore.
-    if (agent != 'undici') {
+    // undici-based clients strip the 'host' header (global fetch reports UA 'node', the undici
+    // package reports 'undici'); only assert the override for clients that preserve it.
+    if (agent != 'undici' && agent != 'node') {
       expect(url).toEqual('http://localhost/test?a=true&tttttt=asd')
     }
   })
@@ -127,10 +125,14 @@ function integrationSuite({ components }: { components: TestComponents }) {
     const { fetch, server } = components
     server.resetMiddlewares()
     server.use(async (ctx) => {
-      const googlePromise = await nodeFetch('https://google.com', {
-        compress: false
-      })
-      return googlePromise as any
+      const googleResponse = await globalThis.fetch('https://google.com')
+      // Native fetch transparently decompresses the body but keeps the origin's
+      // content-length/content-encoding headers; forwarding them would clash with the chunked
+      // re-streaming done by the server, so strip them and let the server re-frame the body.
+      const headers = new Headers(googleResponse.headers)
+      headers.delete('content-length')
+      headers.delete('content-encoding')
+      return new Response(googleResponse.body, { status: googleResponse.status, headers }) as any
     })
 
     const res = await fetch.fetch(`/`)
@@ -152,9 +154,8 @@ function integrationSuite({ components }: { components: TestComponents }) {
     expect(stream.destroyed).toEqual(false)
     const res = await fetch.fetch(`/`)
     expect(res.ok).toEqual(true)
-    // TODO: this should be handled by node-fetch, lazy consuming the body of the request,
-    // but it doesn't happen, it automatically receives the whole stream and tries to fit
-    // it into memory
+    // TODO: the fetch client should lazily consume the body of the request, but it doesn't
+    // happen, it automatically receives the whole stream and tries to fit it into memory
     // =>    expect(stream.destroyed).toEqual(false)
     // expect(await res.text()).toEqual(readFileSync(import.meta.url.replace('file://', '')).toString())
     expect(await res.text()).toEqual(readFileSync(__filename).toString())
@@ -278,8 +279,8 @@ function integrationSuite({ components }: { components: TestComponents }) {
   // })
 
   it('send and read form data using FormData', async () => {
-    const { fetch, server, config } = components
-    // TODO: undici doesn't work with FormData yet
+    const { fetch, server } = components
+    // The standalone undici package fetch doesn't serialize cross-realm FormData bodies; skip it.
     if (fetch.isUndici) return
 
     server.resetMiddlewares()
@@ -301,7 +302,7 @@ function integrationSuite({ components }: { components: TestComponents }) {
     server.use(routes.middleware())
 
     {
-      const data = fetch.isUndici ? new undici.FormData() : new FormData()
+      const data = new FormData()
       data.append('username', 'menduz')
       data.append('username2', 'cazala')
       const res = await fetch.fetch(`/`, { body: data as any, method: 'POST' })

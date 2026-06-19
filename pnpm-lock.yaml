@@ -123,9 +123,6 @@ importers:
       '@types/node':
         specifier: ^20.3.2
         version: 20.19.1
-      '@types/node-fetch':
-        specifier: ^2.6.12
-        version: 2.6.12
       '@types/on-finished':
         specifier: ^2.3.4
         version: 2.3.5
@@ -144,15 +141,9 @@ importers:
       busboy:
         specifier: ^1.6.0
         version: 1.6.0
-      form-data:
-        specifier: ^4.0.0
-        version: 4.0.3
       jest:
         specifier: ^30.0.2
         version: 30.0.2(@types/node@20.19.1)
-      node-fetch:
-        specifier: ^2.6.9
-        version: 2.7.0
       ts-jest:
         specifier: ^29.4.0
         version: 29.4.0(@babel/core@7.27.4)(@jest/transform@30.0.2)(@jest/types@30.2.0)(babel-jest@30.0.2(@babel/core@7.27.4))(jest-util@30.2.0)(jest@30.0.2(@types/node@20.19.1))(typescript@5.8.3)
@@ -233,9 +224,6 @@ importers:
       '@dcl/http-server':
         specifier: workspace:*
         version: link:../http-server
-      '@types/node-fetch':
-        specifier: ^2.6.12
-        version: 2.6.12
       '@well-known-components/env-config-provider':
         specifier: ^1.1.0
         version: 1.2.0(@well-known-components/interfaces@1.5.2)
@@ -435,9 +423,6 @@ importers:
         specifier: github:uNetworking/uWebSockets.js#v20.68.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/624987739d4da0acb628aaf2a10fc43e7ce27c5c
     devDependencies:
-      '@types/node-fetch':
-        specifier: ^2.6.12
-        version: 2.6.12
       '@well-known-components/env-config-provider':
         specifier: ^1.2.0
         version: 1.2.0(@well-known-components/interfaces@1.5.2)
@@ -447,9 +432,6 @@ importers:
       '@well-known-components/test-helpers':
         specifier: ^1.5.8
         version: 1.5.8(@babel/core@7.27.4)(@jest/transform@30.0.2)(@jest/types@30.2.0)(babel-jest@30.0.2(@babel/core@7.27.4))(jest-util@30.2.0)(typescript@5.9.3)
-      node-fetch:
-        specifier: ^2.6.12
-        version: 2.7.0
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

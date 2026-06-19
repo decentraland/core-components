@@ -20,8 +20,8 @@ async function initComponents<C extends object>(): Promise<TestComponents> {
 
   const server = createTestServerComponent<C>()
 
-  // createTestServerComponent returns a node-fetch based component; bridge it to
-  // the shared (native) fetch type used by the test components.
+  // createTestServerComponent returns a native-fetch based component; bridge it to
+  // the shared fetch type used by the test components.
   const fetch = { ...server, isUndici: false } as unknown as TestComponents['fetch']
 
   const ws: IWebSocketComponent<wsLib.WebSocket> = {
