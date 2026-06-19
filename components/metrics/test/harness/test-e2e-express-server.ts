@@ -2,7 +2,6 @@ import { createConfigComponent } from '@well-known-components/env-config-provide
 import { createServerComponent, instrumentHttpServerWithPromClientRegistry } from '@dcl/http-server'
 import { createLogComponent } from '@well-known-components/logger'
 import { createRunner } from '@well-known-components/test-helpers'
-import nodeFetch from 'node-fetch'
 import { createMetricsComponent } from '../../src'
 import { metricDeclarations } from './defaultMetrics'
 import { mockedRouter } from './mockedServer'
@@ -40,10 +39,8 @@ async function initComponents(): Promise<TestComponents> {
   const server = await createServerComponent<any>({ logs, config }, {})
 
   const fetch: IFetchComponent = {
-    // The metrics e2e harness exercises a real node-fetch runtime; its node-fetch
-    // Response is bridged to the shared (native) fetch type used by the components.
     async fetch(url, initRequest?) {
-      return nodeFetch(protocolHostAndProtocol + url, (initRequest ?? {}) as any) as unknown as Response
+      return globalThis.fetch(protocolHostAndProtocol + url, (initRequest ?? {}) as any)
     }
   }
 

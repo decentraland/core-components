@@ -1,7 +1,5 @@
 import { Readable } from 'stream'
 import Undici from 'undici'
-import NodeFetch from 'node-fetch'
-import { gzipSync } from 'zlib'
 import { testWithServer } from './test-server-runner'
 
 testWithServer('fetch suite', ({ components, stubComponents }) => {
@@ -70,10 +68,10 @@ testWithServer('fetch suite', ({ components, stubComponents }) => {
     })
   })
 
+  test('native', globalThis.fetch)
   test('undici', Undici.fetch)
-  test('node-fetch', NodeFetch)
 
-  function test(name: string, fetch: typeof Undici.fetch | typeof NodeFetch) {
+  function test(name: string, fetch: typeof globalThis.fetch | typeof Undici.fetch) {
     describe(name, () => {
       it('/wroking', async () => {
         const res = await fetch(await components.getUrl('/working'))
@@ -99,14 +97,10 @@ testWithServer('fetch suite', ({ components, stubComponents }) => {
         expect(infiniteRedirectCount).toBeGreaterThan(1)
       })
 
-      ;(name == 'node-fetch' ? it : xit)('/fails?connection=keep-alive', async () => {
-        const res = await fetch(await components.getUrl('/fails?connection=keep-alive'), { timeout: 1000 })
-        expect(res.status).toEqual(200)
-        await expect(res.arrayBuffer()).rejects.toThrow()
-      })
-
       it('/fails?connection=close', async () => {
-        const res = await fetch(await components.getUrl('/fails?connection=close'), { timeout: 1000 })
+        const res = await fetch(await components.getUrl('/fails?connection=close'), {
+          signal: AbortSignal.timeout(1000)
+        })
         expect(res.status).toEqual(200)
         await expect(res.arrayBuffer()).rejects.toThrow()
       })

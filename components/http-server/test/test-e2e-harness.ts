@@ -1,7 +1,6 @@
 import { createConfigComponent } from '@well-known-components/env-config-provider'
 import { createLogComponent } from '@well-known-components/logger'
 import { createRunner } from '@well-known-components/test-helpers'
-import nodeFetch from 'node-fetch'
 import { createServerComponent, createStatusCheckComponent, IWebSocketComponent } from '../src'
 import { createMockedLifecycleComponent } from './mockedLifecycleComponent'
 import { TestComponents, TestComponentsWithStatus } from './test-helpers'
@@ -62,9 +61,9 @@ function createInitComponents(options: { undici: boolean }) {
     const fetch: IFetchComponent & { isUndici: boolean } = {
       async fetch(url: any, initRequest?: any) {
         if (typeof url == 'string' && url.startsWith('/')) {
-          return (options.undici ? undici.fetch : nodeFetch)(protocolHostAndProtocol + url, { ...initRequest }) as any
+          return (options.undici ? undici.fetch : globalThis.fetch)(protocolHostAndProtocol + url, { ...initRequest }) as any
         } else {
-          return (options.undici ? undici.fetch : nodeFetch)(url, { ...initRequest }) as any
+          return (options.undici ? undici.fetch : globalThis.fetch)(url, { ...initRequest }) as any
         }
       },
       isUndici: !!options.undici

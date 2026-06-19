@@ -29,8 +29,8 @@ async function initComponents(): Promise<TestComponents> {
 
   const server = createTestServerComponent<any>()
 
-  // createTestServerComponent returns a node-fetch based component; bridge it to
-  // the shared (native) fetch type used by the components.
+  // createTestServerComponent returns a native-fetch based component; bridge it to
+  // the shared fetch type used by the components.
   const fetch: IFetchComponent = server as unknown as IFetchComponent
   const metrics = await createMetricsComponent(metricDeclarations, { config })
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
