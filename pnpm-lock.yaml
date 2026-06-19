@@ -65,6 +65,28 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
+  components/features:
+    dependencies:
+      '@dcl/core-commons':
+        specifier: workspace:*
+        version: link:../../shared/commons
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
+    devDependencies:
+      '@well-known-components/env-config-provider':
+        specifier: ^1.2.0
+        version: 1.2.0(@well-known-components/interfaces@1.5.2)
+      '@well-known-components/logger':
+        specifier: ^3.1.3
+        version: 3.1.3(@well-known-components/interfaces@1.5.2)
+      '@well-known-components/test-helpers':
+        specifier: ^1.5.8
+        version: 1.5.8(@babel/core@7.27.4)(@jest/transform@30.0.2)(@jest/types@30.2.0)(babel-jest@30.0.2(@babel/core@7.27.4))(jest-util@30.2.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   components/fetch:
     dependencies:
       '@dcl/core-commons':

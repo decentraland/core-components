@@ -11,6 +11,7 @@ core-components/
 ├── components/          # Reusable components
 │   ├── analytics/        # Analytics component for event tracking
 │   ├── block-indexer/    # On-chain block indexer component
+│   ├── features/         # Feature flags resolution component
 │   ├── fetch/            # Fetch component using the native Node fetch API
 │   ├── http-server/      # HTTP server component
 │   ├── http-tracer/      # HTTP tracer component (W3C trace context propagation)
@@ -73,6 +74,7 @@ core-components/
 ### Utilities
 
 - **Job Component** (`@dcl/job-component`) - Job scheduling and execution
+- **Features Component** (`@dcl/features-component`) - Feature flag resolution from environment variables and the feature-flags service
 - **Schema Validator Component** (`@dcl/schema-validator-component`) - JSON schema validation middleware
 - **Fetch Component** (`@dcl/fetch-component`) - HTTP client with retries and timeouts on the native Node fetch API
 - **Traced Fetch Component** (`@dcl/traced-fetch-component`) - HTTP requests with distributed tracing
@@ -154,6 +156,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 
 - `@dcl/analytics-component`
 - `@dcl/block-indexer`
+- `@dcl/features-component`
 - `@dcl/http-server`
 - `@dcl/http-tracer-component`
 - `@dcl/job-component`
