@@ -12,8 +12,14 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
   let attempts = attemptsOption!
   let timer: NodeJS.Timeout | null = null
   let response: Response | undefined = undefined
+  let lastError: unknown = undefined
 
   do {
+    // Reset the per-attempt outcome so a previous attempt's value can't leak into
+    // the retry decision below.
+    response = undefined
+    lastError = undefined
+
     try {
       if (timeout) {
         timer = setTimeout(() => {
@@ -35,17 +41,49 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
       --attempts
 
       response = await racePromise
+    } catch (error) {
+      // A rejected fetch means a network-level failure (DNS resolution, connection
+      // refused/reset, socket hang up). Capture it so the request can be retried
+      // like a retryable status code instead of failing on the first blip.
+      lastError = error
     } finally {
       // Clear the timeout timer on every exit (success, retryable failure or a
       // rejected fetch) so a pending timer can't later abort a controller that
       // is reused by the caller or by a subsequent retry.
       if (timer) clearTimeout(timer)
-      if (!!response && (response.ok || NON_RETRYABLE_STATUS_CODES.includes(response.status) || attempts === 0)) break
-      else await new Promise((resolve) => setTimeout(resolve, retryDelay))
     }
-  } while ((!response || !response.ok) && attempts > 0)
 
-  return response as Response
+    // Stop on a successful or non-retryable response.
+    if (response && (response.ok || NON_RETRYABLE_STATUS_CODES.includes(response.status))) break
+    // Stop when the request was aborted (timeout or external controller): retrying
+    // would reuse an already-aborted signal, and the caller turns this into the
+    // "Request aborted (timed out)" error after the loop.
+    if (timeoutSignal?.aborted) break
+    // Stop once the retries are exhausted, keeping the latest response/error around.
+    if (attempts === 0) break
+
+    await new Promise((resolve) => setTimeout(resolve, retryDelay))
+  } while (true)
+
+  // The loop only stops on a usable/non-retryable response, an aborted signal or
+  // exhausted retries. Resolve those into a concrete `Response` or a thrown error
+  // below so the return type is sound without an `as Response` assertion.
+
+  // An aborted signal (timeout or external controller) takes precedence over any
+  // response gathered so far and surfaces the dedicated abort error.
+  if (timeoutSignal?.aborted) {
+    throw new Error('Request aborted (timed out)')
+  }
+
+  // No response means every attempt failed at the network level. "Last attempt
+  // wins": if an earlier attempt returned a retryable HTTP response (e.g. 503) but
+  // the final attempt was a network error, the network error is thrown rather than
+  // the earlier response returned.
+  if (!response) {
+    throw lastError
+  }
+
+  return response
 }
 
 /**
@@ -90,10 +128,8 @@ export function createFetchComponent(defaultOptions?: FetcherOptions): IFetchCom
       abortController: controller
     })
 
-    if (signal.aborted) {
-      throw new Error('Request aborted (timed out)')
-    }
-
+    // fetchWithRetriesAndTimeout resolves to a real Response or throws (on abort,
+    // timeout or exhausted network retries), so no further guarding is needed here.
     return response
   }
 
