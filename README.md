@@ -25,6 +25,7 @@ core-components/
 │   ├── slack/            # Slack messaging component
 │   ├── sns/              # AWS SNS publisher component
 │   ├── sqs/              # AWS SQS queue component
+│   ├── thegraph/         # thegraph subgraph GraphQL query component
 │   ├── traced-fetch/     # Traced fetch component with distributed tracing
 │   └── uws-http-server/  # uWebSockets.js based HTTP server component
 └── shared/             # Shared utilities and types
@@ -67,6 +68,7 @@ core-components/
 ### Blockchain
 
 - **Block Indexer** (`@dcl/block-indexer`) - On-chain block indexer that finds the block at the tip of the blockchain for a given timestamp
+- **TheGraph Component** (`@dcl/thegraph-component`) - Queries thegraph.com subgraphs over HTTP with per-query retries and timeouts
 
 ### Utilities
 
@@ -167,6 +169,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/slack-component`
 - `@dcl/sns-component`
 - `@dcl/sqs-component`
+- `@dcl/thegraph-component`
 - `@dcl/traced-fetch-component`
 - `@dcl/uws-http-server`
 - `@dcl/core-commons`
