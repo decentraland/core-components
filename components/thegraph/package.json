@@ -1,6 +1,6 @@
 {
   "name": "@dcl/thegraph-component",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Component to query thegraph.com subgraphs over HTTP, with retries and timeouts.",
   "repository": {
     "type": "git",
