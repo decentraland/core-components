@@ -1,8 +1,22 @@
+import { createHash, timingSafeEqual } from 'crypto'
 import { IMetricsComponent } from '@well-known-components/interfaces'
 import * as uws from 'uWebSockets.js'
 import { Components, HttpMetrics, metrics } from './types'
 
 export const CONFIG_PREFIX = 'WKC_METRICS' as const
+
+/**
+ * Constant-time comparison of a candidate bearer token against the expected one.
+ * Both values are hashed to a fixed-length digest first so `timingSafeEqual`
+ * never throws on a length mismatch and the comparison does not leak the token
+ * length through timing.
+ */
+function safeTokenEquals(candidate: string | undefined, expected: string): boolean {
+  if (typeof candidate !== 'string') return false
+  const candidateHash = createHash('sha256').update(candidate).digest()
+  const expectedHash = createHash('sha256').update(expected).digest()
+  return timingSafeEqual(candidateHash, expectedHash)
+}
 
 export function getDefaultHttpMetrics(): IMetricsComponent.MetricsRecordDefinition<HttpMetrics> {
   return metrics
@@ -47,7 +61,7 @@ export async function createMetricsHandler(
       if (bearerToken) {
         const header = req.getHeader('authorization')
         const [scheme, value] = header ? header.split(' ') : []
-        if (scheme !== 'Bearer' || value !== bearerToken) {
+        if (scheme !== 'Bearer' || !safeTokenEquals(value, bearerToken)) {
           res.writeStatus('401 Unauthorized')
           res.end()
           return

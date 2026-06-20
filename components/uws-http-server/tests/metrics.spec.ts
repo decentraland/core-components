@@ -141,6 +141,19 @@ describe('when creating the metrics handler', () => {
       })
     })
 
+    describe('and the bearer token is a prefix of the expected token', () => {
+      beforeEach(() => {
+        req.getHeader.mockReturnValue('Bearer secret')
+      })
+
+      it('should respond with 401 Unauthorized without throwing on the length mismatch', async () => {
+        await handler(res, req)
+
+        expect(res.writeStatus).toHaveBeenCalledWith('401 Unauthorized')
+        expect(registry.metrics).not.toHaveBeenCalled()
+      })
+    })
+
     describe('and the bearer token matches', () => {
       beforeEach(() => {
         req.getHeader.mockReturnValue('Bearer secret-token')

@@ -1,6 +1,20 @@
+import { createHash, timingSafeEqual } from 'crypto'
 import { IConfigComponent, IMetricsComponent } from '@well-known-components/interfaces'
 import { IHttpServerComponent } from '@dcl/core-commons'
 import { Router } from './router'
+
+/**
+ * Constant-time comparison of a candidate bearer token against the expected one.
+ * Both values are hashed to a fixed-length digest first so `timingSafeEqual`
+ * never throws on a length mismatch and the comparison does not leak the token
+ * length through timing.
+ */
+function safeTokenEquals(candidate: string | undefined, expected: string): boolean {
+  if (typeof candidate !== 'string') return false
+  const candidateHash = createHash('sha256').update(candidate).digest()
+  const expectedHash = createHash('sha256').update(expected).digest()
+  return timingSafeEqual(candidateHash, expectedHash)
+}
 
 const httpLabels = ['method', 'handler', 'code'] as const
 
@@ -77,8 +91,8 @@ export async function instrumentHttpServerWithPromClientRegistry<K extends strin
     if (bearerToken) {
       const header = ctx.request.headers.get('authorization')
       if (!header) return { status: 401 }
-      const [_, value] = header.split(' ')
-      if (value != bearerToken) {
+      const [, value] = header.split(' ')
+      if (!safeTokenEquals(value, bearerToken)) {
         return { status: 401 }
       }
     }
