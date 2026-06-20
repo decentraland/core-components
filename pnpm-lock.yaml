@@ -420,6 +420,25 @@ importers:
         specifier: ^5.8.3
         version: 5.8.3
 
+  components/test-helpers:
+    dependencies:
+      '@dcl/core-commons':
+        specifier: workspace:*
+        version: link:../../shared/commons
+      '@types/jest':
+        specifier: '>=29'
+        version: 30.0.0
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
+      jest:
+        specifier: '>=29'
+        version: 30.0.2(@types/node@24.0.4)
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   components/thegraph:
     dependencies:
       '@dcl/core-commons':

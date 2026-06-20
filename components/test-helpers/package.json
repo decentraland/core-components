@@ -1,0 +1,36 @@
+{
+  "name": "@dcl/test-helpers",
+  "version": "0.1.0",
+  "description": "Jest test helpers for component-based programs (lifecycle runner and local fetch).",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/decentraland/core-components",
+    "directory": "components/test-helpers"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "@dcl/core-commons": "workspace:*",
+    "@well-known-components/interfaces": "^1.5.2"
+  },
+  "peerDependencies": {
+    "@types/jest": ">=29",
+    "jest": ">=29"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
