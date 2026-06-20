@@ -6,16 +6,18 @@ import { Components, HttpMetrics, metrics } from './types'
 export const CONFIG_PREFIX = 'WKC_METRICS' as const
 
 /**
- * Constant-time comparison of a candidate bearer token against the expected one.
- * Both values are hashed to a fixed-length digest first so `timingSafeEqual`
- * never throws on a length mismatch and the comparison does not leak the token
- * length through timing.
+ * Builds a constant-time comparator for the configured bearer token. The expected
+ * token is hashed once up front; each candidate is hashed and compared with
+ * `timingSafeEqual`. Hashing to fixed-length digests means the comparison never
+ * throws on a length mismatch and does not leak the token length through timing.
  */
-function safeTokenEquals(candidate: string | undefined, expected: string): boolean {
-  if (typeof candidate !== 'string') return false
-  const candidateHash = createHash('sha256').update(candidate).digest()
+function createBearerTokenComparator(expected: string): (candidate: string | undefined) => boolean {
   const expectedHash = createHash('sha256').update(expected).digest()
-  return timingSafeEqual(candidateHash, expectedHash)
+  return (candidate: string | undefined) => {
+    if (typeof candidate !== 'string') return false
+    const candidateHash = createHash('sha256').update(candidate).digest()
+    return timingSafeEqual(candidateHash, expectedHash)
+  }
 }
 
 export function getDefaultHttpMetrics(): IMetricsComponent.MetricsRecordDefinition<HttpMetrics> {
@@ -36,6 +38,7 @@ export async function createMetricsHandler(
 
   const metricsPath = (await config.getString(_configKey('PUBLIC_PATH'))) || '/metrics'
   const bearerToken = await config.getString(_configKey('BEARER_TOKEN'))
+  const compareBearerToken = bearerToken ? createBearerTokenComparator(bearerToken) : undefined
   const rotateMetrics = (await config.getString(_configKey('RESET_AT_NIGHT'))) === 'true'
 
   function calculateNextReset() {
@@ -58,10 +61,10 @@ export async function createMetricsHandler(
       // The request object is only valid synchronously (before the first
       // `await`), so authorization is checked here. This also avoids serializing
       // the metrics for unauthorized callers.
-      if (bearerToken) {
+      if (compareBearerToken) {
         const header = req.getHeader('authorization')
         const [scheme, value] = header ? header.split(' ') : []
-        if (scheme !== 'Bearer' || !safeTokenEquals(value, bearerToken)) {
+        if (scheme !== 'Bearer' || !compareBearerToken(value)) {
           res.writeStatus('401 Unauthorized')
           res.end()
           return

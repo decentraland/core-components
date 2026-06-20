@@ -79,6 +79,15 @@ describe('when instrumenting the http server with the metrics endpoint', () => {
       })
     })
 
+    describe('and the authorization scheme is not Bearer', () => {
+      it('should respond with 401 and not serialize the metrics', async () => {
+        const response = await server.fetch('/metrics', { headers: { authorization: 'Basic secret-token' } })
+
+        expect(response.status).toBe(401)
+        expect(registry.metrics).not.toHaveBeenCalled()
+      })
+    })
+
     describe('and the provided token is a prefix of the expected token', () => {
       it('should respond with 401 without throwing on the length mismatch', async () => {
         const response = await server.fetch('/metrics', { headers: { authorization: 'Bearer secret' } })
