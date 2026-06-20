@@ -21,6 +21,8 @@
   },
   "dependencies": {
     "@dcl/core-commons": "workspace:*",
+    "@dcl/crypto": "^3.4.5",
+    "@dcl/crypto-middleware": "^4.0.0",
     "@well-known-components/interfaces": "^1.5.2"
   },
   "peerDependencies": {

@@ -5,6 +5,7 @@
     "rootDir": ".",
     "declaration": true,
     "declarationMap": true,
+    "isolatedModules": true,
     "types": ["node", "jest"]
   },
   "include": ["src/**/*"],

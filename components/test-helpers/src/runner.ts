@@ -1,5 +1,5 @@
 import { Lifecycle } from '@well-known-components/interfaces'
-import { BeforeStartFunction, MockedComponent, TestArguments } from './types'
+import type { BeforeStartFunction, MockedComponent, TestArguments } from './types'
 
 /**
  * Creates a jest test runner bound to a component-based program. It receives the

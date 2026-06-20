@@ -12,6 +12,10 @@ module.exports = {
     '/dist/'
   ],
   transform: {
+    // ts-jest runs transpile-only because `isolatedModules` is set in tsconfig.json:
+    // it skips the type-checking language service (type safety is enforced by the
+    // `tsc` build) and avoids a ts-jest crash when building a Program over the heavy
+    // `@dcl/crypto` type graph.
     '^.+\\.ts$': 'ts-jest',
   },
   collectCoverageFrom: [

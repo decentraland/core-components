@@ -1,3 +1,6 @@
 export { createRunner } from './runner'
 export { createLocalFetchComponent, defaultServerConfig } from './localFetch'
+export type { LocalFetchRequestOptions, ILocalFetchComponent } from './localFetch'
+export { getIdentity, getAuthHeaders, getSignedAuthHeaders } from './auth'
+export type { Identity } from './auth'
 export type { TestArguments, BeforeStartFunction, MockedComponent, SpiedInstance } from './types'
