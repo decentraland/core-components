@@ -70,9 +70,13 @@ export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): IC
       const allKeys = Array.from(cache.keys()) as string[]
       if (!pattern) return allKeys
 
-      // Simple pattern matching - convert glob-like pattern to regex
-      const regexPattern = pattern.replace(/\*/g, '.*')
-      const regex = new RegExp(regexPattern)
+      // Convert a glob-like pattern to a regex. Escape every regex metacharacter
+      // first so a caller-supplied pattern can't inject regex syntax (avoiding
+      // ReDoS), then turn the escaped `*` globs back into `.*` wildcards, and
+      // anchor with `^`/`$` so the pattern matches the whole key rather than a
+      // substring.
+      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const regex = new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`)
       return allKeys.filter((key: string) => regex.test(key))
     },
 

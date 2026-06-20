@@ -303,6 +303,52 @@ describe('when scanning keys', () => {
       expect(result).toHaveLength(0)
     })
   })
+
+  describe('and scanning with a pattern that is a substring of stored keys', () => {
+    it('should not match keys by substring because the pattern is anchored', async () => {
+      const result = await component.keys('user')
+
+      expect(result).toHaveLength(0)
+    })
+  })
+
+  describe('and scanning with a pattern containing regex metacharacters', () => {
+    beforeEach(async () => {
+      await component.set('user.123', 'literal-dot')
+    })
+
+    it('should treat the dot literally instead of as a regex wildcard', async () => {
+      const result = await component.keys('user.123')
+
+      expect(result).toEqual(['user.123'])
+      expect(result).not.toContain('user:123')
+    })
+
+    it('should match a literal prefix followed by a wildcard', async () => {
+      const result = await component.keys('user.*')
+
+      expect(result).toContain('user.123')
+      expect(result).not.toContain('user:123')
+    })
+  })
+
+  describe('and scanning with a ReDoS-prone pattern against a key that would trigger backtracking', () => {
+    beforeEach(async () => {
+      // A long run of 'a's followed by a non-matching character is the classic
+      // input that makes a pattern like /(a+)+$/ backtrack catastrophically. If
+      // the metacharacters were not escaped, this scan would hang.
+      await component.set(`${'a'.repeat(50)}!`, 'value')
+    })
+
+    it('should evaluate quickly and match nothing because injected regex syntax is escaped', async () => {
+      const start = Date.now()
+      const result = await component.keys('(a+)+$')
+      const elapsed = Date.now() - start
+
+      expect(result).toHaveLength(0)
+      expect(elapsed).toBeLessThan(1000)
+    })
+  })
 })
 
 describe('when handling different data types', () => {

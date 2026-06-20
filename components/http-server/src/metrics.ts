@@ -1,6 +1,22 @@
+import { createHash, timingSafeEqual } from 'crypto'
 import { IConfigComponent, IMetricsComponent } from '@well-known-components/interfaces'
 import { IHttpServerComponent } from '@dcl/core-commons'
 import { Router } from './router'
+
+/**
+ * Builds a constant-time comparator for the configured bearer token. The expected
+ * token is hashed once up front; each candidate is hashed and compared with
+ * `timingSafeEqual`. Hashing to fixed-length digests means the comparison never
+ * throws on a length mismatch and does not leak the token length through timing.
+ */
+function createBearerTokenComparator(expected: string): (candidate: string | undefined) => boolean {
+  const expectedHash = createHash('sha256').update(expected).digest()
+  return (candidate: string | undefined) => {
+    if (typeof candidate !== 'string') return false
+    const candidateHash = createHash('sha256').update(candidate).digest()
+    return timingSafeEqual(candidateHash, expectedHash)
+  }
+}
 
 const httpLabels = ['method', 'handler', 'code'] as const
 
@@ -62,6 +78,7 @@ export async function instrumentHttpServerWithPromClientRegistry<K extends strin
 
   const metricsPath = (await config.getString(_configKey('PUBLIC_PATH'))) || '/metrics'
   const bearerToken = await config.getString(_configKey('BEARER_TOKEN'))
+  const compareBearerToken = bearerToken ? createBearerTokenComparator(bearerToken) : undefined
   const resetEveryNight = (await config.getString(_configKey('RESET_AT_NIGHT'))) == 'true'
 
   const router = new Router<{}>()
@@ -74,11 +91,11 @@ export async function instrumentHttpServerWithPromClientRegistry<K extends strin
 
   // TODO: optional basic auth for /metrics
   router.get(metricsPath, async (ctx) => {
-    if (bearerToken) {
+    if (compareBearerToken) {
       const header = ctx.request.headers.get('authorization')
       if (!header) return { status: 401 }
-      const [_, value] = header.split(' ')
-      if (value != bearerToken) {
+      const [scheme, value] = header.split(' ')
+      if (scheme !== 'Bearer' || !compareBearerToken(value)) {
         return { status: 401 }
       }
     }
