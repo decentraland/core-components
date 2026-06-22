@@ -62,6 +62,26 @@ describe('when creating a local fetch component', () => {
     })
   })
 
+  describe('and fetching a local path provided as a URL', () => {
+    it('should resolve the response, ignoring the URL host', async () => {
+      const localFetch = await createLocalFetchComponent(config)
+
+      const response = await localFetch.fetch(new URL(route, 'http://localhost:8080'))
+
+      expect(await response.json()).toEqual(responseBody)
+    })
+  })
+
+  describe('and fetching a local path provided as a Request', () => {
+    it('should resolve the response, ignoring the Request host', async () => {
+      const localFetch = await createLocalFetchComponent(config)
+
+      const response = await localFetch.fetch(new Request(`http://localhost:8080${route}`))
+
+      expect(await response.json()).toEqual(responseBody)
+    })
+  })
+
   describe('and fetching an absolute external URL', () => {
     it('should throw because only local testing URLs are allowed', async () => {
       const localFetch = await createLocalFetchComponent(config)

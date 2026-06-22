@@ -44,6 +44,24 @@ export type ILocalFetchComponent = {
   fetch(url: string | URL | Request, init?: LocalFetchRequestOptions): Promise<Response>
 }
 
+/**
+ * Resolves the local request target to a path (e.g. `/route?x=1`). A `string`
+ * must be a local path starting with `/`; `URL` and `Request` inputs are reduced
+ * to their path (pathname + search + hash) since the component always targets the
+ * configured local test server and ignores any host they carry.
+ */
+function toLocalPath(url: string | URL | Request): string {
+  if (typeof url === 'string') {
+    if (!url.startsWith('/')) {
+      throw new Error('localFetch only works for local testing-URLs')
+    }
+    return url
+  }
+
+  const { pathname, search, hash } = url instanceof Request ? new URL(url.url) : url
+  return `${pathname}${search}${hash}`
+}
+
 function normalizeHeaders(input?: RequestOptions['headers']): Record<string, string> {
   const headers: Record<string, string> = {}
   if (!input) return headers
@@ -62,9 +80,12 @@ function normalizeHeaders(input?: RequestOptions['headers']): Record<string, str
 }
 
 /**
- * Creates a fetch component that only resolves local testing URLs (paths
- * starting with `/`), targeting the host/port resolved from the config. Backed
- * by the native global `fetch`.
+ * Creates a fetch component that only resolves local testing URLs, targeting the
+ * host/port resolved from the config. Backed by the native global `fetch`.
+ *
+ * The request target may be a local path string (must start with `/`), a `URL`,
+ * or a `Request`; for `URL`/`Request` only the path is used (any host is ignored,
+ * since requests always go to the configured local server).
  *
  * Pass an `identity` in the request options to send an authenticated (signed)
  * request following the signed-fetch pattern (ADR-44); omit it for a plain
@@ -78,21 +99,19 @@ export async function createLocalFetchComponent(config: IConfigComponent): Promi
 
   return {
     async fetch(url: string | URL | Request, init?: LocalFetchRequestOptions): Promise<Response> {
-      if (typeof url !== 'string' || !url.startsWith('/')) {
-        throw new Error('localFetch only works for local testing-URLs')
-      }
+      const path = toLocalPath(url)
 
       const { identity, metadata, ...requestInit } = init ?? {}
 
       if (!identity) {
-        return fetch(baseUrl + url, requestInit)
+        return fetch(baseUrl + path, requestInit)
       }
 
       const method = (requestInit.method ?? 'GET').toUpperCase()
       const headers = normalizeHeaders(requestInit.headers)
-      Object.assign(headers, getSignedAuthHeaders(method, url, metadata ?? {}, identity))
+      Object.assign(headers, getSignedAuthHeaders(method, path, metadata ?? {}, identity))
 
-      return fetch(baseUrl + url, { ...requestInit, headers })
+      return fetch(baseUrl + path, { ...requestInit, headers })
     }
   }
 }
