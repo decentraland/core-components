@@ -15,7 +15,7 @@ const mockStartOptions: IBaseComponent.ComponentStartOptions = {
 
 describe('when processing messages', () => {
   let sqs: jest.Mocked<IQueueComponent>
-  let logs: jest.Mocked<ILoggerComponent>
+  let logs: ILoggerComponent
   let component: IQueueConsumerComponent
 
   describe('and a message matches a registered handler', () => {
@@ -286,7 +286,7 @@ describe('when processing messages', () => {
 
 describe('when stopping the component with remaining messages', () => {
   let sqs: jest.Mocked<IQueueComponent>
-  let logs: jest.Mocked<ILoggerComponent>
+  let logs: ILoggerComponent
   let component: IQueueConsumerComponent
 
   afterEach(() => {
@@ -518,7 +518,7 @@ function createAbortableReceiveMock(options: { onReceiveCalled?: (signal?: Abort
 
 describe('when configuring the poll batch size', () => {
   let sqs: jest.Mocked<IQueueComponent>
-  let logs: jest.Mocked<ILoggerComponent>
+  let logs: ILoggerComponent
   let component: IQueueConsumerComponent
   let receiveCalled: Promise<void>
 
@@ -574,7 +574,7 @@ describe('when configuring the poll batch size', () => {
 
 describe('when stopping during a long-poll', () => {
   let sqs: jest.Mocked<IQueueComponent>
-  let logs: jest.Mocked<ILoggerComponent>
+  let logs: ILoggerComponent
   let component: IQueueConsumerComponent
   let receiveCalled: Promise<void>
   let capturedSignal: AbortSignal | undefined
@@ -623,7 +623,7 @@ describe('when stopping during a long-poll', () => {
 
 describe('when a message is missing a ReceiptHandle', () => {
   let sqs: jest.Mocked<IQueueComponent>
-  let logs: jest.Mocked<ILoggerComponent>
+  let logs: ILoggerComponent
   let component: IQueueConsumerComponent
   let mockLogger: jest.Mocked<ILoggerComponent.ILogger>
   let warnCalled: Promise<void>
@@ -681,7 +681,7 @@ describe('when a message is missing a ReceiptHandle', () => {
 
 describe('when sqs.deleteMessage throws after a successful receive', () => {
   let sqs: jest.Mocked<IQueueComponent>
-  let logs: jest.Mocked<ILoggerComponent>
+  let logs: ILoggerComponent
   let component: IQueueConsumerComponent
   let mockLogger: jest.Mocked<ILoggerComponent.ILogger>
   let deleteFailed: Promise<void>
