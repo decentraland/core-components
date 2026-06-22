@@ -97,6 +97,19 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
+  components/http-requests-logger:
+    dependencies:
+      '@dcl/core-commons':
+        specifier: workspace:*
+        version: link:../../shared/commons
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   components/http-server:
     dependencies:
       '@dcl/core-commons':
@@ -473,6 +486,16 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.8.3
+
+  components/tracer:
+    dependencies:
+      '@well-known-components/interfaces':
+        specifier: ^1.5.2
+        version: 1.5.2
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
 
   components/uws-http-server:
     dependencies:

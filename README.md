@@ -13,6 +13,7 @@ core-components/
 │   ├── block-indexer/    # On-chain block indexer component
 │   ├── features/         # Feature flags resolution component
 │   ├── fetch/            # Fetch component using the native Node fetch API
+│   ├── http-requests-logger/ # HTTP request/response logging middleware component
 │   ├── http-server/      # HTTP server component
 │   ├── http-tracer/      # HTTP tracer component (W3C trace context propagation)
 │   ├── job/              # Job scheduling and execution component
@@ -28,6 +29,7 @@ core-components/
 │   ├── sqs/              # AWS SQS queue component
 │   ├── thegraph/         # thegraph subgraph GraphQL query component
 │   ├── traced-fetch/     # Traced fetch component with distributed tracing
+│   ├── tracer/           # Execution trace span component (W3C trace context)
 │   └── uws-http-server/  # uWebSockets.js based HTTP server component
 └── shared/             # Shared utilities and types
     └── commons/          # Common utilities, types, and constants
@@ -43,7 +45,9 @@ core-components/
 ### Observability
 
 - **Metrics Component** (`@dcl/metrics`) - Prometheus metrics collection and instrumentation
+- **Tracer Component** (`@dcl/tracer-component`) - Creates trace spans over an execution and exposes the W3C trace context to the traced code
 - **HTTP Tracer Component** (`@dcl/http-tracer-component`) - Adds tracing spans to request handlers and propagates W3C trace context headers
+- **HTTP Requests Logger Component** (`@dcl/http-requests-logger-component`) - Logs each HTTP request and response with configurable verbosity and endpoint skipping
 
 ### Communication & Messaging
 
@@ -157,6 +161,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/analytics-component`
 - `@dcl/block-indexer`
 - `@dcl/features-component`
+- `@dcl/http-requests-logger-component`
 - `@dcl/http-server`
 - `@dcl/http-tracer-component`
 - `@dcl/job-component`
@@ -174,6 +179,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/sqs-component`
 - `@dcl/thegraph-component`
 - `@dcl/traced-fetch-component`
+- `@dcl/tracer-component`
 - `@dcl/uws-http-server`
 - `@dcl/core-commons`
 
