@@ -1,5 +1,12 @@
 # @dcl/sns-component
 
+## 3.1.5
+
+### Patch Changes
+
+- Updated dependencies [fcf5367]
+  - @dcl/core-commons@0.10.1
+
 ## 3.1.4
 
 ### Patch Changes

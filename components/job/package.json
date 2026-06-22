@@ -1,6 +1,6 @@
 {
   "name": "@dcl/job-component",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Job component for core components library",
   "repository": {
     "type": "git",

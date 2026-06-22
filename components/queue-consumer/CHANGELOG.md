@@ -1,5 +1,13 @@
 # @dcl/queue-consumer-component
 
+## 3.0.4
+
+### Patch Changes
+
+- Updated dependencies [fcf5367]
+  - @dcl/core-commons@0.10.1
+  - @dcl/sqs-component@2.2.4
+
 ## 3.0.3
 
 ### Patch Changes
@@ -37,7 +45,6 @@
 ### Minor Changes
 
 - a83c6ae: Restore the `package.json`, `tsconfig.json`, and `jest.config.js` that were accidentally removed in #68, which left the package unbuildable, untestable in CI, and impossible to version. Alongside the restore:
-
   - Add a `batchSize` option (default `10`) to `IQueueConsumerOptions`, replacing the hardcoded poll size.
   - Abort the in-flight `receiveMessages` long-poll on `stop()` so shutdown no longer waits up to `WaitTimeSeconds`.
   - Replace the mislabeled linear retry with true exponential backoff (1s, 2s, 4s, 8s … capped at 30s) plus full jitter to avoid thundering herd against throttled queues.

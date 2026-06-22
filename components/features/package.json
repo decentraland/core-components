@@ -1,6 +1,6 @@
 {
   "name": "@dcl/features-component",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Feature flags component for core components library",
   "repository": {
     "type": "git",

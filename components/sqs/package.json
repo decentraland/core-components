@@ -1,6 +1,6 @@
 {
   "name": "@dcl/sqs-component",
-  "version": "2.2.3",
+  "version": "2.2.4",
   "description": "AWS SQS component for core components library",
   "repository": {
     "type": "git",
