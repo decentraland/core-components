@@ -20,6 +20,6 @@ export type RequestLoggerConfigurations = {
   skipInput?: boolean
   /** A flag to disable the outputting of the output log. */
   skipOutput?: boolean
-  /** A flexible parameter to define how to skip the logging of endpoints. Defaults to skipping the /health/live endpoint. */
+  /** A flexible parameter to define how to skip the logging of endpoints. Defaults to skipping the /health/live and /health/ready endpoints. */
   skip?: ((req: IHttpServerComponent.DefaultContext<object>['request']) => boolean) | string[] | string | RegExp
 }

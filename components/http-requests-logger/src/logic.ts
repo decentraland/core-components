@@ -11,5 +11,10 @@ export function shouldSkip(
   } else if (typeof skipper === 'function') {
     return skipper(ctx.request)
   }
-  return (skipper as RegExp).test(ctx.url.pathname)
+  const regExp = skipper as RegExp
+  // Strip the global/sticky flags: the same regex is reused across requests, and `.test()`
+  // on a global/sticky regex advances `lastIndex`, which would make matches alternate per call.
+  const statelessRegExp =
+    regExp.global || regExp.sticky ? new RegExp(regExp.source, regExp.flags.replace(/[gy]/g, '')) : regExp
+  return statelessRegExp.test(ctx.url.pathname)
 }

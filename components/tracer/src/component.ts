@@ -22,8 +22,8 @@ export function createTracerComponent(): ITracerComponent {
         name,
         parentId: traceContext.parentId,
         traceId: traceContext.traceId,
-        version: Number(traceContext.version),
-        traceFlags: Number(traceContext.traceFlags),
+        version: traceContext.version,
+        traceFlags: traceContext.traceFlags,
         traceState: traceContext.traceState,
         data: traceContext.data
       })

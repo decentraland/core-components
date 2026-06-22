@@ -283,9 +283,9 @@ describe('when any of the following middlewares fail', () => {
       mockedNext = jest.fn().mockRejectedValueOnce(error)
     })
 
-    it('should log the output correctly based on the status code of the exception and propagate the error', async () => {
+    it('should log the output at error level based on the status code of the exception and propagate the error', async () => {
       await expect(storedMiddleware(mockedContext, mockedNext)).rejects.toEqual(error)
-      expect(loggers[1]?.info).toHaveBeenCalledWith(
+      expect(loggers[1]?.error).toHaveBeenCalledWith(
         `[${mockedContext.request.method}: ${mockedContext.url.pathname}${mockedContext.url.search}${mockedContext.url.hash}][400]`
       )
     })
@@ -298,9 +298,9 @@ describe('when any of the following middlewares fail', () => {
       mockedNext = jest.fn().mockRejectedValueOnce(error)
     })
 
-    it('should log the output correctly using the status code as 500', async () => {
+    it('should log the output at error level using the status code as 500', async () => {
       await expect(storedMiddleware(mockedContext, mockedNext)).rejects.toEqual(error)
-      expect(loggers[1]?.info).toHaveBeenCalledWith(
+      expect(loggers[1]?.error).toHaveBeenCalledWith(
         `[${mockedContext.request.method}: ${mockedContext.url.pathname}${mockedContext.url.search}${mockedContext.url.hash}][500]`
       )
     })

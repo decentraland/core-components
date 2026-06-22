@@ -56,6 +56,18 @@ describe('when executing a nested span', () => {
       })
     })
   })
+
+  it('should inherit the parent trace state without leaking the child mutations back into the parent', () => {
+    return tracerComponent.span('parent', () => {
+      tracerComponent.setTraceStateProperty('a', '1')
+      tracerComponent.span('child', () => {
+        expect(tracerComponent.getTraceState()).toEqual({ a: '1' })
+        tracerComponent.setTraceStateProperty('b', '2')
+        expect(tracerComponent.getTraceState()).toEqual({ a: '1', b: '2' })
+      })
+      expect(tracerComponent.getTraceState()).toEqual({ a: '1' })
+    })
+  })
 })
 
 describe('when getting if an execution is inside of a trace span', () => {

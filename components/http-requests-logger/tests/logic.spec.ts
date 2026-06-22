@@ -84,6 +84,18 @@ describe('when checking if a request should be skipped according to a regex', ()
       expect(shouldSkip(context, regexToMatch)).toBe(false)
     })
   })
+
+  describe('and the provided regex has the global flag', () => {
+    beforeEach(() => {
+      regexToMatch = /^\/health/g
+    })
+
+    it('should match consistently across repeated calls', () => {
+      expect(shouldSkip(context, regexToMatch)).toBe(true)
+      expect(shouldSkip(context, regexToMatch)).toBe(true)
+      expect(shouldSkip(context, regexToMatch)).toBe(true)
+    })
+  })
 })
 
 describe('when checking if a request should be skipped according to a skip function', () => {

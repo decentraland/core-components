@@ -63,7 +63,9 @@ export function buildTraceContext<T>({
     traceId,
     version,
     traceFlags,
-    traceState,
+    // Copy the trace state so a span doesn't share the object with the context it inherited from
+    // (otherwise a child span's mutations would leak back into its parent and siblings).
+    traceState: traceState ? { ...traceState } : undefined,
     data
   }
 }
