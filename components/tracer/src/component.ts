@@ -30,7 +30,7 @@ export function createTracerComponent(): ITracerComponent {
     } else if (parentTraceContext) {
       newContext = buildTraceContext({
         name,
-        parentId: parentTraceContext.traceId,
+        parentId: parentTraceContext.id,
         traceId: parentTraceContext.traceId,
         version: parentTraceContext.version,
         traceFlags: parentTraceContext.traceFlags,
@@ -149,7 +149,9 @@ export function createTracerComponent(): ITracerComponent {
       throw new NotInSpanError()
     }
 
-    return Object.freeze(currentContext?.traceState ?? null)
+    // Freeze a shallow copy rather than the live trace state, so reading it
+    // doesn't make later setTraceStateProperty/deleteTraceStateProperty calls throw.
+    return Object.freeze(currentContext.traceState ? { ...currentContext.traceState } : null)
   }
 
   /**
@@ -161,7 +163,9 @@ export function createTracerComponent(): ITracerComponent {
   function getTraceStateString(): string | undefined {
     const traceState = getTraceState()
     return traceState && Object.keys(traceState).length > 0
-      ? Object.entries(traceState).reduce((acc, curr, index, arr) => `${acc}=${curr}${index !== arr.length - 1 ? ',' : ''}`, '')
+      ? Object.entries(traceState)
+          .map(([key, value]) => `${key}=${value}`)
+          .join(',')
       : undefined
   }
 
@@ -176,13 +180,16 @@ export function createTracerComponent(): ITracerComponent {
       throw new NotInSpanError()
     }
 
-    return Object.freeze(currentContext?.data ?? null)
+    // Freeze a shallow copy of object data rather than the live value, so reading it
+    // doesn't make the stored data (or the caller's original object) non-extensible.
+    const data = currentContext.data ?? null
+    const copy = data && typeof data === 'object' ? (Array.isArray(data) ? [...data] : { ...data }) : data
+    return Object.freeze(copy) as Readonly<T | null>
   }
 
   /**
    * Sets the trace context data if executed inside a trace span.
-   * @param key - The key of the property to be set.
-   * @param value - The value of the property to be set.
+   * @param data - The data to store in the current trace context.
    * @throws NotInSpanError if executed outside of a scope.
    */
   function setContextData<T = any>(data: T): void {

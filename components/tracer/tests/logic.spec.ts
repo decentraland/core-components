@@ -3,13 +3,19 @@ import type { TraceContext } from '@well-known-components/interfaces'
 import { buildTraceContext, buildTraceString, generateSpanId, generateTraceId } from '../src/logic'
 
 describe('when building a trace string', () => {
-  const version = 0
   const traceId = 'aTraceId'
   const parentId = 'aParentId'
-  const traceFlags = 1
 
-  it('should create a string based in the traceparent header', () => {
-    expect(buildTraceString({ version, traceId, parentId, traceFlags })).toBe(`${version}-${traceId}-${parentId}-${traceFlags}`)
+  describe('and the version and trace flags are single hex digit values', () => {
+    it('should zero-pad the version and trace flags to two hex digits', () => {
+      expect(buildTraceString({ version: 0, traceId, parentId, traceFlags: 1 })).toBe(`00-${traceId}-${parentId}-01`)
+    })
+  })
+
+  describe('and the version and trace flags already span two hex digits', () => {
+    it('should hex encode them without further padding', () => {
+      expect(buildTraceString({ version: 2, traceId, parentId, traceFlags: 255 })).toBe(`02-${traceId}-${parentId}-ff`)
+    })
   })
 })
 

@@ -44,6 +44,20 @@ describe('when recursively executing an span', () => {
   })
 })
 
+describe('when executing a nested span', () => {
+  it('should set the child span parent id to the parent span id and share the trace id', () => {
+    return tracerComponent.span('parent', () => {
+      const parentSpanId = tracerComponent.getSpanId()
+      const parentTraceId = tracerComponent.getTrace().traceId
+      return tracerComponent.span('child', () => {
+        const childTrace = tracerComponent.getTrace()
+        expect(childTrace.parentId).toBe(parentSpanId)
+        expect(childTrace.traceId).toBe(parentTraceId)
+      })
+    })
+  })
+})
+
 describe('when getting if an execution is inside of a trace span', () => {
   describe('and it is inside of a trace span', () => {
     it('should return true', () => {
@@ -193,25 +207,38 @@ describe('when getting the trace state', () => {
 describe('when getting the trace state string', () => {
   describe('when inside of a span', () => {
     describe("and there's no trace state", () => {
-      it('should return null', () => {
-        return tracerComponent.span('test span', () => expect(tracerComponent.getTraceState()).toBeNull(), defaultContext)
+      it('should return undefined', () => {
+        return tracerComponent.span(
+          'test span',
+          () => expect(tracerComponent.getTraceStateString()).toBeUndefined(),
+          defaultContext
+        )
       })
     })
 
-    describe("and there's trace state", () => {
+    describe("and there's a single trace state property", () => {
       beforeEach(() => {
-        defaultContext.traceState = {
-          aStateKey: 'aStateValue'
-        }
+        defaultContext.traceState = { aStateKey: 'aStateValue' }
       })
 
-      it('should return the trace state', () => {
+      it('should return the property formatted as key=value', () => {
         return tracerComponent.span(
           'test span',
-          () =>
-            expect(tracerComponent.getTraceState()).toEqual({
-              aStateKey: 'aStateValue'
-            }),
+          () => expect(tracerComponent.getTraceStateString()).toBe('aStateKey=aStateValue'),
+          defaultContext
+        )
+      })
+    })
+
+    describe('and there are multiple trace state properties', () => {
+      beforeEach(() => {
+        defaultContext.traceState = { aStateKey: 'aStateValue', anotherStateKey: 'anotherStateValue' }
+      })
+
+      it('should return the properties as comma-separated key=value pairs', () => {
+        return tracerComponent.span(
+          'test span',
+          () => expect(tracerComponent.getTraceStateString()).toBe('aStateKey=aStateValue,anotherStateKey=anotherStateValue'),
           defaultContext
         )
       })
@@ -220,7 +247,7 @@ describe('when getting the trace state string', () => {
 
   describe('when outside of a span', () => {
     it('should throw a not in span error', () => {
-      expect(() => tracerComponent.getTraceState()).toThrow(NotInSpanError)
+      expect(() => tracerComponent.getTraceStateString()).toThrow(NotInSpanError)
     })
   })
 })
@@ -243,6 +270,28 @@ describe('when getting the span trace context data', () => {
           'test span',
           () => {
             return expect(tracerComponent.getContextData()).toEqual({ aKey: 'aValue' })
+          },
+          defaultContext
+        )
+      })
+    })
+
+    describe('and the context data is read', () => {
+      let data: { aKey: string }
+      beforeEach(() => {
+        data = { aKey: 'aValue' }
+        defaultContext.data = data
+      })
+
+      it('should not freeze the data object stored in the span', () => {
+        return tracerComponent.span(
+          'test span',
+          () => {
+            tracerComponent.getContextData()
+            expect(() => {
+              data.aKey = 'anotherValue'
+            }).not.toThrow()
+            expect(tracerComponent.getContextData()).toEqual({ aKey: 'anotherValue' })
           },
           defaultContext
         )
@@ -394,5 +443,38 @@ describe('when deleting the trace state data', () => {
     it('should throw a not in span error', () => {
       expect(() => tracerComponent.deleteTraceStateProperty('aKey')).toThrow(NotInSpanError)
     })
+  })
+})
+
+describe('when reading the trace state and then mutating it', () => {
+  beforeEach(() => {
+    defaultContext.traceState = { aStateKey: 'aStateValue' }
+  })
+
+  it('should allow setting a new property after the trace state has been read', () => {
+    return tracerComponent.span(
+      'test span',
+      () => {
+        tracerComponent.getTraceState()
+        expect(() => tracerComponent.setTraceStateProperty('anotherStateKey', 'anotherStateValue')).not.toThrow()
+        expect(tracerComponent.getTraceState()).toEqual({
+          aStateKey: 'aStateValue',
+          anotherStateKey: 'anotherStateValue'
+        })
+      },
+      defaultContext
+    )
+  })
+
+  it('should allow deleting a property after the trace state has been read', () => {
+    return tracerComponent.span(
+      'test span',
+      () => {
+        tracerComponent.getTraceState()
+        expect(() => tracerComponent.deleteTraceStateProperty('aStateKey')).not.toThrow()
+        expect(tracerComponent.getTraceState()).toEqual({})
+      },
+      defaultContext
+    )
   })
 })

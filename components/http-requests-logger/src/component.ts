@@ -36,8 +36,9 @@ export function instrumentHttpServerWithRequestLogger(
       response = await next()
       return response
     } catch (e) {
-      // Craft a custom response with the purpose of printing the log
-      let statusCode = 200
+      // Craft a custom response with the purpose of printing the log. Default to 500
+      // since reaching here means an error escaped the handler chain.
+      let statusCode = 500
       if (typeof e === 'object' && e !== null && e !== undefined) {
         if ('status' in e && typeof e.status == 'number') {
           statusCode = e.status

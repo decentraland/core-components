@@ -7,7 +7,10 @@ import { INVALID_SPAN_ID } from './constants'
  * @param traceParent - The trace parent.
  */
 export function buildTraceString(traceParent: Trace): string {
-  return `${traceParent.version.toString(16)}-${traceParent.traceId}-${traceParent.parentId}-${traceParent.traceFlags.toString(16)}`
+  // version and trace-flags are 2 hex digits each per the W3C traceparent format.
+  const version = traceParent.version.toString(16).padStart(2, '0')
+  const traceFlags = traceParent.traceFlags.toString(16).padStart(2, '0')
+  return `${version}-${traceParent.traceId}-${traceParent.parentId}-${traceFlags}`
 }
 
 /**
