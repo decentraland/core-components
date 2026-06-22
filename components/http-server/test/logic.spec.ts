@@ -98,4 +98,29 @@ describe('when building a request from a Node message', () => {
       expect(request.body).not.toBeNull()
     })
   })
+
+  describe('and the request body has already been consumed', () => {
+    let nodeMessage: any
+
+    beforeEach(async () => {
+      nodeMessage = Object.assign(Readable.from([Buffer.from('payload')]), {
+        method: 'POST',
+        url: '/resource',
+        headers: {}
+      })
+      // Simulate an upstream consumer (e.g. an Express body-parser) that drains
+      // the incoming stream before the request is built.
+      for await (const _chunk of nodeMessage) {
+        // drain
+      }
+    })
+
+    it('should not throw and should not attach a body', () => {
+      let request!: ReturnType<typeof getRequestFromNodeMessage>
+      expect(() => {
+        request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0')
+      }).not.toThrow()
+      expect(request.body).toBeNull()
+    })
+  })
 })
