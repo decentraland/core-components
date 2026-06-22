@@ -26,14 +26,12 @@ describe('when checking if a request should be skipped according to a string', (
   })
 
   describe("and the url doesn't match the provided string", () => {
-    describe('and the url matches the provided string', () => {
-      beforeEach(() => {
-        stringToMatch = '/v1/endpoint'
-      })
+    beforeEach(() => {
+      stringToMatch = '/v1/endpoint'
+    })
 
-      it('should return false', () => {
-        expect(shouldSkip(context, stringToMatch)).toBe(false)
-      })
+    it('should return false', () => {
+      expect(shouldSkip(context, stringToMatch)).toBe(false)
     })
   })
 })

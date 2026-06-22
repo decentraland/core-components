@@ -108,7 +108,7 @@ describe('when the skip output configuration is set', () => {
       response = await storedMiddleware(mockedContext, mockedNext)
     })
 
-    it('should log the request output and log the request input', () => {
+    it('should log the request input and not log the request output', () => {
       expect(loggers[0]?.info).toHaveBeenCalled()
       expect(loggers[1]?.info).not.toHaveBeenCalled()
     })
