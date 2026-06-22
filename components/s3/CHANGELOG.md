@@ -1,5 +1,12 @@
 # @dcl/s3-component
 
+## 2.1.4
+
+### Patch Changes
+
+- Updated dependencies [fcf5367]
+  - @dcl/core-commons@0.10.1
+
 ## 2.1.3
 
 ### Patch Changes
@@ -26,7 +33,6 @@
 ### Minor Changes
 
 - 35cfe84: Harden the S3 component and add a handful of features and bug fixes:
-
   - `listObjects` now paginates with `NextContinuationToken` until `maxKeys` is satisfied, so callers asking for more than 1,000 keys no longer silently receive a capped page.
   - New `listObjectsIterable(prefix?)` async iterator — streams keys across pagination boundaries without buffering the full result set, so callers walking unbounded prefixes don't have to materialize every key in memory up front. Stops fetching additional pages if the consumer breaks out of the loop.
   - `downloadObjectAsStream` accepts `bytes=start-end`, `bytes=start-`, and `bytes=-end` ranges via a single builder, enabling open-ended and suffix ranges.

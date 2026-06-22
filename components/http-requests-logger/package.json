@@ -1,6 +1,6 @@
 {
   "name": "@dcl/http-requests-logger-component",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Logs each http request for core components library",
   "repository": {
     "type": "git",

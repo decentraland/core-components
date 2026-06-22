@@ -1,5 +1,11 @@
 # @dcl/core-commons
 
+## 0.10.1
+
+### Patch Changes
+
+- fcf5367: stop the published mock declarations from referencing the global `jest` namespace (#fix). `createFetchMockedComponent` and `createLoggerMockedComponent` are now typed against the plain `IFetchComponent` / `ILoggerComponent` interfaces (matching `createConfigMockedComponent`) instead of `jest.Mocked<...>`, while still returning `jest.fn()`-backed mocks at runtime. As a result `dist/mocks/fetch.d.ts` and `dist/mocks/logs.d.ts` no longer reference `jest`, so consumers that import `@dcl/core-commons` no longer need `@types/jest` (or `skipLibCheck`) just to type-check.
+
 ## 0.10.0
 
 ### Minor Changes
@@ -29,7 +35,6 @@
 ### Minor Changes
 
 - fcef9b9: Extend `IQueueComponent.sendMessage` with a `SendMessageOptions` bag and clean up two small issues on the way:
-
   - **`options.isRawMessage`** — controls the shape of the SQS `MessageBody`. Default is `false` (the SNS-envelope shape `{ Message: JSON.stringify(message) }`) to preserve the production-tested format existing consumers read. Set to `true` for the single `JSON.stringify(message)` shape that SNS produces with Raw Message Delivery enabled, and that `@dcl/queue-consumer-component` expects.
   - **`options.delaySeconds`** — forwarded to `SendMessageCommand.DelaySeconds` so callers can defer delivery per message. Replaces the previous hardcoded `DelaySeconds: 10`, which was unconditional and undocumented.
   - **`sendMessage` parameter type narrowed** from `any` to `unknown` on the shared interface and both implementations so callers keep type-checking across the boundary.

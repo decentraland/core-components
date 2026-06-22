@@ -1,5 +1,12 @@
 # @dcl/http-tracer-component
 
+## 2.0.1
+
+### Patch Changes
+
+- Updated dependencies [fcf5367]
+  - @dcl/core-commons@0.10.1
+
 ## 2.0.0
 
 ### Major Changes

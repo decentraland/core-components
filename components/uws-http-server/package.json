@@ -1,6 +1,6 @@
 {
   "name": "@dcl/uws-http-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "uWebSockets.js based HTTP server component for core components library",
   "repository": {
     "type": "git",
