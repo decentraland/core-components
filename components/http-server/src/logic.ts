@@ -125,7 +125,14 @@ export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { ori
     method
   }
 
-  if (method != 'GET' && method != 'HEAD') {
+  // Only stream a body when the incoming Node message hasn't been consumed yet.
+  // If something already read it (e.g. an Express body-parser running before this
+  // is called), `Readable.toWeb` yields a disturbed stream and the native
+  // `Request` constructor throws "Response body object should not be disturbed or
+  // locked". In that case the parsed body is exposed by the caller through other
+  // means, so skipping it here is safe.
+  const bodyAlreadyConsumed = request.readableEnded || request.readableDidRead
+  if (method != 'GET' && method != 'HEAD' && !bodyAlreadyConsumed) {
     // The native `Request` body must be a web `ReadableStream`. Adapt the incoming Node message
     // stream; `duplex: 'half'` is required by the fetch spec when streaming a request body.
     requestInit.body = Readable.toWeb(request) as unknown as ReadableStream
