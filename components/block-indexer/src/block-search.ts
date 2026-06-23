@@ -18,7 +18,13 @@ export const createAvlBlockSearch = (
   options: { maxCachedBlocks?: number } = {}
 ): BlockSearch => {
   const logger = logs.getLogger('block-search')
-  const maxCachedBlocks = options.maxCachedBlocks ?? DEFAULT_MAX_CACHED_BLOCKS
+  // Require a positive integer; fall back to the default otherwise. An invalid cap
+  // (NaN/Infinity/0/negative) would make the `size > maxCachedBlocks` check never
+  // fire and silently reintroduce the unbounded-growth this bound exists to prevent.
+  const maxCachedBlocks =
+    Number.isInteger(options.maxCachedBlocks) && (options.maxCachedBlocks as number) > 0
+      ? (options.maxCachedBlocks as number)
+      : DEFAULT_MAX_CACHED_BLOCKS
   const tree = createAvlTree<number, BlockInfo>(
     (x, y) => x - y,
     // TODO Need to check if it is possible for 2 blocks to have the same timestamp (unlikely)
