@@ -253,7 +253,10 @@ export class Router<Context extends {}> implements IHttpServerComponent.MethodHa
               }
               return await next()
             })
-            return memo.concat(layer.stack)
+            // Append in place instead of `memo.concat(...)`, which allocates a fresh
+            // array each iteration (O(L^2) over the matched layers).
+            memo.push(...layer.stack)
+            return memo
           },
           [] as typeof layerChain
         )

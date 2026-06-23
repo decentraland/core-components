@@ -2,15 +2,55 @@ import { BlockInfo, BlockSearch, BlockSearchComponents } from './types'
 import { createAvlTree } from './avl-tree/avl-tree'
 
 /**
+ * Maximum number of blocks kept in the in-memory search tree. Without a cap the
+ * tree gains a node for every distinct block ever probed and never releases one,
+ * so a long-running indexer (continuously advancing chain head → ever-new
+ * timestamps) grows it without bound until the process is OOM-killed. Mirrors the
+ * bound used by the caching ethereum provider.
+ */
+const DEFAULT_MAX_CACHED_BLOCKS = 10_000
+
+/**
  * @public
  */
-export const createAvlBlockSearch = ({ metrics, logs, blockRepository }: BlockSearchComponents): BlockSearch => {
+export const createAvlBlockSearch = (
+  { metrics, logs, blockRepository }: BlockSearchComponents,
+  options: { maxCachedBlocks?: number } = {}
+): BlockSearch => {
   const logger = logs.getLogger('block-search')
+  const maxCachedBlocks = options.maxCachedBlocks ?? DEFAULT_MAX_CACHED_BLOCKS
   const tree = createAvlTree<number, BlockInfo>(
     (x, y) => x - y,
     // TODO Need to check if it is possible for 2 blocks to have the same timestamp (unlikely)
     (x, y) => x.block! - y.block!
   )
+  // Timestamps in insertion order, used to evict the oldest cached block (FIFO)
+  // once the tree reaches `maxCachedBlocks`. A Set preserves insertion order and
+  // evicts the oldest key in O(1) (`values().next()` + `delete`); a plain array
+  // with `shift()` would be O(n) per insert once the cache is full. Kept in sync
+  // with the tree: a timestamp is recorded only when a brand-new node is inserted.
+  const insertionOrder = new Set<number>()
+
+  function addBlockToTree(blockInfo: BlockInfo) {
+    // Skip timestamps already cached: the tree throws when the same key is
+    // inserted with a different value, and a duplicate would also desync
+    // `insertionOrder` from the tree's contents.
+    if (tree.contains(blockInfo.timestamp)) {
+      return
+    }
+
+    tree.insert(blockInfo.timestamp, blockInfo)
+    insertionOrder.add(blockInfo.timestamp)
+
+    // Evict oldest entries until back under the cap. A forward-advancing indexer
+    // never revisits old blocks, so dropping the earliest-inserted ones only ever
+    // costs an occasional refetch, never correctness.
+    while (insertionOrder.size > maxCachedBlocks) {
+      const oldestTimestamp = insertionOrder.values().next().value as number
+      insertionOrder.delete(oldestTimestamp)
+      tree.remove(oldestTimestamp)
+    }
+  }
 
   async function retrieveBlockAndAddToTree(blockNumber: number) {
     // We first attempt to search in the tree
@@ -22,7 +62,7 @@ export const createAvlBlockSearch = ({ metrics, logs, blockRepository }: BlockSe
     // Only if not found we go to the blockchain and cache it for later
     const blockInfo = await blockRepository.findBlock(blockNumber)
     if (blockInfo) {
-      tree.insert(blockInfo.timestamp, blockInfo)
+      addBlockToTree(blockInfo)
     }
     return blockInfo
   }
@@ -30,33 +70,20 @@ export const createAvlBlockSearch = ({ metrics, logs, blockRepository }: BlockSe
   async function findBlockForTimestamp(ts: number): Promise<BlockInfo | undefined> {
     const tsStart = Date.now()
 
-    const range = tree.findEnclosingRange(ts)
+    // Resolve the blocks enclosing `ts` in a single tree descent: `findEnclosingValues`
+    // returns the stored `BlockInfo`s directly, avoiding the two extra `get` lookups
+    // the previous `findEnclosingRange` + `get(min)`/`get(max)` required.
+    const range = tree.findEnclosingValues(ts)
 
     function getStartRange(): number {
-      let start = 1
-      if (range.min !== undefined) {
-        const entry = tree.get(range.min)
-        if (entry) {
-          start = entry.block
-        }
-      }
-      return start
+      return range.min ? range.min.block : 1
     }
 
     async function getEndRange(): Promise<number> {
-      let end: number | undefined
-      if (range.max !== undefined) {
-        const entry = tree.get(range.max)
-        if (entry) {
-          end = entry.block
-        }
+      if (range.max) {
+        return range.max.block
       }
-
-      if (end === undefined) {
-        end = (await blockRepository.currentBlock()).block
-      }
-
-      return end
+      return (await blockRepository.currentBlock()).block
     }
 
     try {

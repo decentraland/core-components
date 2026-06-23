@@ -1,4 +1,6 @@
+import { Readable } from 'stream'
 import { corsHeaders, createCorsMiddleware, handleOptions } from '../src/cors'
+import { fromNativeResponse } from '../src/helpers'
 import { IHttpServerComponent } from '@dcl/core-commons'
 
 function contextForRequest(request: Request): IHttpServerComponent.DefaultContext {
@@ -94,6 +96,72 @@ describe('when handling a request through the CORS middleware', () => {
     it('should allow credentials when configured', async () => {
       const response = await handler(context, next)
       expect((response.headers as Headers).get('Access-Control-Allow-Credentials')).toBe('true')
+    })
+  })
+
+  describe('and the next handler returns a fromNativeResponse-adapted Response', () => {
+    let handler: IHttpServerComponent.IRequestHandler<{}>
+    let context: IHttpServerComponent.DefaultContext
+
+    beforeEach(() => {
+      handler = createCorsMiddleware<{}>({ origin: '*' })
+      context = contextForRequest(
+        new Request('http://localhost/data', { method: 'GET', headers: { origin: 'http://example.com' } })
+      )
+      next.mockResolvedValueOnce(fromNativeResponse(new Response('payload', { status: 201 })))
+    })
+
+    it('should preserve the status through CORS', async () => {
+      const response = await handler(context, next)
+      expect(response.status).toBe(201)
+    })
+
+    it('should preserve the body through CORS', async () => {
+      const response = await handler(context, next)
+      const chunks: Buffer[] = []
+      for await (const chunk of response.body as Readable) {
+        chunks.push(Buffer.from(chunk))
+      }
+      expect(Buffer.concat(chunks).toString()).toBe('payload')
+    })
+
+    it('should still add the CORS origin header', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Access-Control-Allow-Origin')).toBe('*')
+    })
+  })
+
+  describe('and the next handler returns a raw native Response while an Origin is present', () => {
+    let handler: IHttpServerComponent.IRequestHandler<{}>
+    let context: IHttpServerComponent.DefaultContext
+
+    beforeEach(() => {
+      handler = createCorsMiddleware<{}>({ origin: '*' })
+      context = contextForRequest(
+        new Request('http://localhost/data', { method: 'GET', headers: { origin: 'http://example.com' } })
+      )
+      // Simulate a handler returning a native Response via a type-escape; CORS must
+      // still preserve its status/body rather than spreading the prototype getters away.
+      next.mockResolvedValueOnce(new Response('payload', { status: 201 }) as any)
+    })
+
+    it('should preserve the status', async () => {
+      const response = await handler(context, next)
+      expect(response.status).toBe(201)
+    })
+
+    it('should preserve the body', async () => {
+      const response = await handler(context, next)
+      const chunks: Buffer[] = []
+      for await (const chunk of response.body as Readable) {
+        chunks.push(Buffer.from(chunk))
+      }
+      expect(Buffer.concat(chunks).toString()).toBe('payload')
+    })
+
+    it('should add the CORS origin header', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Access-Control-Allow-Origin')).toBe('*')
     })
   })
 })

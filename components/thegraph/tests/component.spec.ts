@@ -166,6 +166,18 @@ describe('when querying a subgraph', () => {
       expect(warnLogMock).toHaveBeenCalled()
     })
 
+    it('should serialize the request body only once across all retry attempts', async () => {
+      const stringifySpy = jest.spyOn(JSON, 'stringify')
+
+      await expect(subgraph.query(query, variables, 2)).rejects.toThrow()
+
+      const bodyStringifyCalls = stringifySpy.mock.calls.filter(
+        ([value]) => !!value && typeof value === 'object' && 'query' in value && 'variables' in value
+      )
+      expect(bodyStringifyCalls).toHaveLength(1)
+      stringifySpy.mockRestore()
+    })
+
     describe('and the response carries a subgraph provider header', () => {
       beforeEach(() => {
         ;(response.headers as unknown as Map<string, string>).set('X-Subgraph-Provider', 'SubgraphProvider')
@@ -175,6 +187,21 @@ describe('when querying a subgraph', () => {
         await expect(subgraph.query('query', {}, 0)).rejects.toThrow(
           'Invalid request. Status: 500. Provider: SubgraphProvider'
         )
+      })
+    })
+
+    describe('and the response body can be cancelled', () => {
+      let cancelMock: jest.Mock
+
+      beforeEach(() => {
+        cancelMock = jest.fn().mockResolvedValue(undefined)
+        ;(response as unknown as { body: { cancel: jest.Mock } }).body = { cancel: cancelMock }
+      })
+
+      it('should cancel the response body on every failed attempt so the connection is not leaked', async () => {
+        await expect(subgraph.query('query', {}, 2)).rejects.toThrow()
+
+        expect(cancelMock).toHaveBeenCalledTimes(3)
       })
     })
   })

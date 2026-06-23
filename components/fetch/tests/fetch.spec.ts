@@ -1,6 +1,18 @@
 import { IFetchComponent } from '@dcl/core-commons'
 import { createFetchComponent } from '../src/fetcher'
 
+// A fetch mock mirroring undici: the returned promise rejects with an AbortError
+// as soon as the request's signal aborts (and otherwise never settles). Used to
+// exercise the timeout/abort paths, which rely on the fetch rejecting on abort.
+const rejectOnAbort = (_url: string | URL | Request, init?: RequestInit) =>
+  new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => {
+      const abortError = new Error('The operation was aborted')
+      abortError.name = 'AbortError'
+      reject(abortError)
+    })
+  })
+
 describe('when fetching with the fetch component', () => {
   let sut: IFetchComponent
   let fetchMock: jest.Mock
@@ -69,7 +81,8 @@ describe('when fetching with the fetch component', () => {
     beforeEach(() => {
       fetchMock
         .mockResolvedValueOnce(new Response('test error', { status: 502, headers: { 'Content-Type': 'text/plain' } }))
-        .mockResolvedValue(new Response('test error', { status: 503, headers: { 'Content-Type': 'text/plain' } }))
+        .mockResolvedValueOnce(new Response('test error', { status: 503, headers: { 'Content-Type': 'text/plain' } }))
+        .mockResolvedValueOnce(new Response('test error', { status: 503, headers: { 'Content-Type': 'text/plain' } }))
     })
 
     it('should exhaust the retries and resolve the latest response instead of throwing', async () => {
@@ -113,6 +126,33 @@ describe('when fetching with the fetch component', () => {
     })
   })
 
+  describe('and an attempt fails with a retryable status before succeeding', () => {
+    const expectedResponseBody = { mock: 'successful' }
+    let cancelMock: jest.Mock
+
+    beforeEach(() => {
+      cancelMock = jest.fn().mockResolvedValue(undefined)
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          body: { cancel: cancelMock }
+        })
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(expectedResponseBody), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+    })
+
+    it('should cancel the discarded response body before retrying so the connection is released', async () => {
+      await sut.fetch('https://example.com', { attempts: 3, retryDelay: 10 })
+
+      expect(cancelMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('and a network error is followed by a retryable status', () => {
     const expectedResponseBody = { mock: 'successful' }
 
@@ -151,22 +191,10 @@ describe('when fetching with the fetch component', () => {
   })
 
   describe('and the request exceeds the configured timeout', () => {
-    let timer: NodeJS.Timeout | undefined
-
     beforeEach(() => {
-      fetchMock.mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            timer = setTimeout(
-              () => resolve(new Response('success', { status: 201, headers: { 'Content-Type': 'text/plain' } })),
-              3500
-            )
-          })
-      )
-    })
-
-    afterEach(() => {
-      if (timer) clearTimeout(timer)
+      // The timeout timer aborts the request's signal; undici (and this mock)
+      // reject the in-flight fetch when that happens.
+      fetchMock.mockImplementation(rejectOnAbort)
     })
 
     it('should throw a timeout error', async () => {
@@ -292,19 +320,8 @@ describe('when fetching with the fetch component', () => {
   })
 
   describe('and the request is aborted through the provided controller', () => {
-    let timer: NodeJS.Timeout | undefined
-
     beforeEach(() => {
-      fetchMock.mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            timer = setTimeout(() => resolve(new Response('success', { status: 201 })), 3000)
-          })
-      )
-    })
-
-    afterEach(() => {
-      if (timer) clearTimeout(timer)
+      fetchMock.mockImplementation(rejectOnAbort)
     })
 
     it('should throw an aborted error', async () => {

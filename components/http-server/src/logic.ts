@@ -8,6 +8,7 @@ import type { IHttpServerOptions } from './types'
 import { HttpError } from 'http-errors'
 import { Middleware } from './middleware'
 import { getWebSocketCallback, upgradeWebSocketResponse, withWebSocketCallback } from './ws'
+import { fromNativeResponse } from './helpers'
 
 /**
  * @internal
@@ -102,6 +103,11 @@ export function getDefaultMiddlewares(): Middleware<any>[] {
   return [coerceErrorsMiddleware]
 }
 
+// Caches the `URL` parsed while building a request so `contextFromRequest` can reuse
+// it instead of re-parsing `request.url` on every request. Weakly keyed, so an entry
+// disappears together with its request.
+const parsedUrlByRequest = new WeakMap<IHttpServerComponent.IRequest, URL>()
+
 export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { originalUrl?: string }>(
   request: T,
   host: string
@@ -146,11 +152,18 @@ export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { ori
   // purposes and retains the original value on `req.originalUrl`
   // @see https://expressjs.com/en/api.html#req.originalUrl
   const originalUrl = request.originalUrl ?? request.url!
-  let url = new URL(baseUrl + originalUrl)
+  // Parse the URL once. The two-arg form resolves `originalUrl` against `baseUrl`;
+  // only fall back to string concatenation if that throws on a malformed input.
+  let url: URL
   try {
     url = new URL(originalUrl, baseUrl)
-  } catch {}
+  } catch {
+    url = new URL(baseUrl + originalUrl)
+  }
   const ret = new Request(url.toString(), requestInit)
+
+  // Cache the parsed URL so `contextFromRequest` doesn't re-parse `request.url`.
+  parsedUrlByRequest.set(ret, url)
 
   return ret
 }
@@ -245,12 +258,9 @@ export function normalizeResponseBody(
   }
 
   if (response instanceof Response) {
-    return {
-      status: response.status,
-      statusText: response.statusText,
-      headers: new Headers(response.headers),
-      body: response.body && !response.bodyUsed ? (Readable.fromWeb(response.body as any) as Readable) : undefined
-    }
+    // Route native Responses through the same boundary adapter handlers use, so both
+    // paths normalize identically (incl. dropping stale content-encoding/length).
+    return normalizeResponseBody(request, fromNativeResponse(response))
   }
 
   const is1xx = response.status && response.status >= 100 && response.status < 200
@@ -310,7 +320,9 @@ export function contextFromRequest<Ctx extends object>(baseCtx: Ctx, request: IH
 
   // hydrate context with the request
   newContext.request = request
-  newContext.url = new URL(request.url)
+  // Reuse the URL parsed when the request was built; only re-parse for requests that
+  // didn't pass through `getRequestFromNodeMessage` (e.g. ones built directly in tests).
+  newContext.url = parsedUrlByRequest.get(request) ?? new URL(request.url)
 
   return newContext
 }

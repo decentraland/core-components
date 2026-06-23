@@ -22,15 +22,18 @@ export async function createAnalyticsComponent<T extends AnalyticsEventMap>(
   }
   const requestTimeout = hasValidConfiguredTimeout ? (configuredTimeout as number) : DEFAULT_REQUEST_TIMEOUT_MS
 
+  // Constant for the component's lifetime; built once rather than rebuilt per event.
+  const headers = {
+    'x-token': analyticsApiToken,
+    'Content-Type': 'application/json'
+  }
+
   async function _sendEvent<K extends keyof T>(name: K, body: T[K]): Promise<void> {
     try {
       const response = await fetcher.fetch(analyticsApiUrl, {
         method: 'POST',
         timeout: requestTimeout,
-        headers: {
-          'x-token': analyticsApiToken,
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify({
           event: name,
           body: {
@@ -40,6 +43,13 @@ export async function createAnalyticsComponent<T extends AnalyticsEventMap>(
           context
         })
       })
+
+      // Analytics never reads the response body, so release it immediately:
+      // an unconsumed undici body keeps its socket checked out of the pool and
+      // buffers the received bytes until GC. POST requests are not retried by the
+      // fetch component, so this is the only place the body would ever be drained,
+      // and `fireEvent` is fire-and-forget — nothing downstream consumes it.
+      await response.body?.cancel().catch(() => {})
 
       if (!response.ok) {
         throw new Error(`Got status ${response.status} from the Analytics API`)

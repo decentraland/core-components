@@ -73,16 +73,22 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
     const batchSize = 10
     const batches = chunks(receiptHandles, batchSize)
 
-    for (const batch of batches) {
-      const deleteCommand = new DeleteMessageBatchCommand({
-        QueueUrl: queueUrl,
-        Entries: batch.map((receiptHandle, index) => ({
-          Id: `msg_${index}`,
-          ReceiptHandle: receiptHandle
-        }))
-      })
-      await client.send(deleteCommand)
-    }
+    // The batches are independent, so send them concurrently instead of one
+    // round-trip after another. The SDK's connection pool bounds real parallelism,
+    // and Promise.all still rejects (as the previous loop did) if any batch fails.
+    await Promise.all(
+      batches.map((batch) =>
+        client.send(
+          new DeleteMessageBatchCommand({
+            QueueUrl: queueUrl,
+            Entries: batch.map((receiptHandle, index) => ({
+              Id: `msg_${index}`,
+              ReceiptHandle: receiptHandle
+            }))
+          })
+        )
+      )
+    )
   }
 
   async function changeMessageVisibility(receiptHandle: string, visibilityTimeout: number): Promise<void> {
@@ -98,17 +104,23 @@ export async function createSqsComponent(config: IConfigComponent): Promise<IQue
     const batchSize = 10
     const batches = chunks(receiptHandles, batchSize)
 
-    for (const batch of batches) {
-      const command = new ChangeMessageVisibilityBatchCommand({
-        QueueUrl: queueUrl,
-        Entries: batch.map((receiptHandle, index) => ({
-          Id: `msg_${index}`,
-          ReceiptHandle: receiptHandle,
-          VisibilityTimeout: visibilityTimeout
-        }))
-      })
-      await client.send(command)
-    }
+    // Independent batches — send them concurrently rather than serially. The SDK's
+    // connection pool bounds parallelism, and Promise.all preserves the previous
+    // throw-on-failure behavior.
+    await Promise.all(
+      batches.map((batch) =>
+        client.send(
+          new ChangeMessageVisibilityBatchCommand({
+            QueueUrl: queueUrl,
+            Entries: batch.map((receiptHandle, index) => ({
+              Id: `msg_${index}`,
+              ReceiptHandle: receiptHandle,
+              VisibilityTimeout: visibilityTimeout
+            }))
+          })
+        )
+      )
+    )
   }
 
   async function getStatus(): Promise<QueueStatus> {

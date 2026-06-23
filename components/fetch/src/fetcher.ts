@@ -1,16 +1,28 @@
 import { IFetchComponent, RequestOptions } from '@dcl/core-commons'
 import { FetcherOptions } from './types'
 
-const NON_RETRYABLE_STATUS_CODES = [400, 401, 403, 404]
-const IDEMPOTENT_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE']
+const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404])
+const IDEMPOTENT_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'])
 
-async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: RequestOptions): Promise<Response> {
-  // Split the component-specific controls (timeout, retries, abort controller) from
-  // the standard `RequestInit` keys that are forwarded as-is to the native fetch.
-  const { timeout, abortController, retryDelay, attempts: attemptsOption, ...fetchInit } = options
-  const timeoutSignal = fetchInit.signal
-  let attempts = attemptsOption!
-  let timer: NodeJS.Timeout | null = null
+/**
+ * Per-call controls split out from the standard `RequestInit` so the latter can be
+ * forwarded to the native fetch untouched.
+ */
+type FetchControl = {
+  timeout?: number
+  retryDelay: number
+  attempts: number
+  abortController: AbortController
+}
+
+async function fetchWithRetriesAndTimeout(
+  url: string | URL | Request,
+  fetchInit: RequestInit,
+  control: FetchControl
+): Promise<Response> {
+  const { timeout, retryDelay, abortController } = control
+  const timeoutSignal = abortController.signal
+  let attempts = control.attempts
   let response: Response | undefined = undefined
   let lastError: unknown = undefined
 
@@ -19,59 +31,55 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
     // the retry decision below.
     response = undefined
     lastError = undefined
+    let timer: NodeJS.Timeout | null = null
 
     try {
       if (timeout) {
-        timer = setTimeout(() => {
-          abortController!.abort()
-        }, timeout)
+        // Abort the in-flight request once the timeout elapses. The aborted fetch
+        // rejects below and is turned into the dedicated timeout error after the
+        // loop — no separate timeout promise to race against and clean up.
+        timer = setTimeout(() => abortController.abort(), timeout)
       }
-
-      const fetchPromise = fetch(url, fetchInit)
-
-      const racePromise = Promise.race([
-        fetchPromise,
-        new Promise<Response>((resolve) => {
-          timeoutSignal!.addEventListener('abort', () => {
-            resolve(new Response('timeout', { status: 408, statusText: 'Request Timeout' }))
-          })
-        })
-      ])
 
       --attempts
 
-      response = await racePromise
+      response = await fetch(url, fetchInit)
     } catch (error) {
-      // A rejected fetch means a network-level failure (DNS resolution, connection
-      // refused/reset, socket hang up). Capture it so the request can be retried
-      // like a retryable status code instead of failing on the first blip.
+      // A rejected fetch is either an abort (timeout or external controller) or a
+      // network-level failure (DNS, connection refused/reset, socket hang up).
+      // Capture it: aborts are surfaced as the timeout error after the loop;
+      // network errors are retried like a retryable status for idempotent methods.
       lastError = error
     } finally {
-      // Clear the timeout timer on every exit (success, retryable failure or a
-      // rejected fetch) so a pending timer can't later abort a controller that
-      // is reused by the caller or by a subsequent retry.
+      // Clear the timer on every exit (success, retryable failure or rejection) so
+      // a pending timeout can't later abort a controller reused by the caller or by
+      // a subsequent retry.
       if (timer) clearTimeout(timer)
     }
 
     // Stop on a successful or non-retryable response.
-    if (response && (response.ok || NON_RETRYABLE_STATUS_CODES.includes(response.status))) break
+    if (response && (response.ok || NON_RETRYABLE_STATUS_CODES.has(response.status))) break
     // Stop when the request was aborted (timeout or external controller): retrying
     // would reuse an already-aborted signal, and the caller turns this into the
     // "Request aborted (timed out)" error after the loop.
-    if (timeoutSignal?.aborted) break
+    if (timeoutSignal.aborted) break
     // Stop once the retries are exhausted, keeping the latest response/error around.
     if (attempts === 0) break
+
+    // About to discard this attempt's retryable response. An unconsumed undici
+    // response body pins its socket and buffers the received bytes in memory until
+    // GC, so a retry loop under load (e.g. an upstream returning 5xx) leaks both
+    // connections and heap. Cancelling releases the body and connection right away.
+    // The final attempt's response is returned to the caller below and is never
+    // reached here, so the caller still owns its body.
+    if (response) await response.body?.cancel().catch(() => {})
 
     await new Promise((resolve) => setTimeout(resolve, retryDelay))
   } while (true)
 
-  // The loop only stops on a usable/non-retryable response, an aborted signal or
-  // exhausted retries. Resolve those into a concrete `Response` or a thrown error
-  // below so the return type is sound without an `as Response` assertion.
-
   // An aborted signal (timeout or external controller) takes precedence over any
   // response gathered so far and surfaces the dedicated abort error.
-  if (timeoutSignal?.aborted) {
+  if (timeoutSignal.aborted) {
     throw new Error('Request aborted (timed out)')
   }
 
@@ -92,9 +100,10 @@ async function fetchWithRetriesAndTimeout(url: string | URL | Request, options: 
  * @param defaultOptions - default headers and request options injected on every call performed by this component
  */
 export function createFetchComponent(defaultOptions?: FetcherOptions): IFetchComponent {
+  // Normalized once at factory build so the common path doesn't re-read it per call.
+  const defaultHeaders = defaultOptions?.defaultHeaders as Record<string, string> | undefined
+
   async function wrappedFetch(url: string | URL | Request, options?: RequestOptions): Promise<Response> {
-    // Parse options
-    const optionsWithDefault = { ...defaultOptions?.defaultFetcherOptions, ...options }
     const {
       timeout,
       method = 'GET',
@@ -102,35 +111,23 @@ export function createFetchComponent(defaultOptions?: FetcherOptions): IFetchCom
       abortController,
       attempts: attemptsOption,
       ...fetchOptions
-    } = optionsWithDefault
-    let attempts = attemptsOption ?? 1
+    } = { ...defaultOptions?.defaultFetcherOptions, ...options }
+
     const controller = abortController || new AbortController()
-    const { signal } = controller
 
-    // Add default headers
-    if (defaultOptions?.defaultHeaders)
-      fetchOptions.headers = {
-        ...(defaultOptions.defaultHeaders as Record<string, string>),
-        ...((fetchOptions.headers as Record<string, string>) || {})
-      }
+    // Retries only apply to idempotent methods; everything else gets a single attempt.
+    const attempts = IDEMPOTENT_HTTP_METHODS.has(method.toUpperCase()) ? (attemptsOption ?? 1) : 1
 
-    // Fix attempts in case of POST
-    if (!IDEMPOTENT_HTTP_METHODS.includes(method.toUpperCase())) attempts = 1
+    const fetchInit: RequestInit = { ...fetchOptions, method, signal: controller.signal }
 
-    // Fetch with retries and timeout
-    const response = await fetchWithRetriesAndTimeout(url, {
-      ...fetchOptions,
-      attempts,
-      method,
-      timeout,
-      retryDelay,
-      signal,
-      abortController: controller
-    })
+    // Merge default headers; call-provided headers win.
+    if (defaultHeaders) {
+      fetchInit.headers = { ...defaultHeaders, ...((fetchOptions.headers as Record<string, string>) || {}) }
+    }
 
     // fetchWithRetriesAndTimeout resolves to a real Response or throws (on abort,
     // timeout or exhausted network retries), so no further guarding is needed here.
-    return response
+    return fetchWithRetriesAndTimeout(url, fetchInit, { timeout, retryDelay, attempts, abortController: controller })
   }
 
   return { fetch: wrappedFetch }

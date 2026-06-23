@@ -67,6 +67,13 @@ describe('when sending an event', () => {
       })
     })
 
+    it('should reuse a single headers object across events instead of rebuilding it per event', async () => {
+      await component.sendEvent(eventName, eventBody)
+      await component.sendEvent(eventName, eventBody)
+
+      expect(fetchMock.mock.calls[0][1].headers).toBe(fetchMock.mock.calls[1][1].headers)
+    })
+
     it('should send the event to the Analytics API and resolve', async () => {
       await expect(component.sendEvent(eventName, eventBody)).resolves.not.toThrow()
 
@@ -86,6 +93,21 @@ describe('when sending an event', () => {
           context: 'test-context'
         })
       })
+    })
+  })
+
+  describe('and the response exposes a readable body', () => {
+    let cancelMock: jest.Mock
+
+    beforeEach(() => {
+      cancelMock = jest.fn().mockResolvedValue(undefined)
+      fetchMock.mockResolvedValue({ ok: true, status: 200, body: { cancel: cancelMock } })
+    })
+
+    it('should cancel the response body so the undici connection is not left pinned', async () => {
+      await component.sendEvent(eventName, eventBody)
+
+      expect(cancelMock).toHaveBeenCalledTimes(1)
     })
   })
 
