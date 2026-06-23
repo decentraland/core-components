@@ -46,6 +46,20 @@ describe('when normalizing a handler response that is already a native Response'
       expect(normalized.body).toBeUndefined()
     })
   })
+
+  describe('and the Response carries a stale content-encoding header', () => {
+    beforeEach(() => {
+      request = new Request('http://localhost/resource', { method: 'GET' })
+      normalized = normalizeResponseBody(
+        request,
+        new Response('decoded', { status: 200, headers: { 'content-encoding': 'gzip' } }) as any
+      )
+    })
+
+    it('should drop the content-encoding header so the decoded body is not double-decoded', () => {
+      expect(normalized.headers.has('content-encoding')).toBe(false)
+    })
+  })
 })
 
 describe('when writing a successful response with multiple Set-Cookie headers', () => {

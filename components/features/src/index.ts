@@ -64,6 +64,9 @@ export async function createFeaturesComponent(
       })
 
       if (!response.ok) {
+        // Release the undici body before discarding the response so its socket
+        // isn't left checked out of the pool and its bytes buffered until GC.
+        await response.body?.cancel().catch(() => {})
         throw new Error(`Could not fetch features service from ${FF_URL}`)
       }
 
@@ -103,9 +106,14 @@ export async function createFeaturesComponent(
       return inFlight
     }
 
-    // Registered apps are served from the continuously refreshed cache.
-    if (registeredApps.has(app) && cachedFlagsByApp.has(app)) {
-      return cachedFlagsByApp.get(app) ?? null
+    // Registered apps are served from the continuously refreshed cache. The cache
+    // only ever holds real responses, so a single `get` (instead of `has` + `get`)
+    // tells us whether the value is present.
+    if (registeredApps.has(app)) {
+      const cached = cachedFlagsByApp.get(app)
+      if (cached !== undefined) {
+        return cached
+      }
     }
 
     return fetchFeatureFlags(app)
@@ -126,8 +134,9 @@ export async function createFeaturesComponent(
     const ffKey = `${app}-${feature}`
     const featureFlags = await getFlags(app)
 
-    if (featureFlags?.flags[ffKey] && featureFlags?.variants[ffKey]) {
-      return featureFlags.variants[ffKey]
+    const variant = featureFlags?.variants?.[ffKey]
+    if (variant && featureFlags?.flags[ffKey]) {
+      return variant
     }
 
     return null

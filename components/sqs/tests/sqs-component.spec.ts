@@ -5,6 +5,7 @@ import { IQueueComponent, ReceiveMessagesOptions } from '../src/types'
 import {
   ChangeMessageVisibilityBatchCommand,
   ChangeMessageVisibilityCommand,
+  DeleteMessageBatchCommand,
   Message,
   ReceiveMessageCommand,
   SendMessageCommand
@@ -345,6 +346,73 @@ describe('when deleting messages', () => {
   })
 })
 
+describe('when deleting multiple messages', () => {
+  describe('and deleting messages within batch size', () => {
+    const receiptHandles = ['receipt-1', 'receipt-2', 'receipt-3']
+
+    beforeEach(() => {
+      sendMock.mockResolvedValue({})
+      ;(DeleteMessageBatchCommand as unknown as jest.Mock).mockClear()
+    })
+
+    it('should delete all messages in a single batch', async () => {
+      await component.deleteMessages(receiptHandles)
+
+      expect(DeleteMessageBatchCommand).toHaveBeenCalledTimes(1)
+      expect(DeleteMessageBatchCommand).toHaveBeenCalledWith({
+        QueueUrl: queueUrl,
+        Entries: [
+          { Id: 'msg_0', ReceiptHandle: 'receipt-1' },
+          { Id: 'msg_1', ReceiptHandle: 'receipt-2' },
+          { Id: 'msg_2', ReceiptHandle: 'receipt-3' }
+        ]
+      })
+    })
+  })
+
+  describe('and deleting messages exceeding batch size', () => {
+    const receiptHandles = Array.from({ length: 15 }, (_, i) => `receipt-${i}`)
+
+    beforeEach(() => {
+      sendMock.mockResolvedValue({})
+      ;(DeleteMessageBatchCommand as unknown as jest.Mock).mockClear()
+    })
+
+    it('should split messages into multiple batches of 10', async () => {
+      await component.deleteMessages(receiptHandles)
+
+      expect(DeleteMessageBatchCommand).toHaveBeenCalledTimes(2)
+    })
+
+    it('should dispatch all batches concurrently rather than one after another', async () => {
+      // Hold every send open so we can observe how many were dispatched before any resolves.
+      const pendingSends: Array<(value: unknown) => void> = []
+      sendMock.mockImplementation(() => new Promise((resolve) => pendingSends.push(resolve)))
+
+      const promise = component.deleteMessages(receiptHandles)
+
+      // Promise.all(map(...)) dispatches both batches synchronously; a sequential
+      // `for await` loop would have sent only the first while awaiting it.
+      expect(sendMock).toHaveBeenCalledTimes(2)
+
+      pendingSends.forEach((resolve) => resolve({}))
+      await promise
+    })
+  })
+
+  describe('and a batch delete fails', () => {
+    const receiptHandles = ['receipt-1', 'receipt-2']
+
+    beforeEach(() => {
+      sendMock.mockRejectedValue(new Error('SQS batch delete failed'))
+    })
+
+    it('should throw the failure', async () => {
+      await expect(component.deleteMessages(receiptHandles)).rejects.toThrow('SQS batch delete failed')
+    })
+  })
+})
+
 describe('when changing message visibility', () => {
   const receiptHandle = 'test-receipt-handle'
 
@@ -437,6 +505,20 @@ describe('when changing visibility for multiple messages', () => {
           expect.objectContaining({ Id: 'msg_0', ReceiptHandle: 'receipt-10', VisibilityTimeout: 120 })
         ])
       })
+    })
+
+    it('should dispatch all batches concurrently rather than one after another', async () => {
+      const pendingSends: Array<(value: unknown) => void> = []
+      sendMock.mockImplementation(() => new Promise((resolve) => pendingSends.push(resolve)))
+
+      const promise = component.changeMessagesVisibility(receiptHandles, 120)
+
+      // Both batches are dispatched synchronously by Promise.all(map(...)); a serial
+      // `for await` loop would have sent only the first while awaiting it.
+      expect(sendMock).toHaveBeenCalledTimes(2)
+
+      pendingSends.forEach((resolve) => resolve({}))
+      await promise
     })
   })
 

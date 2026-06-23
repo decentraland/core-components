@@ -107,6 +107,65 @@ describe("when searching for a block by timestamp", () => {
     )
   })
 
+  describe("and the block repository calls are counted", () => {
+    let findBlock: jest.Mock
+    let blockRepository: BlockRepository
+    let blocks: Record<number, number>
+
+    beforeEach(() => {
+      // A 30-block chain where block N has timestamp N*10.
+      blocks = {}
+      for (let block = 1; block <= 30; block++) {
+        blocks[block] = block * 10
+      }
+      findBlock = jest.fn((block: number) =>
+        Promise.resolve(block in blocks ? { block, timestamp: blocks[block] } : undefined)
+      )
+      blockRepository = {
+        currentBlock: jest.fn().mockResolvedValue({ block: 30, timestamp: 300 }),
+        findBlock: findBlock as BlockRepository["findBlock"],
+      }
+    })
+
+    describe("and the same timestamp is looked up twice within the cache capacity", () => {
+      beforeEach(() => {
+        blockSearch = createAvlBlockSearch({ logs, metrics, blockRepository })
+      })
+
+      it("should serve the second lookup from the cache without querying the repository again", async () => {
+        await blockSearch.findBlockForTimestamp(50)
+        findBlock.mockClear()
+
+        await blockSearch.findBlockForTimestamp(50)
+
+        expect(findBlock).not.toHaveBeenCalled()
+      })
+    })
+
+    describe("and more distinct blocks are looked up than the configured cache maximum", () => {
+      let overflowTimestamps: number[]
+
+      beforeEach(() => {
+        overflowTimestamps = [290, 250, 210, 170, 130]
+        blockSearch = createAvlBlockSearch({ logs, metrics, blockRepository }, { maxCachedBlocks: 2 })
+      })
+
+      it("should evict the oldest cached blocks and refetch them on a later lookup instead of growing without bound", async () => {
+        // Prime the cache with an early block (timestamp 50 -> block 5).
+        await blockSearch.findBlockForTimestamp(50)
+        // Look up several other timestamps to push past the 2-entry cap.
+        for (const ts of overflowTimestamps) {
+          await blockSearch.findBlockForTimestamp(ts)
+        }
+        findBlock.mockClear()
+
+        await blockSearch.findBlockForTimestamp(50)
+
+        expect(findBlock).toHaveBeenCalledWith(5)
+      })
+    })
+  })
+
   describe("and the underlying block repository rejects", () => {
     let failingRepository: BlockRepository
     let rpcError: Error

@@ -86,6 +86,24 @@ describe("when reading a flag that is not overridden in the environment", () => 
   })
 })
 
+describe("when the feature-flags service responds with a non-ok status", () => {
+  let features: IFeaturesComponent
+  let fetchMock: jest.Mock
+  let cancelMock: jest.Mock
+
+  beforeEach(async () => {
+    ;({ features, fetchMock } = await buildFeatures())
+    cancelMock = jest.fn().mockResolvedValue(undefined)
+    fetchMock.mockResolvedValue({ ok: false, body: { cancel: cancelMock } } as any)
+  })
+
+  it("should cancel the response body so the undici connection is not leaked", async () => {
+    await features.getIsFeatureEnabled("dapps", "x")
+
+    expect(cancelMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe("when the flag is overridden in the environment", () => {
   let features: IFeaturesComponent
   let fetchMock: jest.Mock

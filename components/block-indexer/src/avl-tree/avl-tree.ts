@@ -298,6 +298,37 @@ export const createAvlTree = <K, V>(
   }
 
   /**
+   * Like `findEnclosingRange` but returns the enclosing nodes' *values* instead of
+   * their keys, so a caller that needs the stored value doesn't have to follow up
+   * with a separate `get(key)` descent for each bound.
+   */
+  function findEnclosingValues(key: K): Range<V> {
+    if (_root === null) {
+      return { min: undefined, max: undefined }
+    }
+    return _findEnclosingValues(key, _root, undefined, undefined)
+  }
+
+  function _findEnclosingValues(
+    key: K,
+    root: Node<K, V> | null,
+    min: V | undefined,
+    max: V | undefined
+  ): Range<V> {
+    if (root === null) {
+      return { min, max }
+    }
+    const result = _compare(key, root.key)
+    if (result === 0) {
+      return { min: root.value, max: root.value }
+    } else if (result < 0) {
+      return _findEnclosingValues(key, root.left, min, root.value)
+    } else {
+      return _findEnclosingValues(key, root.right, root.value, max)
+    }
+  }
+
+  /**
    * Gets whether a node with a specific key is within the tree.
    * @param key The key being searched for.
    * @return Whether a node with the key exists.
@@ -359,6 +390,7 @@ export const createAvlTree = <K, V>(
     get,
     findByValue,
     findEnclosingRange,
+    findEnclosingValues,
     contains
   }
 }

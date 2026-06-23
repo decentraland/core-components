@@ -40,7 +40,9 @@ export async function createSubgraphComponent(
     variables: Variables = {},
     remainingAttempts: number = RETRIES
   ): Promise<T> {
-    return attemptQuery<T>(query, variables, remainingAttempts, 0)
+    // Serialize the request body once: it is identical across retry attempts.
+    const body = JSON.stringify({ query, variables })
+    return attemptQuery<T>(query, variables, body, remainingAttempts, 0)
   }
 
   /**
@@ -52,20 +54,16 @@ export async function createSubgraphComponent(
   async function attemptQuery<T>(
     query: string,
     variables: Variables,
+    body: string,
     remainingAttempts: number,
     attempt: number
   ): Promise<T> {
-    const totalAttempts = attempt + Math.max(remainingAttempts, 0) + 1
-    const currentAttempt = attempt + 1
-
     const timeoutWait = TIMEOUT + attempt * TIMEOUT_INCREMENT
-    const queryId = randomUUID()
-    const logData = { queryId, currentAttempt, attempts: totalAttempts, timeoutWait, url }
 
     const { end } = metrics.startTimer('subgraph_query_duration_seconds', { url })
     try {
       const [provider, response] = await withTimeout(
-        (abortController) => postQuery<T>(query, variables, abortController),
+        (abortController) => postQuery<T>(body, abortController),
         timeoutWait
       )
 
@@ -89,6 +87,15 @@ export async function createSubgraphComponent(
       return data
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
+      // Built lazily: the query id and log context are only needed on the failure
+      // path, so the success path skips the randomUUID() draw and this allocation.
+      const logData = {
+        queryId: randomUUID(),
+        currentAttempt: attempt + 1,
+        attempts: attempt + Math.max(remainingAttempts, 0) + 1,
+        timeoutWait,
+        url
+      }
       logger.warn('Error:', { ...logData, errorMessage, query, variables: JSON.stringify(variables) })
 
       let kind = 'unknown'
@@ -109,7 +116,7 @@ export async function createSubgraphComponent(
 
       if (remainingAttempts > 0) {
         await setTimeout(BACKOFF)
-        return attemptQuery<T>(query, variables, remainingAttempts - 1, attempt + 1)
+        return attemptQuery<T>(query, variables, body, remainingAttempts - 1, attempt + 1)
       } else {
         throw error // bubble up
       }
@@ -118,21 +125,22 @@ export async function createSubgraphComponent(
     }
   }
 
-  async function postQuery<T>(
-    query: string,
-    variables: Variables,
-    abortController: AbortController
-  ): Promise<PostQueryResponse<T>> {
+  async function postQuery<T>(body: string, abortController: AbortController): Promise<PostQueryResponse<T>> {
     const response = await fetch.fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-agent': USER_AGENT },
-      body: JSON.stringify({ query, variables }),
+      body,
       abortController
     })
 
     const provider = response.headers.get('X-Subgraph-Provider') ?? UNKNOWN_SUBGRAPH_PROVIDER
 
     if (!response.ok) {
+      // Release the undici response body before discarding it. An unconsumed body
+      // pins its socket and buffers the received bytes until GC; `attemptQuery`
+      // retries on this throw, so without the cancel each failed attempt would
+      // leak a connection and heap proportional to the response size.
+      await response.body?.cancel().catch(() => {})
       throw new Error(`Invalid request. Status: ${response.status}. Provider: ${provider}.`)
     }
 

@@ -520,6 +520,47 @@ describe("when using an AVL tree", () => {
     })
   })
 
+  describe("and finding the values enclosing a key", () => {
+    describe("and the tree is empty", () => {
+      let tree: AvlTree<number, string>
+
+      beforeEach(() => {
+        tree = createAvlTree<number, string>()
+      })
+
+      it("should return an undefined min and max", () => {
+        expect(tree.findEnclosingValues(25)).toEqual({ min: undefined, max: undefined })
+      })
+    })
+
+    describe("and the tree has multiple elements whose values differ from their keys", () => {
+      let tree: AvlTree<number, string>
+
+      beforeEach(() => {
+        tree = createAvlTree<number, string>()
+        tree.insert(10, "a")
+        tree.insert(20, "b")
+        tree.insert(30, "c")
+      })
+
+      it("should return the enclosing values for a key between two entries", () => {
+        expect(tree.findEnclosingValues(15)).toEqual({ min: "a", max: "b" })
+      })
+
+      it("should return the matching value as both bounds when the key exists", () => {
+        expect(tree.findEnclosingValues(20)).toEqual({ min: "b", max: "b" })
+      })
+
+      it("should return an undefined min and the lowest value for a key below the range", () => {
+        expect(tree.findEnclosingValues(5)).toEqual({ min: undefined, max: "a" })
+      })
+
+      it("should return the highest value as min and an undefined max for a key above the range", () => {
+        expect(tree.findEnclosingValues(35)).toEqual({ min: "c", max: undefined })
+      })
+    })
+  })
+
   describe("and observing the size", () => {
     let tree: AvlTree<number, number>
 

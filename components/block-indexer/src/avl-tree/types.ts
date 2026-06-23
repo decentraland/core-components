@@ -62,6 +62,12 @@ export type AvlTree<K, V> = {
   findEnclosingRange(key: K): Range<K>
 
   /**
+   * Like {@link findEnclosingRange} but returns the enclosing nodes' values rather
+   * than their keys, saving the caller a follow-up `get` per bound.
+   */
+  findEnclosingValues(key: K): Range<V>
+
+  /**
    * Gets whether a node with a specific key is within the tree.
    * @param key - The key being searched for.
    * @returns Whether a node with the key exists.

@@ -2,6 +2,7 @@
 
 // `Headers`, `Request` and `Response` are the native (undici) globals provided by Node.
 import { IHttpServerComponent } from '@dcl/core-commons'
+import { fromNativeResponse } from './helpers'
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -160,16 +161,25 @@ export function createCorsMiddleware<Context>(options: CorsOptions): IHttpServer
     } else {
       const r = await next()
 
-      const headers = new Headers(r.headers)
-
-      if (event.request.headers.has('origin')) {
-        // actual response
-        configureOrigin(options, request, headers)
-        configureCredentials(options, request, headers)
-        configureExposedHeaders(options, request, headers)
+      // No Origin means there are no CORS headers to add, so return the response
+      // untouched instead of copying its headers and re-wrapping it on every request.
+      if (!event.request.headers.has('origin')) {
+        return r
       }
 
-      return { ...r, headers }
+      // Normalize a native Response to the structural shape before re-wrapping it: a
+      // Response's status/body are prototype getters, so `{ ...response }` would drop
+      // them. Handlers should convert via `fromNativeResponse`; this also guards the
+      // case where one slips through to the middleware as a native Response.
+      const base = r instanceof Response ? fromNativeResponse(r) : r
+
+      // actual response
+      const headers = new Headers(base.headers)
+      configureOrigin(options, request, headers)
+      configureCredentials(options, request, headers)
+      configureExposedHeaders(options, request, headers)
+
+      return { ...base, headers }
     }
   }
 }
