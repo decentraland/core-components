@@ -1,5 +1,12 @@
 # @dcl/queue-consumer-component
 
+## 3.0.5
+
+### Patch Changes
+
+- Updated dependencies [f416044]
+  - @dcl/sqs-component@2.2.5
+
 ## 3.0.4
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @dcl/features-component
 
+## 1.0.2
+
+### Patch Changes
+
+- f416044: release the feature-flags response body on the error path. `requestFeatureFlags` threw on a non-ok response before consuming the body, leaving an unconsumed undici response that pins its socket and buffers its bytes until GC. The body is now released with `response.body?.cancel()` before throwing.
+- f416044: performance: serve cached flags with a single `Map.get` instead of `has` + `get`, and read each variant entry once in `getFeatureVariant`.
+
 ## 1.0.1
 
 ### Patch Changes
