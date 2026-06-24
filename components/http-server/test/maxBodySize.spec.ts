@@ -2,9 +2,10 @@ import { createConfigComponent } from '@well-known-components/env-config-provide
 import { createLogComponent } from '@well-known-components/logger'
 import type { Server } from 'http'
 import * as net from 'net'
-import { createServerComponent, getUnderlyingServer } from '../src'
+import { createServerComponent, getUnderlyingServer, Router } from '../src'
 import { FullHttpServerComponent } from '../src/server'
 import type { IHttpServerOptions } from '../src/types'
+import { multipartParserWrapper } from './busboy'
 
 type RunningServer = {
   server: FullHttpServerComponent<{}>
@@ -13,13 +14,24 @@ type RunningServer = {
   stop: () => Promise<void>
 }
 
+// Splits a string into fixed-size pieces, so a body can be streamed in chunks small enough to trip
+// the limiter mid-stream.
+function chunkString(value: string, size: number): string[] {
+  const chunks: string[] = []
+  for (let i = 0; i < value.length; i += size) {
+    chunks.push(value.slice(i, i + size))
+  }
+  return chunks
+}
+
 // Sends a chunked POST (no Content-Length) over a raw socket — global `fetch` always frames a
 // string/Buffer body with a Content-Length, which would hit the up-front check instead of the
-// streaming limiter. Resolves with the raw HTTP response text once the status line arrives.
-function sendChunkedBody(port: number, chunks: string[]): Promise<string> {
+// streaming limiter. `extraHeaders` (CRLF-terminated) lets callers add e.g. a multipart
+// Content-Type. Resolves with the raw HTTP response text once the status line arrives.
+function sendChunkedBody(port: number, chunks: string[], extraHeaders = ''): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = net.connect(port, '127.0.0.1', () => {
-      socket.write('POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n')
+      socket.write(`POST / HTTP/1.1\r\nHost: x\r\n${extraHeaders}Transfer-Encoding: chunked\r\n\r\n`)
       let i = 0
       const sendNext = () => {
         if (i >= chunks.length) {
@@ -191,6 +203,54 @@ describe('when the http server is configured with a reflected CORS origin and a 
       })
       expect(res.status).toEqual(413)
       expect(res.headers.get('access-control-allow-origin')).toEqual('https://example.com')
+    })
+  })
+})
+
+describe('when the http server has a maxBodySize and a multipart handler', () => {
+  let running: RunningServer
+
+  beforeEach(async () => {
+    running = await startServer({ maxBodySize: 100 })
+    running.server.resetMiddlewares()
+    const routes = new Router()
+    routes.post(
+      '/',
+      multipartParserWrapper(async (ctx) => ({ status: 200, body: { fields: Object.keys(ctx.formData.fields) } }))
+    )
+    running.server.use(routes.middleware())
+  })
+
+  afterEach(async () => {
+    await running.stop()
+  })
+
+  describe('and an oversized multipart upload declares its Content-Length', () => {
+    it('should respond with a 413', async () => {
+      const form = new FormData()
+      form.append('file', 'x'.repeat(500))
+      const res = await fetch(`${running.baseUrl}/`, { method: 'POST', body: form as any })
+      expect(res.status).toEqual(413)
+    })
+  })
+
+  describe('and an oversized multipart body is streamed chunked without a Content-Length', () => {
+    let response: string
+
+    beforeEach(async () => {
+      const boundary = '----maxbodysizetest'
+      const payload =
+        `--${boundary}\r\nContent-Disposition: form-data; name="f"; filename="a.bin"\r\n` +
+        `Content-Type: application/octet-stream\r\n\r\n${'x'.repeat(500)}\r\n--${boundary}--\r\n`
+      response = await sendChunkedBody(
+        running.port,
+        chunkString(payload, 40),
+        `Content-Type: multipart/form-data; boundary=${boundary}\r\n`
+      )
+    })
+
+    it('should respond with a 413 instead of surfacing an unhandled stream error', () => {
+      expect(response).toMatch(/HTTP\/1\.1 413/)
     })
   })
 })

@@ -43,6 +43,31 @@ the read rejects and the error middleware maps it to a `413` response.
 configured, the up-front `Content-Length` rejection still carries the actual-response CORS
 headers, so a cross-origin client can read the `413`.
 
+### Reading the request body under a `maxBodySize`
+
+The streaming limit is enforced as `ctx.request.body` is consumed, so it only turns into a `413`
+if your handler actually reads the body **and propagates stream errors**. Reading it with
+`await ctx.request.json()` / `.text()` / `.arrayBuffer()` or `for await (… of ctx.request.body)`
+does this for you — the read rejects with the `413` and the error middleware maps it to a response.
+
+If you instead **pipe** `ctx.request.body` into another stream (e.g. a multipart parser like
+`busboy`), remember that `Readable.prototype.pipe` does **not** forward *source* errors to the
+destination. Attach an error handler to the adapted source, or a body-stream error — a client
+abort *or* the `maxBodySize` limiter emitting its `413` — surfaces as an unhandled error (and can
+crash the process):
+
+```ts
+import { Readable } from 'stream'
+
+const body = Readable.fromWeb(ctx.request.body as any)
+// Forward source errors (client abort, or the maxBodySize 413) so the parser rejects cleanly.
+body.on('error', (err) => parser.destroy(err))
+body.pipe(parser)
+```
+
+Requests that declare a `Content-Length` over the limit — the usual case for `multipart/form-data`
+uploads from browsers and `fetch` — are rejected up-front regardless of how the body is consumed.
+
 ## Returning a native `Response` from a handler
 
 Handlers return the structural `IResponse` (Node `Readable`/`Buffer`/string/JSON
