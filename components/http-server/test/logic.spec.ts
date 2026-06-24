@@ -1,5 +1,14 @@
-import { getRequestFromNodeMessage, normalizeResponseBody, NormalizedResponse, success } from '../src/logic'
-import type { ServerResponse } from 'http'
+import {
+  createBodySizeLimiter,
+  exceedsContentLength,
+  getRequestFromNodeMessage,
+  getServer,
+  normalizeResponseBody,
+  NormalizedResponse,
+  success
+} from '../src/logic'
+import type { RequestListener, ServerResponse } from 'http'
+import * as https from 'https'
 import { Readable } from 'stream'
 
 describe('when normalizing a handler response that is already a native Response', () => {
@@ -135,6 +144,156 @@ describe('when building a request from a Node message', () => {
         request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0')
       }).not.toThrow()
       expect(request.body).toBeNull()
+    })
+  })
+
+  describe('and a maxBodySize is configured', () => {
+    let nodeMessage: any
+
+    describe('and the streamed body stays within the limit', () => {
+      beforeEach(() => {
+        nodeMessage = Object.assign(Readable.from([Buffer.from('payload')]), {
+          method: 'POST',
+          url: '/resource',
+          headers: {}
+        })
+      })
+
+      it('should resolve the body contents', async () => {
+        const request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0', 1024)
+        await expect(request.text()).resolves.toEqual('payload')
+      })
+    })
+
+    describe('and the streamed body exceeds the limit', () => {
+      beforeEach(() => {
+        nodeMessage = Object.assign(Readable.from([Buffer.from('x'.repeat(64))]), {
+          method: 'POST',
+          url: '/resource',
+          headers: {}
+        })
+      })
+
+      it('should reject when the body is read', async () => {
+        const request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0', 8)
+        await expect(request.text()).rejects.toThrow()
+      })
+    })
+  })
+})
+
+describe('when checking a declared content-length against a max body size', () => {
+  describe('and the declared length is greater than the max', () => {
+    it('should report it as exceeding', () => {
+      expect(exceedsContentLength('100', 50)).toEqual(true)
+    })
+  })
+
+  describe('and the declared length is equal to the max', () => {
+    it('should not report it as exceeding', () => {
+      expect(exceedsContentLength('50', 50)).toEqual(false)
+    })
+  })
+
+  describe('and the header is missing or empty', () => {
+    it('should treat undefined as not exceeding', () => {
+      expect(exceedsContentLength(undefined, 50)).toEqual(false)
+    })
+
+    it('should treat null as not exceeding', () => {
+      expect(exceedsContentLength(null, 50)).toEqual(false)
+    })
+
+    it('should treat an empty string as not exceeding', () => {
+      expect(exceedsContentLength('', 50)).toEqual(false)
+    })
+  })
+
+  describe('and the header is not numeric', () => {
+    it('should treat it as not exceeding so the streaming limiter can decide', () => {
+      expect(exceedsContentLength('not-a-number', 50)).toEqual(false)
+    })
+  })
+})
+
+describe('when limiting a request body stream', () => {
+  describe('and the body stays within the limit', () => {
+    let source: Readable
+
+    beforeEach(() => {
+      source = Readable.from([Buffer.from('hello')])
+    })
+
+    it('should pass the body through unchanged', async () => {
+      const limiter = createBodySizeLimiter(source, 1024)
+      const chunks: Buffer[] = []
+      for await (const chunk of limiter) {
+        chunks.push(Buffer.from(chunk))
+      }
+      expect(Buffer.concat(chunks).toString()).toEqual('hello')
+    })
+  })
+
+  describe('and the body exceeds the limit', () => {
+    let source: Readable
+
+    beforeEach(() => {
+      source = Readable.from([Buffer.from('x'.repeat(64))])
+    })
+
+    it('should error with a 413 status once the limit is crossed', async () => {
+      const limiter = createBodySizeLimiter(source, 8)
+      const error: any = await new Promise((resolve) => {
+        limiter.on('error', resolve)
+        limiter.resume()
+      })
+      expect(error.status).toEqual(413)
+    })
+  })
+})
+
+describe('when creating the underlying node server', () => {
+  const noop: RequestListener = () => {}
+
+  describe('and tuning options are provided', () => {
+    it('should apply every option to the node server', () => {
+      const server = getServer(
+        {
+          keepAliveTimeout: 5000,
+          headersTimeout: 6000,
+          requestTimeout: 1000,
+          maxHeadersCount: 50,
+          maxRequestsPerSocket: 10
+        },
+        noop
+      )
+      expect(server.keepAliveTimeout).toEqual(5000)
+      expect(server.headersTimeout).toEqual(6000)
+      expect(server.requestTimeout).toEqual(1000)
+      expect(server.maxHeadersCount).toEqual(50)
+      expect(server.maxRequestsPerSocket).toEqual(10)
+    })
+  })
+
+  describe('and no tuning options are provided', () => {
+    it('should fall back to the default keep-alive and headers timeouts', () => {
+      const server = getServer({}, noop)
+      expect(server.keepAliveTimeout).toEqual(70_000)
+      expect(server.headersTimeout).toEqual(75_000)
+    })
+  })
+
+  describe('and https options are provided', () => {
+    it('should create an https server rather than being overwritten by the http fallback', () => {
+      const server = getServer({ https: {} }, noop)
+      expect(server).toBeInstanceOf(https.Server)
+    })
+  })
+
+  describe('and no transport options are provided', () => {
+    it('should default to a plain http server', () => {
+      const server = getServer({}, noop)
+      expect(server).not.toBeInstanceOf(https.Server)
     })
   })
 })

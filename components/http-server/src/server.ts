@@ -6,7 +6,7 @@ import {
 } from '@well-known-components/interfaces'
 import type { IHttpServerComponent } from '@dcl/core-commons'
 import { _setUnderlyingServer } from './injectors'
-import { getServer, success, getRequestFromNodeMessage } from './logic'
+import { getServer, success, getRequestFromNodeMessage, exceedsContentLength } from './logic'
 import type { ServerComponents, IHttpServerOptions } from './types'
 import { createServerHandler } from './server-handler'
 import * as http from 'http'
@@ -43,6 +43,7 @@ export async function createServerComponent<Context extends object>(
   // config
   const port = await config.requireNumber('HTTP_SERVER_PORT')
   const host = await config.requireString('HTTP_SERVER_HOST')
+  const maxBodySize = options.maxBodySize
 
   let handlerFn: http.RequestListener = handler
 
@@ -111,7 +112,19 @@ export async function createServerComponent<Context extends object>(
   }
 
   async function asyncHandle(req: http.IncomingMessage, res: http.ServerResponse) {
-    const request = getRequestFromNodeMessage(req, host)
+    // Reject oversized bodies up-front, before reading them, when the client declares its size.
+    // Bodies that omit or under-declare `Content-Length` are still capped while streaming by the
+    // limiter in `getRequestFromNodeMessage`.
+    if (maxBodySize !== undefined && exceedsContentLength(req.headers['content-length'], maxBodySize)) {
+      res.statusCode = 413
+      res.setHeader('content-type', 'text/plain; charset=utf-8')
+      // Close the connection: the declared body is never read, so the socket can't be reused.
+      res.setHeader('connection', 'close')
+      res.end('Payload Too Large')
+      return
+    }
+
+    const request = getRequestFromNodeMessage(req, host, maxBodySize)
     const response = await serverHandler.processRequest(configuredContext, request)
 
     success(response, res)
