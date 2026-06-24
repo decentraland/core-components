@@ -210,8 +210,22 @@ describe('when checking a declared content-length against a max body size', () =
   })
 
   describe('and the header is not numeric', () => {
-    it('should treat it as not exceeding so the streaming limiter can decide', () => {
+    it('should treat a non-numeric string as not exceeding so the streaming limiter can decide', () => {
       expect(exceedsContentLength('not-a-number', 50)).toEqual(false)
+    })
+
+    it('should treat the string "NaN" as not exceeding', () => {
+      expect(exceedsContentLength('NaN', 50)).toEqual(false)
+    })
+
+    it('should treat the string "Infinity" as not exceeding', () => {
+      expect(exceedsContentLength('Infinity', 50)).toEqual(false)
+    })
+  })
+
+  describe('and the header declares a negative length', () => {
+    it('should treat a negative length as not exceeding a positive max', () => {
+      expect(exceedsContentLength('-1', 50)).toEqual(false)
     })
   })
 })

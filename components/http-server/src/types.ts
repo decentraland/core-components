@@ -47,7 +47,9 @@ export type IHttpServerOptions = {
    * Maximum allowed size, in bytes, of an incoming request body. Requests whose `Content-Length`
    * exceeds it are rejected with `413 Payload Too Large` before the body is read; bodies that
    * exceed it while streaming (e.g. chunked transfer-encoding or an under-declared `Content-Length`)
-   * have their stream torn down with the same `413`. Unset means no limit is enforced.
+   * have their stream torn down with the same `413`. The limit is inclusive — a body of exactly
+   * `maxBodySize` bytes is allowed, only larger ones are rejected. Must be a positive integer when
+   * provided; unset means no limit is enforced.
    */
   maxBodySize?: number
   /**

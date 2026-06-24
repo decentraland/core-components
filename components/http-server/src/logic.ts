@@ -63,9 +63,10 @@ export function payloadTooLargeError(): HttpError {
 /**
  * @internal
  * Parses an incoming `Content-Length` header and reports whether it declares a body larger than
- * `maxBodySize`. A missing, empty or non-numeric header is treated as "not exceeding" — those
- * bodies (including chunked transfer-encoding) are caught instead by {@link createBodySizeLimiter}
- * while streaming.
+ * `maxBodySize`. The comparison is strict (`>`), so a declared length of exactly `maxBodySize` is
+ * allowed. A missing, empty or non-numeric header is treated as "not exceeding" — those bodies
+ * (including chunked transfer-encoding) are caught instead by {@link createBodySizeLimiter} while
+ * streaming.
  */
 export function exceedsContentLength(contentLength: string | null | undefined, maxBodySize: number): boolean {
   if (contentLength === null || contentLength === undefined || contentLength === '') return false

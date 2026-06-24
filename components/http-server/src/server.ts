@@ -14,7 +14,7 @@ import { createServerTerminator } from './terminator'
 import { Socket } from 'net'
 import { getWebSocketCallback } from './ws'
 import destroy from 'destroy'
-import { createCorsMiddleware } from './cors'
+import { createCorsMiddleware, getActualResponseCorsHeaders } from './cors'
 
 /**
  * @public
@@ -28,6 +28,20 @@ export type FullHttpServerComponent<Context extends object> = IHttpServerCompone
      */
     resetMiddlewares(): void
   }
+
+/**
+ * Builds a throwaway web `Request` carrying only the incoming `Origin` header, so the CORS helpers
+ * (which read `request.headers.get('origin')`) can run on the early body-size rejection path
+ * without adapting the request body.
+ */
+function corsRequestFromNodeMessage(req: http.IncomingMessage): Request {
+  const headers = new Headers()
+  const origin = req.headers.origin
+  if (typeof origin === 'string') {
+    headers.set('origin', origin)
+  }
+  return new Request('http://cors.invalid/', { headers })
+}
 
 /**
  * Creates a http-server component
@@ -44,6 +58,12 @@ export async function createServerComponent<Context extends object>(
   const port = await config.requireNumber('HTTP_SERVER_PORT')
   const host = await config.requireString('HTTP_SERVER_HOST')
   const maxBodySize = options.maxBodySize
+
+  // Catch misconfiguration early: a negative, fractional, NaN or zero limit would silently reject
+  // every request body rather than do something useful. Omit the option for "no limit".
+  if (maxBodySize !== undefined && (!Number.isInteger(maxBodySize) || maxBodySize < 1)) {
+    throw new Error(`Invalid maxBodySize: expected a positive integer number of bytes, got ${maxBodySize}`)
+  }
 
   let handlerFn: http.RequestListener = handler
 
@@ -119,7 +139,16 @@ export async function createServerComponent<Context extends object>(
       res.statusCode = 413
       res.setHeader('content-type', 'text/plain; charset=utf-8')
       // Close the connection: the declared body is never read, so the socket can't be reused.
+      // With `Connection: close` Node tears the socket down after the response instead of waiting
+      // for the (never-arriving) body.
       res.setHeader('connection', 'close')
+      // This path responds before the middleware chain runs, so the CORS middleware never sees it.
+      // Add the actual-response CORS headers here so a cross-origin client can read the 413.
+      if (options.cors) {
+        getActualResponseCorsHeaders(options.cors, corsRequestFromNodeMessage(req)).forEach((value, key) => {
+          res.setHeader(key, value)
+        })
+      }
       res.end('Payload Too Large')
       return
     }

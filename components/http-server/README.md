@@ -38,6 +38,11 @@ A `maxBodySize` rejection produces a `413` that a handler can also surface itsel
 a handler reads an over-limit body inside the middleware chain (e.g. `await ctx.request.json()`),
 the read rejects and the error middleware maps it to a `413` response.
 
+`maxBodySize` must be a positive integer when provided — `createServerComponent` throws on
+`0`, negative or fractional values (omit the option for "no limit"). When `cors` is also
+configured, the up-front `Content-Length` rejection still carries the actual-response CORS
+headers, so a cross-origin client can read the `413`.
+
 ## Returning a native `Response` from a handler
 
 Handlers return the structural `IResponse` (Node `Readable`/`Buffer`/string/JSON
