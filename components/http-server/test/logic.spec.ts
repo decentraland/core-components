@@ -149,6 +149,7 @@ describe('when building a request from a Node message', () => {
 
   describe('and a maxBodySize is configured', () => {
     let nodeMessage: any
+    let request: ReturnType<typeof getRequestFromNodeMessage>
 
     describe('and the streamed body stays within the limit', () => {
       beforeEach(() => {
@@ -157,10 +158,10 @@ describe('when building a request from a Node message', () => {
           url: '/resource',
           headers: {}
         })
+        request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0', 1024)
       })
 
       it('should resolve the body contents', async () => {
-        const request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0', 1024)
         await expect(request.text()).resolves.toEqual('payload')
       })
     })
@@ -172,10 +173,10 @@ describe('when building a request from a Node message', () => {
           url: '/resource',
           headers: {}
         })
+        request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0', 8)
       })
 
       it('should reject when the body is read', async () => {
-        const request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0', 8)
         await expect(request.text()).rejects.toThrow()
       })
     })
@@ -233,34 +234,37 @@ describe('when checking a declared content-length against a max body size', () =
 describe('when limiting a request body stream', () => {
   describe('and the body stays within the limit', () => {
     let source: Readable
+    let result: string
 
-    beforeEach(() => {
+    beforeEach(async () => {
       source = Readable.from([Buffer.from('hello')])
-    })
-
-    it('should pass the body through unchanged', async () => {
       const limiter = createBodySizeLimiter(source, 1024)
       const chunks: Buffer[] = []
       for await (const chunk of limiter) {
         chunks.push(Buffer.from(chunk))
       }
-      expect(Buffer.concat(chunks).toString()).toEqual('hello')
+      result = Buffer.concat(chunks).toString()
+    })
+
+    it('should pass the body through unchanged', () => {
+      expect(result).toEqual('hello')
     })
   })
 
   describe('and the body exceeds the limit', () => {
     let source: Readable
+    let error: any
 
-    beforeEach(() => {
+    beforeEach(async () => {
       source = Readable.from([Buffer.from('x'.repeat(64))])
-    })
-
-    it('should error with a 413 status once the limit is crossed', async () => {
       const limiter = createBodySizeLimiter(source, 8)
-      const error: any = await new Promise((resolve) => {
+      error = await new Promise((resolve) => {
         limiter.on('error', resolve)
         limiter.resume()
       })
+    })
+
+    it('should error with a 413 status once the limit is crossed', () => {
       expect(error.status).toEqual(413)
     })
   })
@@ -270,8 +274,10 @@ describe('when creating the underlying node server', () => {
   const noop: RequestListener = () => {}
 
   describe('and tuning options are provided', () => {
-    it('should apply every option to the node server', () => {
-      const server = getServer(
+    let server: ReturnType<typeof getServer>
+
+    beforeEach(() => {
+      server = getServer(
         {
           keepAliveTimeout: 5000,
           headersTimeout: 6000,
@@ -281,32 +287,65 @@ describe('when creating the underlying node server', () => {
         },
         noop
       )
+    })
+
+    it('should apply the keepAliveTimeout', () => {
       expect(server.keepAliveTimeout).toEqual(5000)
+    })
+
+    it('should apply the headersTimeout', () => {
       expect(server.headersTimeout).toEqual(6000)
+    })
+
+    it('should apply the requestTimeout', () => {
       expect(server.requestTimeout).toEqual(1000)
+    })
+
+    it('should apply the maxHeadersCount', () => {
       expect(server.maxHeadersCount).toEqual(50)
+    })
+
+    it('should apply the maxRequestsPerSocket', () => {
       expect(server.maxRequestsPerSocket).toEqual(10)
     })
   })
 
   describe('and no tuning options are provided', () => {
-    it('should fall back to the default keep-alive and headers timeouts', () => {
-      const server = getServer({}, noop)
+    let server: ReturnType<typeof getServer>
+
+    beforeEach(() => {
+      server = getServer({}, noop)
+    })
+
+    it('should fall back to the default keepAliveTimeout', () => {
       expect(server.keepAliveTimeout).toEqual(70_000)
+    })
+
+    it('should fall back to the default headersTimeout', () => {
       expect(server.headersTimeout).toEqual(75_000)
     })
   })
 
   describe('and https options are provided', () => {
+    let server: ReturnType<typeof getServer>
+
+    beforeEach(() => {
+      server = getServer({ https: {} }, noop)
+    })
+
     it('should create an https server rather than being overwritten by the http fallback', () => {
-      const server = getServer({ https: {} }, noop)
       expect(server).toBeInstanceOf(https.Server)
     })
   })
 
   describe('and no transport options are provided', () => {
+    let server: ReturnType<typeof getServer>
+
+    beforeEach(() => {
+      server = getServer({}, noop)
+    })
+
     it('should default to a plain http server', () => {
-      const server = getServer({}, noop)
       expect(server).not.toBeInstanceOf(https.Server)
     })
   })

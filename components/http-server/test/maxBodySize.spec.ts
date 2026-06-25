@@ -100,33 +100,50 @@ describe('when the http server is configured with a maxBodySize', () => {
   })
 
   describe('and the request body is within the limit', () => {
-    it('should respond with a 200 and echo the body back', async () => {
-      const res = await fetch(`${running.baseUrl}/`, { method: 'POST', body: 'small body' })
-      expect(res.status).toEqual(200)
-      expect(await res.text()).toEqual('small body')
+    let response: Response
+    let body: string
+
+    beforeEach(async () => {
+      response = await fetch(`${running.baseUrl}/`, { method: 'POST', body: 'small body' })
+      body = await response.text()
+    })
+
+    it('should respond with a 200', () => {
+      expect(response.status).toEqual(200)
+    })
+
+    it('should echo the body back', () => {
+      expect(body).toEqual('small body')
     })
   })
 
   describe('and the request declares a Content-Length over the limit', () => {
-    let res: Response
+    let response: Response
+    let body: string
 
     beforeEach(async () => {
-      res = await fetch(`${running.baseUrl}/`, { method: 'POST', body: 'x'.repeat(64) })
+      response = await fetch(`${running.baseUrl}/`, { method: 'POST', body: 'x'.repeat(64) })
+      body = await response.text()
     })
 
     it('should respond with a 413', () => {
-      expect(res.status).toEqual(413)
+      expect(response.status).toEqual(413)
     })
 
-    it('should respond with the Payload Too Large body', async () => {
-      expect(await res.text()).toEqual('Payload Too Large')
+    it('should respond with the Payload Too Large body', () => {
+      expect(body).toEqual('Payload Too Large')
     })
   })
 
   describe('and a GET request without a body is made', () => {
-    it('should respond with a 200', async () => {
-      const res = await fetch(`${running.baseUrl}/`, { method: 'GET' })
-      expect(res.status).toEqual(200)
+    let response: Response
+
+    beforeEach(async () => {
+      response = await fetch(`${running.baseUrl}/`, { method: 'GET' })
+    })
+
+    it('should respond with a 200', () => {
+      expect(response.status).toEqual(200)
     })
   })
 
@@ -198,14 +215,22 @@ describe('when the http server is configured with a reflected CORS origin and a 
   })
 
   describe('and an allowed cross-origin request exceeds the limit', () => {
-    it('should reflect the request origin on the 413 response', async () => {
-      const res = await fetch(`${running.baseUrl}/`, {
+    let response: Response
+
+    beforeEach(async () => {
+      response = await fetch(`${running.baseUrl}/`, {
         method: 'POST',
         body: 'x'.repeat(64),
         headers: { origin: 'https://example.com' }
       })
-      expect(res.status).toEqual(413)
-      expect(res.headers.get('access-control-allow-origin')).toEqual('https://example.com')
+    })
+
+    it('should respond with a 413', () => {
+      expect(response.status).toEqual(413)
+    })
+
+    it('should reflect the request origin on the access-control-allow-origin header', () => {
+      expect(response.headers.get('access-control-allow-origin')).toEqual('https://example.com')
     })
   })
 })
@@ -229,11 +254,16 @@ describe('when the http server has a maxBodySize and a multipart handler', () =>
   })
 
   describe('and an oversized multipart upload declares its Content-Length', () => {
-    it('should respond with a 413', async () => {
+    let response: Response
+
+    beforeEach(async () => {
       const form = new FormData()
       form.append('file', 'x'.repeat(500))
-      const res = await fetch(`${running.baseUrl}/`, { method: 'POST', body: form as any })
-      expect(res.status).toEqual(413)
+      response = await fetch(`${running.baseUrl}/`, { method: 'POST', body: form as any })
+    })
+
+    it('should respond with a 413', () => {
+      expect(response.status).toEqual(413)
     })
   })
 
@@ -288,27 +318,45 @@ describe('when an oversized request is rejected up-front by the Content-Length c
 describe('when creating the server with an invalid maxBodySize', () => {
   let logs: Awaited<ReturnType<typeof createLogComponent>>
   let config: ReturnType<typeof createConfigComponent>
+  let maxBodySize: number
+  let error: Error | undefined
 
   beforeEach(async () => {
     logs = await createLogComponent({})
     config = createConfigComponent({ HTTP_SERVER_PORT: '0', HTTP_SERVER_HOST: '127.0.0.1' })
+    error = undefined
   })
 
   describe('and the value is zero', () => {
-    it('should reject with an invalid maxBodySize error', async () => {
-      await expect(createServerComponent<{}>({ logs, config }, { maxBodySize: 0 })).rejects.toThrow('Invalid maxBodySize')
+    beforeEach(async () => {
+      maxBodySize = 0
+      error = await createServerComponent<{}>({ logs, config }, { maxBodySize }).catch((e) => e)
+    })
+
+    it('should reject with an invalid maxBodySize error', () => {
+      expect(error?.message).toContain('Invalid maxBodySize')
     })
   })
 
   describe('and the value is negative', () => {
-    it('should reject with an invalid maxBodySize error', async () => {
-      await expect(createServerComponent<{}>({ logs, config }, { maxBodySize: -1 })).rejects.toThrow('Invalid maxBodySize')
+    beforeEach(async () => {
+      maxBodySize = -1
+      error = await createServerComponent<{}>({ logs, config }, { maxBodySize }).catch((e) => e)
+    })
+
+    it('should reject with an invalid maxBodySize error', () => {
+      expect(error?.message).toContain('Invalid maxBodySize')
     })
   })
 
   describe('and the value is fractional', () => {
-    it('should reject with an invalid maxBodySize error', async () => {
-      await expect(createServerComponent<{}>({ logs, config }, { maxBodySize: 1.5 })).rejects.toThrow('Invalid maxBodySize')
+    beforeEach(async () => {
+      maxBodySize = 1.5
+      error = await createServerComponent<{}>({ logs, config }, { maxBodySize }).catch((e) => e)
+    })
+
+    it('should reject with an invalid maxBodySize error', () => {
+      expect(error?.message).toContain('Invalid maxBodySize')
     })
   })
 })
