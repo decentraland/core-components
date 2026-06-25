@@ -338,6 +338,18 @@ describe('when creating the underlying node server', () => {
     })
   })
 
+  describe('and http options are provided', () => {
+    let server: ReturnType<typeof getServer>
+
+    beforeEach(() => {
+      server = getServer({ http: {} }, noop)
+    })
+
+    it('should create a plain http server', () => {
+      expect(server).not.toBeInstanceOf(https.Server)
+    })
+  })
+
   describe('and no transport options are provided', () => {
     let server: ReturnType<typeof getServer>
 

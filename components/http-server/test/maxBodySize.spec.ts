@@ -199,6 +199,22 @@ describe('when the http server is configured with a wildcard CORS origin and a m
       expect(res.headers.get('access-control-allow-origin')).toEqual('*')
     })
   })
+
+  describe('and a request without an Origin header exceeds the limit', () => {
+    let res: Response
+
+    beforeEach(async () => {
+      res = await fetch(`${running.baseUrl}/`, { method: 'POST', body: 'x'.repeat(64) })
+    })
+
+    it('should respond with a 413', () => {
+      expect(res.status).toEqual(413)
+    })
+
+    it('should not add an access-control-allow-origin header when there is no origin to reflect', () => {
+      expect(res.headers.get('access-control-allow-origin')).toBeNull()
+    })
+  })
 })
 
 describe('when the http server is configured with a reflected CORS origin and a maxBodySize', () => {
