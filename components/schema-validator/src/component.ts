@@ -69,6 +69,9 @@ export function createSchemaValidatorComponent<T extends object>(
       }
 
       if (maxBodySize !== undefined) {
+        // Declared-size guard only: this rejects an oversized `Content-Length` before parsing, but a
+        // chunked or under-declared body bypasses it and is still buffered by `.json()` below. Pair
+        // with the http-server `maxBodySize` for an actual streaming cap. See `SchemaValidatorOptions`.
         const contentLengthHeader = context.request.headers.get('Content-Length')
         const declaredSize = contentLengthHeader ? Number(contentLengthHeader) : NaN
         if (Number.isFinite(declaredSize) && declaredSize > maxBodySize) {

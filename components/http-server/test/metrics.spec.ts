@@ -173,4 +173,17 @@ describe('when recording the request metrics for a handler response', () => {
       expect(totalLabelsFor('POST')).toEqual(expect.objectContaining({ code: 500 }))
     })
   })
+
+  describe('and the handler throws an error with a non-numeric status', () => {
+    beforeEach(async () => {
+      server.use(async () => {
+        throw { status: 'totally-not-a-number', message: 'bad' }
+      })
+      await server.fetch('/resource', { method: 'POST' })
+    })
+
+    it('should fall back to a numeric 500 status code instead of leaking a string label', () => {
+      expect(totalLabelsFor('POST')).toEqual(expect.objectContaining({ code: 500 }))
+    })
+  })
 })

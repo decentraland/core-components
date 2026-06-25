@@ -16,9 +16,13 @@ export type SchemaValidatorOptions = {
    * declares a larger `Content-Length` is rejected with `413 Payload Too Large` before its body is
    * read. Must be a positive integer; unset means no limit.
    *
-   * This is a declared-size (`Content-Length`) guard. For bodies that omit or under-declare their
-   * length (e.g. chunked transfer-encoding), pair it with the http-server component's own
-   * `maxBodySize`, which caps the body at the transport layer while streaming.
+   * ⚠️ **This is NOT a streaming guard.** It only inspects the declared `Content-Length`; the body
+   * itself is still fully buffered by `request.clone().json()` when parsed. A request that omits or
+   * under-declares its length (e.g. chunked transfer-encoding) bypasses this check entirely, so it
+   * does not, on its own, bound memory usage. To actually cap the bytes read off the socket, set the
+   * `@dcl/http-server` component's own `maxBodySize`, which enforces the limit at the transport layer
+   * while streaming. Use this option as a convenience to reject oversized declared bodies before
+   * parsing — not as a standalone memory-safety mechanism.
    */
   maxBodySize?: number
 }
