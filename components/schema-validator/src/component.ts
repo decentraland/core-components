@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import Ajv, { Schema } from 'ajv'
 import addFormats from 'ajv-formats'
 import { IHttpServerComponent } from '@dcl/core-commons'
-import { ISchemaValidatorComponent, SchemaValidatorOptions, Validation } from './types'
+import { ISchemaValidatorComponent, Validation } from './types'
 
 // RFC 6839 structured-suffix match: non-empty type and subtype separated by `/`,
 // ending in `+json`. Prevents matching a bare `+json` or `application/+json`.
@@ -20,15 +20,10 @@ function httpErrorStatus(error: unknown): number | undefined {
   return undefined
 }
 
-export function createSchemaValidatorComponent<T extends object>(
-  options?: SchemaValidatorOptions
-): ISchemaValidatorComponent<T> {
-  const { ensureJsonContentType = true, maxBodySize } = options ?? {}
-
-  // Catch misconfiguration early: a non-positive or fractional limit would reject every body.
-  if (maxBodySize !== undefined && (!Number.isInteger(maxBodySize) || maxBodySize < 1)) {
-    throw new Error(`Invalid maxBodySize: expected a positive integer number of bytes, got ${maxBodySize}`)
-  }
+export function createSchemaValidatorComponent<T extends object>(options?: {
+  ensureJsonContentType?: boolean
+}): ISchemaValidatorComponent<T> {
+  const { ensureJsonContentType = true } = options ?? {}
 
   const ajv = new Ajv()
   addFormats(ajv)
@@ -76,23 +71,6 @@ export function createSchemaValidatorComponent<T extends object>(
           body: {
             ok: false,
             message: 'Content-Type must be application/json'
-          }
-        }
-      }
-
-      if (maxBodySize !== undefined) {
-        // Declared-size guard only: this rejects an oversized `Content-Length` before parsing, but a
-        // chunked or under-declared body bypasses it and is still buffered by `.json()` below. Pair
-        // with the http-server `maxBodySize` for an actual streaming cap. See `SchemaValidatorOptions`.
-        const contentLengthHeader = context.request.headers.get('Content-Length')
-        const declaredSize = contentLengthHeader ? Number(contentLengthHeader) : NaN
-        if (Number.isFinite(declaredSize) && declaredSize > maxBodySize) {
-          return {
-            status: 413,
-            body: {
-              ok: false,
-              message: 'Request body is too large'
-            }
           }
         }
       }

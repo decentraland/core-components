@@ -37,15 +37,14 @@ const { valid, errors } = validator.validateSchema('my-schema', payload)
 
 ## Options
 
-| Option                  | Type      | Default | Description                                                                                                                                                              |
-| ----------------------- | --------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ensureJsonContentType` | `boolean` | `true`  | When `true`, the middleware rejects requests whose `Content-Type` is not `application/json`.                                                                            |
-| `maxBodySize`           | `number`  | —       | Maximum request body size in bytes. A request declaring a larger `Content-Length` is rejected with `413` before its body is parsed. Must be a positive integer if set.  |
+| Option                  | Type      | Default | Description                                                                                  |
+| ----------------------- | --------- | ------- | -------------------------------------------------------------------------------------------- |
+| `ensureJsonContentType` | `boolean` | `true`  | When `true`, the middleware rejects requests whose `Content-Type` is not `application/json`. |
 
 ## Notes
 
 - Each call to `withSchemaValidatorMiddleware` registers the schema under a random key in the shared Ajv instance. Register middlewares once at startup rather than per request, otherwise registered schemas will accumulate in memory.
 - A request whose `Content-Type` is not `application/json` is rejected with HTTP `415 Unsupported Media Type` (values like `application/json; charset=utf-8` are accepted).
-- The middleware reads the entire request body into memory via `request.clone().json()`. `maxBodySize` rejects oversized payloads up front based on the declared `Content-Length` (`413 Payload Too Large`). Because that is a declared-size check, bodies that omit or under-declare their length (e.g. chunked transfer-encoding) bypass it — pair it with the `@dcl/http-server` `maxBodySize` (or its `createBodySizeLimitMiddleware`), which caps the body at the transport layer while streaming.
+- The middleware reads the entire request body into memory via `request.clone().json()`. To bound body size, put a body-size limit in front of it — the `@dcl/http-server` `maxBodySize` option or its `createBodySizeLimitMiddleware`, which cap the body at the transport layer while streaming.
 - When the body read fails with an error that already carries an HTTP `status`/`statusCode` (for example a `413` raised by an upstream `@dcl/http-server` body-size limiter on a chunked body), the middleware surfaces that status rather than masking it as a generic `400`. Errors without a status (genuine JSON parse failures) still return `400`.
 - `addSchema` replaces any schema already registered under the given key, so repeated calls (e.g. from a hot-reload path) are safe.

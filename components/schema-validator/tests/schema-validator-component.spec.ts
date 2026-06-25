@@ -12,22 +12,15 @@ const testSchema = {
 function createMockContext(
   options: {
     contentType?: string | null
-    contentLength?: string | null
     body?: () => unknown
   } = {}
 ) {
-  const { contentType = null, contentLength = null, body } = options
-
-  const headerValues: Record<string, string | null> = {
-    'content-type': contentType,
-    'content-length': contentLength
-  }
+  const { contentType = null, body } = options
 
   const headers = {
-    get: jest.fn((header: string) => {
-      const key = header.toLowerCase()
-      if (key in headerValues) {
-        return headerValues[key]
+    get: jest.fn().mockImplementationOnce((header: string) => {
+      if (header === 'Content-Type') {
+        return contentType
       }
       throw new Error(`Unexpected header lookup: ${header}`)
     })
@@ -271,133 +264,6 @@ describe('when the option to check the Content-Type header is set to false', () 
       )
 
       expect(next).toHaveBeenCalled()
-    })
-  })
-})
-
-describe('when the maxBodySize option is set', () => {
-  let limitedMiddleware: ReturnType<
-    ReturnType<typeof createSchemaValidatorComponent>['withSchemaValidatorMiddleware']
-  >
-
-  beforeEach(() => {
-    limitedMiddleware = createSchemaValidatorComponent({ maxBodySize: 1024 }).withSchemaValidatorMiddleware(
-      testSchema
-    )
-  })
-
-  describe('and the request declares a Content-Length over the limit', () => {
-    let next: jest.Mock
-    let body: jest.Mock
-    let result: IHttpServerComponent.IResponse
-
-    beforeEach(async () => {
-      next = jest.fn()
-      body = jest.fn()
-      const context = createMockContext({ contentType: 'application/json', contentLength: '2048', body })
-      result = await limitedMiddleware(context, next)
-    })
-
-    it('should respond with a payload too large error', () => {
-      expect(result).toEqual({ status: 413, body: { ok: false, message: 'Request body is too large' } })
-    })
-
-    it('should not parse the body', () => {
-      expect(body).not.toHaveBeenCalled()
-    })
-
-    it('should not continue to the next middleware', () => {
-      expect(next).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('and the request declares a Content-Length within the limit', () => {
-    let next: jest.Mock
-
-    beforeEach(async () => {
-      next = jest.fn()
-      const context = createMockContext({
-        contentType: 'application/json',
-        contentLength: '32',
-        body: () => ({ aTestProp: 'someValue' })
-      })
-      await limitedMiddleware(context, next)
-    })
-
-    it('should parse and validate the body and continue to the next middleware', () => {
-      expect(next).toHaveBeenCalled()
-    })
-  })
-
-  describe('and the request does not declare a Content-Length', () => {
-    let next: jest.Mock
-
-    beforeEach(async () => {
-      next = jest.fn()
-      const context = createMockContext({
-        contentType: 'application/json',
-        contentLength: null,
-        body: () => ({ aTestProp: 'someValue' })
-      })
-      await limitedMiddleware(context, next)
-    })
-
-    it('should parse the body and continue, leaving streaming enforcement to the transport layer', () => {
-      expect(next).toHaveBeenCalled()
-    })
-  })
-})
-
-describe('when creating the component with an invalid maxBodySize', () => {
-  let maxBodySize: number
-  let error: Error | undefined
-
-  beforeEach(() => {
-    error = undefined
-  })
-
-  describe('and the value is zero', () => {
-    beforeEach(() => {
-      maxBodySize = 0
-      try {
-        createSchemaValidatorComponent({ maxBodySize })
-      } catch (e) {
-        error = e as Error
-      }
-    })
-
-    it('should throw an invalid maxBodySize error', () => {
-      expect(error?.message).toContain('Invalid maxBodySize')
-    })
-  })
-
-  describe('and the value is negative', () => {
-    beforeEach(() => {
-      maxBodySize = -1
-      try {
-        createSchemaValidatorComponent({ maxBodySize })
-      } catch (e) {
-        error = e as Error
-      }
-    })
-
-    it('should throw an invalid maxBodySize error', () => {
-      expect(error?.message).toContain('Invalid maxBodySize')
-    })
-  })
-
-  describe('and the value is fractional', () => {
-    beforeEach(() => {
-      maxBodySize = 1.5
-      try {
-        createSchemaValidatorComponent({ maxBodySize })
-      } catch (e) {
-        error = e as Error
-      }
-    })
-
-    it('should throw an invalid maxBodySize error', () => {
-      expect(error?.message).toContain('Invalid maxBodySize')
     })
   })
 })
