@@ -6,7 +6,7 @@ import {
 } from '@well-known-components/interfaces'
 import type { IHttpServerComponent } from '@dcl/core-commons'
 import { _setUnderlyingServer } from './injectors'
-import { getServer, success, getRequestFromNodeMessage, exceedsContentLength } from './logic'
+import { getServer, success, getRequestFromNodeMessage, exceedsContentLength, assertValidMaxBodySize } from './logic'
 import type { ServerComponents, IHttpServerOptions } from './types'
 import { createServerHandler } from './server-handler'
 import * as http from 'http'
@@ -61,9 +61,7 @@ export async function createServerComponent<Context extends object>(
 
   // Catch misconfiguration early: a negative, fractional, NaN or zero limit would silently reject
   // every request body rather than do something useful. Omit the option for "no limit".
-  if (maxBodySize !== undefined && (!Number.isInteger(maxBodySize) || maxBodySize < 1)) {
-    throw new Error(`Invalid maxBodySize: expected a positive integer number of bytes, got ${maxBodySize}`)
-  }
+  assertValidMaxBodySize(maxBodySize)
 
   let handlerFn: http.RequestListener = handler
 

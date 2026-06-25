@@ -1,5 +1,5 @@
 import { IHttpServerComponent } from '@dcl/core-commons'
-import { exceedsContentLength, payloadTooLargeError } from './logic'
+import { assertValidMaxBodySize, exceedsContentLength, payloadTooLargeError } from './logic'
 
 /**
  * Builds a web `TransformStream` that errors with a `413` once more than `maxBodySize` bytes have
@@ -36,9 +36,7 @@ function createBodyStreamLimiter(maxBodySize: number): TransformStream<Uint8Arra
 export function createBodySizeLimitMiddleware<Context extends object = {}>(
   maxBodySize: number
 ): IHttpServerComponent.IRequestHandler<Context> {
-  if (!Number.isInteger(maxBodySize) || maxBodySize < 1) {
-    throw new Error(`Invalid maxBodySize: expected a positive integer number of bytes, got ${maxBodySize}`)
-  }
+  assertValidMaxBodySize(maxBodySize)
 
   return async (context, next) => {
     if (exceedsContentLength(context.request.headers.get('content-length'), maxBodySize)) {

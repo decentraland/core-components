@@ -62,6 +62,17 @@ export function payloadTooLargeError(): HttpError {
 
 /**
  * @internal
+ * Validates a `maxBodySize` option, throwing if it is defined but not a positive integer number of
+ * bytes. A negative, fractional or zero limit would silently reject every request body.
+ */
+export function assertValidMaxBodySize(maxBodySize: number | undefined): void {
+  if (maxBodySize !== undefined && (!Number.isInteger(maxBodySize) || maxBodySize < 1)) {
+    throw new Error(`Invalid maxBodySize: expected a positive integer number of bytes, got ${maxBodySize}`)
+  }
+}
+
+/**
+ * @internal
  * Parses an incoming `Content-Length` header and reports whether it declares a body larger than
  * `maxBodySize`. The comparison is strict (`>`), so a declared length of exactly `maxBodySize` is
  * allowed. A missing, empty or non-numeric header is treated as "not exceeding" — those bodies
