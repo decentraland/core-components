@@ -2,16 +2,21 @@ import { randomUUID } from 'crypto'
 import Ajv, { Schema } from 'ajv'
 import addFormats from 'ajv-formats'
 import { IHttpServerComponent } from '@dcl/core-commons'
-import { ISchemaValidatorComponent, Validation } from './types'
+import { ISchemaValidatorComponent, SchemaValidatorOptions, Validation } from './types'
 
 // RFC 6839 structured-suffix match: non-empty type and subtype separated by `/`,
 // ending in `+json`. Prevents matching a bare `+json` or `application/+json`.
 const JSON_STRUCTURED_SUFFIX_RE = /^[^/\s]+\/[^/\s]+\+json$/
 
-export function createSchemaValidatorComponent<T extends object>(options?: {
-  ensureJsonContentType?: boolean
-}): ISchemaValidatorComponent<T> {
-  const { ensureJsonContentType = true } = options ?? {}
+export function createSchemaValidatorComponent<T extends object>(
+  options?: SchemaValidatorOptions
+): ISchemaValidatorComponent<T> {
+  const { ensureJsonContentType = true, maxBodySize } = options ?? {}
+
+  // Catch misconfiguration early: a non-positive or fractional limit would reject every body.
+  if (maxBodySize !== undefined && (!Number.isInteger(maxBodySize) || maxBodySize < 1)) {
+    throw new Error(`Invalid maxBodySize: expected a positive integer number of bytes, got ${maxBodySize}`)
+  }
 
   const ajv = new Ajv()
   addFormats(ajv)
@@ -59,6 +64,20 @@ export function createSchemaValidatorComponent<T extends object>(options?: {
           body: {
             ok: false,
             message: 'Content-Type must be application/json'
+          }
+        }
+      }
+
+      if (maxBodySize !== undefined) {
+        const contentLengthHeader = context.request.headers.get('Content-Length')
+        const declaredSize = contentLengthHeader ? Number(contentLengthHeader) : NaN
+        if (Number.isFinite(declaredSize) && declaredSize > maxBodySize) {
+          return {
+            status: 413,
+            body: {
+              ok: false,
+              message: 'Request body is too large'
+            }
           }
         }
       }

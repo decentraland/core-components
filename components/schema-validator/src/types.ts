@@ -5,6 +5,24 @@ export type Validation =
   | { valid: true; errors: null }
   | { valid: false; errors: ErrorObject[] }
 
+export type SchemaValidatorOptions = {
+  /**
+   * When `true` (the default), the middleware responds with `415` unless the request carries an
+   * `application/json` (or `+json` structured-suffix) Content-Type.
+   */
+  ensureJsonContentType?: boolean
+  /**
+   * Maximum size, in bytes, of the request body the middleware will parse. When set, a request that
+   * declares a larger `Content-Length` is rejected with `413 Payload Too Large` before its body is
+   * read. Must be a positive integer; unset means no limit.
+   *
+   * This is a declared-size (`Content-Length`) guard. For bodies that omit or under-declare their
+   * length (e.g. chunked transfer-encoding), pair it with the http-server component's own
+   * `maxBodySize`, which caps the body at the transport layer while streaming.
+   */
+  maxBodySize?: number
+}
+
 export type ISchemaValidatorComponent<T extends object> = {
   /**
    * Registers a schema under the given key so it can be referenced later by `validateSchema`.
