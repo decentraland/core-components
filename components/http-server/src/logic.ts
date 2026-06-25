@@ -88,17 +88,18 @@ export function exceedsContentLength(contentLength: string | null | undefined, m
 /**
  * @internal
  * Wraps a Node request stream so it errors with a `413` once more than `maxBodySize` bytes have
- * flowed through. This guards against bodies that omit or under-declare `Content-Length` (e.g.
- * chunked transfer-encoding), which the up-front header check cannot catch. A handler that reads
- * the body within the middleware chain surfaces the error as a clean `413` (via
- * `coerceErrorsMiddleware`).
+ * flowed through, invoking `onExceeded` so the caller can react (e.g. close the connection). This
+ * guards against bodies that omit or under-declare `Content-Length` (e.g. chunked transfer-encoding),
+ * which the up-front header check cannot catch. A handler that reads the body within the middleware
+ * chain surfaces the error as a clean `413` (via `coerceErrorsMiddleware`).
  */
-export function createBodySizeLimiter(source: Readable, maxBodySize: number): Readable {
+export function createBodySizeLimiter(source: Readable, maxBodySize: number, onExceeded?: () => void): Readable {
   let received = 0
   const limiter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       received += chunk.length
       if (received > maxBodySize) {
+        onExceeded?.()
         callback(payloadTooLargeError())
       } else {
         callback(null, chunk)
@@ -186,7 +187,8 @@ const parsedUrlByRequest = new WeakMap<IHttpServerComponent.IRequest, URL>()
 export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { originalUrl?: string }>(
   request: T,
   host: string,
-  maxBodySize?: number
+  maxBodySize?: number,
+  onBodyExceeded?: () => void
 ): IHttpServerComponent.IRequest => {
   const headers = new Headers()
 
@@ -219,7 +221,7 @@ export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { ori
     // stream; `duplex: 'half'` is required by the fetch spec when streaming a request body.
     // When a `maxBodySize` is configured the stream is first routed through a limiter that errors
     // once the body exceeds it, catching bodies that omit or under-declare `Content-Length`.
-    const bodySource = maxBodySize === undefined ? request : createBodySizeLimiter(request, maxBodySize)
+    const bodySource = maxBodySize === undefined ? request : createBodySizeLimiter(request, maxBodySize, onBodyExceeded)
     requestInit.body = Readable.toWeb(bodySource) as unknown as ReadableStream
     requestInit.duplex = 'half'
   }

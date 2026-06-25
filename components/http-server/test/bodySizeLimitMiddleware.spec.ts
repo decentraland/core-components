@@ -143,7 +143,11 @@ describe('when the body-size-limit middleware handles a request', () => {
     })
 
     it('should respond with a 413 payload too large', () => {
-      expect(result).toEqual({ status: 413, body: 'Payload Too Large' })
+      expect(result).toEqual({ status: 413, headers: { connection: 'close' }, body: 'Payload Too Large' })
+    })
+
+    it('should close the connection so a stalled client cannot tie up the socket', () => {
+      expect((result.headers as Record<string, string>).connection).toEqual('close')
     })
 
     it('should not continue to the next handler', () => {
@@ -211,6 +215,28 @@ describe('when the body-size-limit middleware handles a request', () => {
 
     it('should make the downstream body read reject with a 413', () => {
       expect(error?.status).toEqual(413)
+    })
+  })
+
+  describe('and a downstream handler reads a streamed body that exceeds the limit', () => {
+    let context: IHttpServerComponent.DefaultContext
+    let result: IHttpServerComponent.IResponse
+
+    beforeEach(async () => {
+      context = createContext(makeStreamRequest(500))
+      const readingNext = jest.fn(async () => {
+        await context.request.text()
+        return { status: 200 }
+      })
+      result = await middleware(context, readingNext)
+    })
+
+    it('should respond with a 413', () => {
+      expect(result.status).toEqual(413)
+    })
+
+    it('should close the connection so the client cannot keep streaming', () => {
+      expect((result.headers as Record<string, string>).connection).toEqual('close')
     })
   })
 

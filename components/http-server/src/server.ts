@@ -158,8 +158,19 @@ export async function createServerComponent<Context extends object>(
       return
     }
 
-    const request = getRequestFromNodeMessage(req, host, maxBodySize)
+    // If the streaming limiter trips (a chunked/under-declared body that exceeds `maxBodySize`), the
+    // handler's body read rejects and the error middleware produces the `413` — but through the
+    // normal response path, which wouldn't close the connection. Flag it here so we can add
+    // `Connection: close` and stop the client from continuing to stream into a doomed request.
+    let bodyExceeded = false
+    const request = getRequestFromNodeMessage(req, host, maxBodySize, () => {
+      bodyExceeded = true
+    })
     const response = await serverHandler.processRequest(configuredContext, request)
+
+    if (bodyExceeded) {
+      res.setHeader('connection', 'close')
+    }
 
     success(response, res)
   }

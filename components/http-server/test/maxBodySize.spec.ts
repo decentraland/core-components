@@ -163,6 +163,10 @@ describe('when the http server is configured with a maxBodySize', () => {
     it('should respond with the Payload Too Large body', () => {
       expect(response).toMatch(/Payload Too Large/)
     })
+
+    it('should close the connection so the client cannot keep streaming', () => {
+      expect(response).toMatch(/connection: close/i)
+    })
   })
 
 })

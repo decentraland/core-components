@@ -83,7 +83,8 @@ router.post('/v1/notes', createBodySizeLimitMiddleware(4096), notesHandler)
 It enforces the same dual check as the server-wide option: a request declaring a larger
 `Content-Length` is rejected up front with `413 Payload Too Large`, and a body that omits or
 under-declares its length (e.g. chunked) is capped while streaming — the body read by downstream
-handlers errors with a `413` once the limit is crossed. `bytes` must be a positive integer or the
+handlers errors with a `413` once the limit is crossed. Either `413` sets `Connection: close`, so an
+oversized or stalled client can't tie up the socket. `bytes` must be a positive integer or the
 factory throws. It composes with the server-wide `maxBodySize` (the global cap still applies first).
 
 ## Returning a native `Response` from a handler
