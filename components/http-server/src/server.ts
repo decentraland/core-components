@@ -136,6 +136,13 @@ export async function createServerComponent<Context extends object>(
     // Bodies that omit or under-declare `Content-Length` are still capped while streaming by the
     // limiter in `getRequestFromNodeMessage`.
     if (maxBodySize !== undefined && exceedsContentLength(req.headers['content-length'], maxBodySize)) {
+      // This path responds before the middleware chain, so it never reaches the metrics middleware.
+      // Log it so the rejection is at least observable (e.g. for log-based alerting).
+      logger.warn('Rejected request: body exceeds maxBodySize', {
+        method: req.method ?? '',
+        contentLength: req.headers['content-length'] ?? '',
+        maxBodySize
+      })
       res.statusCode = 413
       res.setHeader('content-type', 'text/plain; charset=utf-8')
       // Close the connection: the declared body is never read, so the socket can't be reused.

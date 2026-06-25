@@ -61,12 +61,15 @@ function sendChunkedBody(port: number, chunks: string[], extraHeaders = ''): Pro
   })
 }
 
-async function startServer(options: Partial<IHttpServerOptions>): Promise<RunningServer> {
-  const logs = await createLogComponent({})
+async function startServer(
+  options: Partial<IHttpServerOptions>,
+  logs?: Parameters<typeof createServerComponent>[0]['logs']
+): Promise<RunningServer> {
+  const resolvedLogs = logs ?? (await createLogComponent({}))
   // Port 0 binds an ephemeral port, so concurrent test files never clash.
   const config = createConfigComponent({ HTTP_SERVER_PORT: '0', HTTP_SERVER_HOST: '127.0.0.1' })
 
-  const server = await createServerComponent<{}>({ logs, config }, options)
+  const server = await createServerComponent<{}>({ logs: resolvedLogs, config }, options)
   // `start`/`stop` are optional on `IBaseComponent` and `start` is typed to take lifecycle options
   // the implementation ignores; call them directly here instead of going through a full runner.
   await (server.start as () => Promise<void>)()
@@ -252,6 +255,33 @@ describe('when the http server has a maxBodySize and a multipart handler', () =>
     it('should respond with a 413 instead of surfacing an unhandled stream error', () => {
       expect(response).toMatch(/HTTP\/1\.1 413/)
     })
+  })
+})
+
+describe('when an oversized request is rejected up-front by the Content-Length check', () => {
+  let running: RunningServer
+  let warn: jest.Mock
+
+  beforeEach(async () => {
+    warn = jest.fn()
+    const logs = {
+      getLogger: () => ({ log: jest.fn(), debug: jest.fn(), info: jest.fn(), warn, error: jest.fn() })
+    } as any
+    running = await startServer({ maxBodySize: 16 }, logs)
+    running.server.resetMiddlewares()
+    running.server.use(async () => ({ status: 200 }))
+    await fetch(`${running.baseUrl}/`, { method: 'POST', body: 'x'.repeat(64) })
+  })
+
+  afterEach(async () => {
+    await running.stop()
+  })
+
+  it('should log a warning naming the cause with the request method and configured limit', () => {
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('maxBodySize'),
+      expect.objectContaining({ method: 'POST', maxBodySize: 16 })
+    )
   })
 })
 
