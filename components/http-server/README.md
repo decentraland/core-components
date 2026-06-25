@@ -68,6 +68,24 @@ body.pipe(parser)
 Requests that declare a `Content-Length` over the limit — the usual case for `multipart/form-data`
 uploads from browsers and `fetch` — are rejected up-front regardless of how the body is consumed.
 
+### Per-route body-size limits
+
+`maxBodySize` on `createServerComponent` is server-wide. For a tighter limit on specific routes, use
+`createBodySizeLimitMiddleware(bytes)` and mount it on those routes:
+
+```ts
+import { createBodySizeLimitMiddleware } from '@dcl/http-server'
+
+// allow at most 4 KB on this endpoint
+router.post('/v1/notes', createBodySizeLimitMiddleware(4096), notesHandler)
+```
+
+It enforces the same dual check as the server-wide option: a request declaring a larger
+`Content-Length` is rejected up front with `413 Payload Too Large`, and a body that omits or
+under-declares its length (e.g. chunked) is capped while streaming — the body read by downstream
+handlers errors with a `413` once the limit is crossed. `bytes` must be a positive integer or the
+factory throws. It composes with the server-wide `maxBodySize` (the global cap still applies first).
+
 ## Returning a native `Response` from a handler
 
 Handlers return the structural `IResponse` (Node `Readable`/`Buffer`/string/JSON
