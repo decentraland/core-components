@@ -1,3 +1,4 @@
+import createHttpError from 'http-errors'
 import { createTestServerComponent } from '../src'
 import { instrumentHttpServerWithPromClientRegistry } from '../src/metrics'
 
@@ -104,6 +105,72 @@ describe('when instrumenting the http server with the metrics endpoint', () => {
         expect(response.status).toBe(200)
         expect(await response.text()).toBe('metrics_body')
       })
+    })
+  })
+})
+
+describe('when recording the request metrics for a handler response', () => {
+  let server: ReturnType<typeof createTestServerComponent>
+  let metrics: ReturnType<typeof createMockMetrics>
+  let registry: ReturnType<typeof createMockRegistry>
+
+  function totalLabelsFor(method: string) {
+    const call = metrics.increment.mock.calls.find(
+      (args: any[]) => args[0] === 'http_requests_total' && args[1].method === method
+    )
+    return call?.[1]
+  }
+
+  beforeEach(async () => {
+    server = createTestServerComponent()
+    metrics = createMockMetrics()
+    registry = createMockRegistry()
+    await instrumentHttpServerWithPromClientRegistry({
+      server,
+      config: createMockConfig({}),
+      metrics,
+      registry: registry as any
+    })
+  })
+
+  afterEach(() => {
+    jest.clearAllMocks()
+  })
+
+  describe('and the handler returns a response with a status', () => {
+    beforeEach(async () => {
+      server.use(async () => ({ status: 201, body: 'created' }))
+      await server.fetch('/resource', { method: 'POST' })
+    })
+
+    it('should label http_requests_total with the returned status code', () => {
+      expect(totalLabelsFor('POST')).toEqual(expect.objectContaining({ code: 201 }))
+    })
+  })
+
+  describe('and the handler throws an http-error', () => {
+    beforeEach(async () => {
+      server.use(async () => {
+        throw createHttpError(413, 'Payload Too Large')
+      })
+      await server.fetch('/resource', { method: 'POST' })
+    })
+
+    it('should label http_requests_total with the error status code rather than 200', () => {
+      expect(totalLabelsFor('POST')).toEqual(expect.objectContaining({ code: 413 }))
+    })
+  })
+
+  describe('and the handler throws a plain error', () => {
+    beforeEach(async () => {
+      server.use(async () => {
+        throw new Error('boom')
+      })
+      await server.fetch('/resource', { method: 'POST' })
+    })
+
+    it('should label http_requests_total with a 500 status code', () => {
+      expect(totalLabelsFor('POST')).toEqual(expect.objectContaining({ code: 500 }))
     })
   })
 })
