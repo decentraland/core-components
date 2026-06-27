@@ -131,6 +131,14 @@ export async function instrumentHttpServerWithPromClientRegistry<K extends strin
 
     try {
       return (res = await next())
+    } catch (error: any) {
+      // A thrown error is turned into a response by `coerceErrorsMiddleware`, which runs *outside*
+      // this middleware, so the final response object never reaches us here. Derive the status the
+      // same way it does, so the metric is labelled with the real code (e.g. a thrown `413` or
+      // `404`, or `500` for an unmapped error) instead of defaulting to `200`. Coerce to a number so
+      // a non-numeric `.status`/`.statusCode` can't leak into a high-cardinality Prometheus label.
+      labels.code = Number(error?.status || error?.statusCode) || 500
+      throw error
     } finally {
       labels.code = (res && res.status) || labels.code
 

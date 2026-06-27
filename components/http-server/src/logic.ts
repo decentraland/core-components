@@ -1,11 +1,11 @@
-import { Readable, Stream } from 'stream'
+import { Readable, Stream, Transform } from 'stream'
 import * as http from 'http'
 import * as https from 'https'
 import destroy from 'destroy'
 import onFinished from 'on-finished'
 import type { IHttpServerComponent } from '@dcl/core-commons'
 import type { IHttpServerOptions } from './types'
-import { HttpError } from 'http-errors'
+import createHttpError, { HttpError } from 'http-errors'
 import { Middleware } from './middleware'
 import { getWebSocketCallback, upgradeWebSocketResponse, withWebSocketCallback } from './ws'
 import { fromNativeResponse } from './helpers'
@@ -32,13 +32,89 @@ export function getServer(
   listener: http.RequestListener
 ): http.Server | https.Server {
   let server: http.Server | https.Server
-  if ('https' in options && options.https) server = https.createServer(options.https, listener)
-  if ('http' in options && options.http) server = http.createServer(options.http, listener)
-  else server = http.createServer(listener)
+  // Note: these branches must be mutually exclusive. A plain `if (https) ... if (http) ... else`
+  // would let the trailing `else` overwrite an https server whenever `http` is absent.
+  if ('https' in options && options.https) {
+    server = https.createServer(options.https, listener)
+  } else if ('http' in options && options.http) {
+    server = http.createServer(options.http, listener)
+  } else {
+    server = http.createServer(listener)
+  }
 
   server.keepAliveTimeout = options.keepAliveTimeout ?? 70_000
   server.headersTimeout = options.headersTimeout ?? 75_000
+  if (options.requestTimeout !== undefined) server.requestTimeout = options.requestTimeout
+  if (options.maxHeadersCount !== undefined) server.maxHeadersCount = options.maxHeadersCount
+  if (options.maxRequestsPerSocket !== undefined) server.maxRequestsPerSocket = options.maxRequestsPerSocket
   return server
+}
+
+/**
+ * @internal
+ * Builds the error thrown when a request body exceeds the configured `maxBodySize`. It is an
+ * `HttpError`, so `coerceErrorsMiddleware` maps it to a `413 Payload Too Large` response when a
+ * handler reads the body within the middleware chain.
+ */
+export function payloadTooLargeError(): HttpError {
+  return createHttpError(413, 'Payload Too Large')
+}
+
+/**
+ * @internal
+ * Validates a `maxBodySize` option, throwing if it is defined but not a positive integer number of
+ * bytes. A negative, fractional or zero limit would silently reject every request body.
+ */
+export function assertValidMaxBodySize(maxBodySize: number | undefined): void {
+  if (maxBodySize !== undefined && (!Number.isInteger(maxBodySize) || maxBodySize < 1)) {
+    throw new Error(`Invalid maxBodySize: expected a positive integer number of bytes, got ${maxBodySize}`)
+  }
+}
+
+/**
+ * @internal
+ * Parses an incoming `Content-Length` header and reports whether it declares a body larger than
+ * `maxBodySize`. The comparison is strict (`>`), so a declared length of exactly `maxBodySize` is
+ * allowed. A missing, empty or non-numeric header is treated as "not exceeding" — those bodies
+ * (including chunked transfer-encoding) are caught instead by {@link createBodySizeLimiter} while
+ * streaming.
+ */
+export function exceedsContentLength(contentLength: string | null | undefined, maxBodySize: number): boolean {
+  if (contentLength === null || contentLength === undefined || contentLength === '') return false
+  const declared = Number(contentLength)
+  return Number.isFinite(declared) && declared > maxBodySize
+}
+
+/**
+ * @internal
+ * Wraps a Node request stream so it errors with a `413` once more than `maxBodySize` bytes have
+ * flowed through, invoking `onExceeded` so the caller can react (e.g. close the connection). This
+ * guards against bodies that omit or under-declare `Content-Length` (e.g. chunked transfer-encoding),
+ * which the up-front header check cannot catch. A handler that reads the body within the middleware
+ * chain surfaces the error as a clean `413` (via `coerceErrorsMiddleware`).
+ */
+export function createBodySizeLimiter(source: Readable, maxBodySize: number, onExceeded?: () => void): Readable {
+  let received = 0
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.length
+      if (received > maxBodySize) {
+        onExceeded?.()
+        callback(payloadTooLargeError())
+      } else {
+        callback(null, chunk)
+      }
+    }
+  })
+
+  // Forward a failure of the underlying request (e.g. a client abort) to the limiter so the
+  // handler's body read rejects. The reverse is intentionally not wired: destroying `source` on a
+  // limiter error would tear down the socket and prevent the `413` response from being written —
+  // `pipe` already unpipes `source` when the limiter errors, which stops it from feeding more data.
+  source.once('error', (err) => limiter.destroy(err))
+  source.pipe(limiter)
+
+  return limiter
 }
 
 const NAME = Symbol.toStringTag
@@ -110,7 +186,9 @@ const parsedUrlByRequest = new WeakMap<IHttpServerComponent.IRequest, URL>()
 
 export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { originalUrl?: string }>(
   request: T,
-  host: string
+  host: string,
+  maxBodySize?: number,
+  onBodyExceeded?: () => void
 ): IHttpServerComponent.IRequest => {
   const headers = new Headers()
 
@@ -141,7 +219,10 @@ export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { ori
   if (method != 'GET' && method != 'HEAD' && !bodyAlreadyConsumed) {
     // The native `Request` body must be a web `ReadableStream`. Adapt the incoming Node message
     // stream; `duplex: 'half'` is required by the fetch spec when streaming a request body.
-    requestInit.body = Readable.toWeb(request) as unknown as ReadableStream
+    // When a `maxBodySize` is configured the stream is first routed through a limiter that errors
+    // once the body exceeds it, catching bodies that omit or under-declare `Content-Length`.
+    const bodySource = maxBodySize === undefined ? request : createBodySizeLimiter(request, maxBodySize, onBodyExceeded)
+    requestInit.body = Readable.toWeb(bodySource) as unknown as ReadableStream
     requestInit.duplex = 'half'
   }
 

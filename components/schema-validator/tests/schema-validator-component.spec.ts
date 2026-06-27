@@ -137,6 +137,48 @@ describe("when validating a request that has a body that can't be parsed", () =>
   })
 })
 
+describe('when the body read fails with an error carrying an HTTP status (e.g. an upstream size limiter)', () => {
+  describe('and the error exposes a status property', () => {
+    let result: IHttpServerComponent.IResponse
+
+    beforeEach(async () => {
+      const context = createMockContext({
+        contentType: 'application/json',
+        body: () => {
+          const error: any = new Error('Payload Too Large')
+          error.status = 413
+          throw error
+        }
+      })
+      result = await middleware(context, jest.fn())
+    })
+
+    it('should surface that status with the error message instead of masking it as a 400', () => {
+      expect(result).toEqual({ status: 413, body: { ok: false, message: 'Payload Too Large' } })
+    })
+  })
+
+  describe('and the error exposes a statusCode property', () => {
+    let result: IHttpServerComponent.IResponse
+
+    beforeEach(async () => {
+      const context = createMockContext({
+        contentType: 'application/json',
+        body: () => {
+          const error: any = new Error('Payload Too Large')
+          error.statusCode = 413
+          throw error
+        }
+      })
+      result = await middleware(context, jest.fn())
+    })
+
+    it('should surface that status with the error message instead of masking it as a 400', () => {
+      expect(result).toEqual({ status: 413, body: { ok: false, message: 'Payload Too Large' } })
+    })
+  })
+})
+
 describe("when validating a request that has a valid schema that doesn't match the JSON body", () => {
   it('should return a bad request error signaling that the JSON body is invalid', async () => {
     await expect(

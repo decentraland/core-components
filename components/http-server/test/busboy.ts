@@ -65,7 +65,13 @@ export function multipartParserWrapper<Ctx extends FormDataContext, T extends IH
 
     // The native `Request` body is a web `ReadableStream`; adapt it to a Node stream to pipe to busboy.
     if (ctx.request.body) {
-      Readable.fromWeb(ctx.request.body as unknown as Parameters<typeof Readable.fromWeb>[0]).pipe(formDataParser)
+      const body = Readable.fromWeb(ctx.request.body as unknown as Parameters<typeof Readable.fromWeb>[0])
+      // `pipe` does not forward *source* errors to the destination. Without this, a body-stream error
+      // — a client abort, or the server's `maxBodySize` limiter emitting its `413` — lands on a stream
+      // with no listener and surfaces as an unhandled error. Forward it so the parser (and thus the
+      // `finished` promise) rejects with the original error, which the error middleware maps to a `413`.
+      body.on('error', (err) => formDataParser.destroy(err))
+      body.pipe(formDataParser)
     } else {
       formDataParser.end()
     }

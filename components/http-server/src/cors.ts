@@ -135,6 +135,23 @@ function configureMaxAge(options: CorsOptions, req: Request, headers: Headers) {
   }
 }
 
+/**
+ * Builds the CORS headers that apply to an actual (non-preflight) response for `request`. Returns
+ * an empty `Headers` when the request carries no `Origin`, since there is nothing to add. Shared by
+ * the CORS middleware and by paths that respond before the middleware runs (e.g. an early
+ * body-size rejection), so cross-origin clients can still read those responses.
+ */
+export function getActualResponseCorsHeaders(options: CorsOptions, request: Request): Headers {
+  const headers = new Headers()
+  if (!request.headers.has('origin')) {
+    return headers
+  }
+  configureOrigin(options, request, headers)
+  configureCredentials(options, request, headers)
+  configureExposedHeaders(options, request, headers)
+  return headers
+}
+
 export function createCorsMiddleware<Context>(options: CorsOptions): IHttpServerComponent.IRequestHandler<Context> {
   return async function handleCors(event, next): Promise<IHttpServerComponent.IResponse> {
     const request = event.request
@@ -175,9 +192,7 @@ export function createCorsMiddleware<Context>(options: CorsOptions): IHttpServer
 
       // actual response
       const headers = new Headers(base.headers)
-      configureOrigin(options, request, headers)
-      configureCredentials(options, request, headers)
-      configureExposedHeaders(options, request, headers)
+      getActualResponseCorsHeaders(options, request).forEach((value, key) => headers.set(key, value))
 
       return { ...base, headers }
     }

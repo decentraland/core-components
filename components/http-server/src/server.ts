@@ -6,7 +6,7 @@ import {
 } from '@well-known-components/interfaces'
 import type { IHttpServerComponent } from '@dcl/core-commons'
 import { _setUnderlyingServer } from './injectors'
-import { getServer, success, getRequestFromNodeMessage } from './logic'
+import { getServer, success, getRequestFromNodeMessage, exceedsContentLength, assertValidMaxBodySize } from './logic'
 import type { ServerComponents, IHttpServerOptions } from './types'
 import { createServerHandler } from './server-handler'
 import * as http from 'http'
@@ -14,7 +14,7 @@ import { createServerTerminator } from './terminator'
 import { Socket } from 'net'
 import { getWebSocketCallback } from './ws'
 import destroy from 'destroy'
-import { createCorsMiddleware } from './cors'
+import { createCorsMiddleware, getActualResponseCorsHeaders } from './cors'
 
 /**
  * @public
@@ -30,6 +30,20 @@ export type FullHttpServerComponent<Context extends object> = IHttpServerCompone
   }
 
 /**
+ * Builds a throwaway web `Request` carrying only the incoming `Origin` header, so the CORS helpers
+ * (which read `request.headers.get('origin')`) can run on the early body-size rejection path
+ * without adapting the request body.
+ */
+function corsRequestFromNodeMessage(req: http.IncomingMessage): Request {
+  const headers = new Headers()
+  const origin = req.headers.origin
+  if (typeof origin === 'string') {
+    headers.set('origin', origin)
+  }
+  return new Request('http://cors.invalid/', { headers })
+}
+
+/**
  * Creates a http-server component
  * @public
  */
@@ -43,6 +57,11 @@ export async function createServerComponent<Context extends object>(
   // config
   const port = await config.requireNumber('HTTP_SERVER_PORT')
   const host = await config.requireString('HTTP_SERVER_HOST')
+  const maxBodySize = options.maxBodySize
+
+  // Catch misconfiguration early: a negative, fractional, NaN or zero limit would silently reject
+  // every request body rather than do something useful. Omit the option for "no limit".
+  assertValidMaxBodySize(maxBodySize)
 
   let handlerFn: http.RequestListener = handler
 
@@ -111,8 +130,47 @@ export async function createServerComponent<Context extends object>(
   }
 
   async function asyncHandle(req: http.IncomingMessage, res: http.ServerResponse) {
-    const request = getRequestFromNodeMessage(req, host)
+    // Reject oversized bodies up-front, before reading them, when the client declares its size.
+    // Bodies that omit or under-declare `Content-Length` are still capped while streaming by the
+    // limiter in `getRequestFromNodeMessage`.
+    if (maxBodySize !== undefined && exceedsContentLength(req.headers['content-length'], maxBodySize)) {
+      // This path responds before the middleware chain, so it never reaches the metrics middleware.
+      // Log it so the rejection is at least observable (e.g. for log-based alerting).
+      logger.warn('Rejected request: body exceeds maxBodySize', {
+        method: req.method ?? '',
+        contentLength: req.headers['content-length'] ?? '',
+        maxBodySize
+      })
+      res.statusCode = 413
+      res.setHeader('content-type', 'text/plain; charset=utf-8')
+      // Close the connection: the declared body is never read, so the socket can't be reused.
+      // With `Connection: close` Node tears the socket down after the response instead of waiting
+      // for the (never-arriving) body.
+      res.setHeader('connection', 'close')
+      // This path responds before the middleware chain runs, so the CORS middleware never sees it.
+      // Add the actual-response CORS headers here so a cross-origin client can read the 413.
+      if (options.cors) {
+        getActualResponseCorsHeaders(options.cors, corsRequestFromNodeMessage(req)).forEach((value, key) => {
+          res.setHeader(key, value)
+        })
+      }
+      res.end('Payload Too Large')
+      return
+    }
+
+    // If the streaming limiter trips (a chunked/under-declared body that exceeds `maxBodySize`), the
+    // handler's body read rejects and the error middleware produces the `413` — but through the
+    // normal response path, which wouldn't close the connection. Flag it here so we can add
+    // `Connection: close` and stop the client from continuing to stream into a doomed request.
+    let bodyExceeded = false
+    const request = getRequestFromNodeMessage(req, host, maxBodySize, () => {
+      bodyExceeded = true
+    })
     const response = await serverHandler.processRequest(configuredContext, request)
+
+    if (bodyExceeded) {
+      res.setHeader('connection', 'close')
+    }
 
     success(response, res)
   }
