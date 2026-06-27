@@ -1,5 +1,12 @@
 # @dcl/http-server
 
+## 2.2.0
+
+### Minor Changes
+
+- 2c6e4b8: Add `createBodySizeLimitMiddleware(bytes)`: a per-route middleware that rejects request bodies larger than the given size with `413 Payload Too Large`. A request declaring a larger `Content-Length` is rejected up front; a body that omits or under-declares its length (e.g. chunked transfer-encoding) is capped while streaming (the body read by downstream handlers errors with a `413` once the limit is crossed). Either way the `413` sets `Connection: close`, so an oversized or stalled request can't tie up the socket. Unlike the server-wide `maxBodySize` option, it can be applied to individual routes for tighter, per-endpoint limits, and composes with the global cap. The size must be a positive integer or the factory throws.
+- 2c6e4b8: `createServerComponent`: add more initialization options. New `maxBodySize` caps incoming request bodies — requests declaring a larger `Content-Length` are rejected with `413 Payload Too Large` before the body is read, and bodies that omit or under-declare their length (e.g. chunked transfer-encoding) are capped with the same `413` while streaming. `maxBodySize` is validated as a positive integer at construction, and when `cors` is configured the up-front rejection carries the actual-response CORS headers so cross-origin clients can read the `413`. Both the up-front and streaming `413`s set `Connection: close`, so a client that declares an oversized body and stalls — or keeps streaming a chunked body past the limit — can't tie up the socket. Also exposes the Node server tunables `requestTimeout`, `maxHeadersCount` and `maxRequestsPerSocket` (alongside the existing `keepAliveTimeout`/`headersTimeout`). Fixes a latent bug in `getServer` where providing `https` options was silently overwritten by the plain-http fallback, so `https` servers are now created as intended. Also fixes the HTTP metrics middleware (`instrumentHttpServerWithPromClientRegistry`): thrown error responses were labelled `code="200"` because the metrics middleware observed the exception before `coerceErrorsMiddleware` mapped it to a response — they are now labelled with the real status (e.g. a thrown `413`/`404`, or `500` for an unmapped error).
+
 ## 2.1.0
 
 ### Minor Changes
