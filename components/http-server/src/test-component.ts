@@ -2,7 +2,6 @@ import type { IFetchComponent, IHttpServerComponent } from '@dcl/core-commons'
 import { createServerHandler } from './server-handler'
 import { NormalizedResponse } from './logic'
 import { PassThrough, pipeline, Readable } from 'stream'
-import type { WebSocket as WS } from 'ws'
 
 /**
  * Converts the server's internal {@link NormalizedResponse} into a native `Response` for test callers.
@@ -38,7 +37,7 @@ function toFetchResponse(res: NormalizedResponse): Response {
 }
 
 /** @alpha */
-export type IWebSocketComponent<W = WS> = {
+export type IWebSocketComponent<W = any> = {
   createWebSocket(url: string, protocols?: string | string[]): W
 }
 
@@ -51,8 +50,8 @@ export type ITestHttpServerComponent<Context extends object> = IHttpServerCompon
 /**
  * @alpha
  */
-export type TestServerWithWs = {
-  ws(path: string, protocols: string | string[]): WS
+export type TestServerWithWs<W = any> = {
+  ws(path: string, protocols: string | string[]): W
 }
 
 /**
