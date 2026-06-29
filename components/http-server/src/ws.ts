@@ -1,9 +1,15 @@
 import { IHttpServerComponent } from '@dcl/core-commons'
-import type { WebSocket as WS } from 'ws'
 
 const wsSymbol = Symbol('WebSocketResponse')
 
-export type WebSocketCallback = (ws: WS) => Promise<void> | void
+/**
+ * Callback invoked with the upgraded WebSocket. The socket type is generic (defaulting to
+ * `any`) so the published types don't depend on `@types/ws` — which would otherwise force
+ * every consumer to install it or enable `skipLibCheck`. Consumers that use this (unstable)
+ * API can parameterize it with their own socket type, e.g.
+ * `WebSocketCallback<import('ws').WebSocket>`.
+ */
+export type WebSocketCallback<W = any> = (ws: W) => Promise<void> | void
 
 /**
  * @alpha
