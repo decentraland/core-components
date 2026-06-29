@@ -1,6 +1,6 @@
 {
   "name": "@dcl/http-server",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "http server component",
   "repository": {
     "type": "git",
