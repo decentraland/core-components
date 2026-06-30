@@ -3,6 +3,7 @@ import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers
 import { createPgComponent } from '../src/component'
 import { IPgComponent } from '../src/types'
 import SQL from 'sql-template-strings'
+import { resolve } from 'path'
 
 describe('PgComponent', () => {
   let container: StartedPostgreSqlContainer
@@ -93,6 +94,40 @@ describe('PgComponent', () => {
 
     it('should connect to the database successfully', async () => {
       await expect(pg.start()).resolves.not.toThrow()
+    })
+  })
+
+  describe('when two components run migrations against the same database', () => {
+    let pgA: IPgComponent
+    let pgB: IPgComponent
+    let config: IConfigComponent
+    let logs: ILoggerComponent
+
+    beforeEach(() => {
+      config = createMockConfig()
+      logs = createMockLogs()
+    })
+
+    afterEach(async () => {
+      await pgA?.stop()
+      await pgB?.stop()
+    })
+
+    it('should serialize concurrent migrations instead of throwing "Another migration is already running"', async () => {
+      const migration = {
+        dir: resolve(__dirname, 'fixtures/migrations'),
+        migrationsTable: 'pgmigrations',
+        direction: 'up' as const
+      }
+
+      pgA = await createPgComponent({ config, logs }, { migration })
+      pgB = await createPgComponent({ config, logs }, { migration })
+
+      // node-pg-migrate uses a non-blocking advisory lock and throws "Another migration is already
+      // running" when a second migration races it. Starting both components at once must not throw:
+      // the loser retries with backoff until the first releases the lock, then runs (a no-op here,
+      // since the migration is already applied).
+      await expect(Promise.all([pgA.start(), pgB.start()])).resolves.toHaveLength(2)
     })
   })
 

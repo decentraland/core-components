@@ -104,6 +104,34 @@ export async function createPgComponent(
 
   let didStart = false
 
+  // node-pg-migrate guards against concurrent migrations with a non-blocking advisory lock
+  // (pg_try_advisory_lock) and throws "Another migration is already running" when it cannot acquire
+  // it. When several pg-components migrate the same database around the same time (e.g. multiple
+  // components started together on boot), the ones that lose the race would otherwise fail outright
+  // — and a caller that does not fail fast (such as a components lifecycle) can hang on that error.
+  // Retry with a short backoff so they serialize behind whichever migration currently holds the
+  // lock instead of erroring.
+  async function runMigrations(opt: RunnerOption) {
+    const MAX_ATTEMPTS = 30
+    const RETRY_DELAY_MS = 1000
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await runner(opt)
+        return
+      } catch (err: any) {
+        const isAnotherMigrationRunning = /Another migration is already running/i.test(err?.message ?? String(err))
+
+        if (!isAnotherMigrationRunning || attempt === MAX_ATTEMPTS) {
+          throw err
+        }
+
+        logger.warn(`Another migration is already running, retrying (attempt ${attempt}/${MAX_ATTEMPTS})`)
+        await setTimeout(RETRY_DELAY_MS)
+      }
+    }
+  }
+
   // Methods
   async function start() {
     if (didStart) {
@@ -127,7 +155,7 @@ export async function createPgComponent(
           if (!opt.logger) {
             opt.logger = logger
           }
-          await runner(opt)
+          await runMigrations(opt)
         }
       } catch (err: any) {
         logger.error('Migration failed', {
