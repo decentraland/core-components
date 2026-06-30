@@ -83,6 +83,8 @@ export async function createPgComponent(
   const STREAM_QUERY_TIMEOUT = await config.getNumber('PG_COMPONENT_STREAM_QUERY_TIMEOUT')
   const GRACE_PERIODS = (await config.getNumber('PG_COMPONENT_GRACE_PERIODS')) ?? 10
   const STOP_TIMEOUT = (await config.getNumber('PG_COMPONENT_STOP_TIMEOUT')) ?? 30_000
+  const MIGRATION_RETRY_ATTEMPTS = (await config.getNumber('PG_COMPONENT_MIGRATION_RETRY_ATTEMPTS')) ?? 30
+  const MIGRATION_RETRY_DELAY = (await config.getNumber('PG_COMPONENT_MIGRATION_RETRY_DELAY')) ?? 1000
 
   const finalOptions: PoolConfig = { ...defaultOptions, ...options.pool }
 
@@ -103,6 +105,36 @@ export async function createPgComponent(
   const transactionContext = new AsyncLocalStorage<PoolClient>()
 
   let didStart = false
+
+  // node-pg-migrate guards against concurrent migrations with a non-blocking advisory lock
+  // (pg_try_advisory_lock) and throws "Another migration is already running" when it cannot acquire
+  // it. When several pg-components migrate the same database around the same time (e.g. multiple
+  // components started together on boot), the ones that lose the race would otherwise fail outright
+  // — and a caller that does not fail fast (such as a components lifecycle) can hang on that error.
+  // Retry with a short backoff so they serialize behind whichever migration currently holds the
+  // lock instead of erroring.
+  async function runMigrations(opt: RunnerOption) {
+    for (let attempt = 1; attempt <= MIGRATION_RETRY_ATTEMPTS; attempt++) {
+      try {
+        await runner(opt)
+        return
+      } catch (err: any) {
+        // node-pg-migrate does not export a typed error for this, so we match the message it throws
+        // from its lock() helper. This is coupled to node-pg-migrate's wording (verified against
+        // node-pg-migrate@7.x); if the message changes upstream, this matcher must be updated.
+        const isAnotherMigrationRunning = /Another migration is already running/i.test(err?.message ?? String(err))
+
+        if (!isAnotherMigrationRunning || attempt === MIGRATION_RETRY_ATTEMPTS) {
+          throw err
+        }
+
+        // Jitter the backoff so concurrent retriers don't retry in lockstep and keep colliding.
+        const delay = MIGRATION_RETRY_DELAY + Math.floor(Math.random() * (MIGRATION_RETRY_DELAY / 2))
+        logger.warn(`Another migration is already running, retrying (attempt ${attempt}/${MIGRATION_RETRY_ATTEMPTS})`)
+        await setTimeout(delay)
+      }
+    }
+  }
 
   // Methods
   async function start() {
@@ -127,7 +159,7 @@ export async function createPgComponent(
           if (!opt.logger) {
             opt.logger = logger
           }
-          await runner(opt)
+          await runMigrations(opt)
         }
       } catch (err: any) {
         logger.error('Migration failed', {
