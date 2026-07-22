@@ -1,6 +1,10 @@
+import { createConfigComponent } from '@well-known-components/env-config-provider'
+import type { Server } from 'http'
 import { PassThrough } from 'stream'
 import WebSocket from 'ws'
-import { Router } from '../src'
+import { createServerComponent, getUnderlyingServer, Router } from '../src'
+import { FullHttpServerComponent } from '../src/server'
+import { upgradeWebSocketResponse } from '../src/ws'
 import { describeE2E } from './test-e2e-harness'
 import { TestComponents } from './test-helpers'
 
@@ -10,8 +14,43 @@ function abortDetails(reason: unknown): unknown {
     : reason
 }
 
-function rejectAfter(message: string): Promise<never> {
-  return new Promise((_, reject) => setTimeout(() => reject(new Error(message)), 1500).unref())
+async function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), 1500)
+        timer.unref()
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+type RunningUpgradeServer = {
+  server: FullHttpServerComponent<{}>
+  url: string
+}
+
+async function startUpgradeServer(loggerError: jest.Mock, handleUpgrade: jest.Mock): Promise<RunningUpgradeServer> {
+  const logs = {
+    getLogger: () => ({
+      log: jest.fn(),
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: loggerError
+    })
+  } as any
+  const config = createConfigComponent({ HTTP_SERVER_PORT: '0', HTTP_SERVER_HOST: '127.0.0.1' })
+  const server = await createServerComponent<{}>({ logs, config, ws: { handleUpgrade } }, {})
+  await (server.start as () => Promise<void>)()
+  const underlying = await getUnderlyingServer<Server>(server)
+  const address = underlying.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
+  return { server, url: `ws://127.0.0.1:${port}` }
 }
 
 describeE2E('request disconnect signal', ({ components }: { components: TestComponents }) => {
@@ -40,9 +79,12 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
       })
 
       clientRequest = components.fetch.fetch('/', { signal: clientController.signal }).catch((error) => error)
-      await handlerStarted
+      await withTimeout(handlerStarted, 'Handler did not start')
       clientController.abort()
-      ;[clientError, reason] = await Promise.all([clientRequest, serverAbortReason])
+      ;[clientError, reason] = await withTimeout(
+        Promise.all([clientRequest, serverAbortReason]),
+        'Handler request signal did not abort'
+      )
     })
 
     afterEach(() => {
@@ -83,9 +125,12 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
         return { body: responseBody }
       })
 
-      response = await components.fetch.fetch('/', { signal: clientController.signal })
+      response = await withTimeout(
+        components.fetch.fetch('/', { signal: clientController.signal }),
+        'Streaming response did not start'
+      )
       clientController.abort()
-      reason = await serverAbortReason
+      reason = await withTimeout(serverAbortReason, 'Streaming request signal did not abort')
     })
 
     afterEach(() => {
@@ -98,6 +143,53 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
       expect({ responseStatus: response.status, serverReason: abortDetails(reason) }).toEqual({
         responseStatus: 200,
         serverReason: { message: 'Client disconnected.', name: 'AbortError' }
+      })
+    })
+  })
+
+  describe('when a disconnected HTTP handler returns a streamed response after cleanup', () => {
+    let clientController: AbortController
+    let clientRequest: Promise<unknown>
+    let handlerStarted: Promise<void>
+    let responseBody: PassThrough
+    let responseBodyClosed: Promise<void>
+    let responseBodyPipe: jest.SpyInstance
+    let resolveHandlerStarted: () => void
+
+    beforeEach(async () => {
+      clientController = new AbortController()
+      responseBody = new PassThrough()
+      responseBodyClosed = new Promise<void>((resolve) => responseBody.once('close', resolve))
+      responseBodyPipe = jest.spyOn(responseBody, 'pipe')
+      handlerStarted = new Promise<void>((resolve) => {
+        resolveHandlerStarted = resolve
+      })
+      components.server.resetMiddlewares()
+      components.server.use(async (context) => {
+        resolveHandlerStarted()
+        await new Promise<void>((resolve) => {
+          context.request.signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        return { body: responseBody }
+      })
+
+      clientRequest = components.fetch.fetch('/', { signal: clientController.signal }).catch((error) => error)
+      await withTimeout(handlerStarted, 'Handler did not start')
+      clientController.abort()
+      await withTimeout(clientRequest, 'Disconnected client request did not settle')
+      await withTimeout(responseBodyClosed, 'Discarded response stream did not close')
+    })
+
+    afterEach(() => {
+      clientController.abort()
+      responseBody.destroy()
+      jest.resetAllMocks()
+    })
+
+    it('should discard the response stream without starting it', () => {
+      expect({ destroyed: responseBody.destroyed, pipeCalls: responseBodyPipe.mock.calls.length }).toEqual({
+        destroyed: true,
+        pipeCalls: 0
       })
     })
   })
@@ -127,23 +219,28 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
       expect(requestSignal.aborted).toEqual(false)
     })
   })
+})
 
-  describe('when the client disconnects while WebSocket upgrade middleware is running', () => {
+describe('when the client disconnects while WebSocket upgrade middleware is running', () => {
+  describe('and middleware throws the request signal reason', () => {
     let clientSocket: WebSocket
     let clientSocketError: Promise<never>
     let handlerStarted: Promise<void>
-    let httpServerErrors: string[]
+    let loggerError: jest.Mock
     let reason: unknown
     let resolveHandlerStarted: () => void
+    let running: RunningUpgradeServer
     let serverAbortReason!: Promise<unknown>
-    let stderrWrite: jest.SpyInstance
+    let webSocketUpgrade: jest.Mock
 
     beforeEach(async () => {
+      loggerError = jest.fn()
+      webSocketUpgrade = jest.fn()
+      running = await startUpgradeServer(loggerError, webSocketUpgrade)
       handlerStarted = new Promise<void>((resolve) => {
         resolveHandlerStarted = resolve
       })
-      stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true)
-      components.server.resetMiddlewares()
+      running.server.resetMiddlewares()
       const router = new Router()
       router.get('/ws', async (context) => {
         serverAbortReason = new Promise((resolve) => {
@@ -153,23 +250,20 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
         await serverAbortReason
         throw context.request.signal.reason
       })
-      components.server.use(router.middleware())
-      components.server.use(router.allowedMethods())
+      running.server.use(router.middleware())
+      running.server.use(router.allowedMethods())
 
-      clientSocket = components.ws.createWebSocket('/ws')
+      clientSocket = new WebSocket(`${running.url}/ws`)
       clientSocketError = new Promise((_, reject) => clientSocket.once('error', reject))
-      await Promise.race([handlerStarted, clientSocketError, rejectAfter('Upgrade middleware did not start')])
+      await withTimeout(Promise.race([handlerStarted, clientSocketError]), 'Upgrade middleware did not start')
       clientSocket.terminate()
-      reason = await Promise.race([serverAbortReason, rejectAfter('Upgrade request signal did not abort')])
+      reason = await withTimeout(serverAbortReason, 'Upgrade request signal did not abort')
       await new Promise<void>((resolve) => setImmediate(resolve))
-      httpServerErrors = stderrWrite.mock.calls
-        .map(([message]) => String(message))
-        .filter((message) => message.includes('[ERROR] (http-server)'))
     })
 
-    afterEach(() => {
+    afterEach(async () => {
       clientSocket.terminate()
-      stderrWrite.mockRestore()
+      await (running.server.stop as () => Promise<void>)()
       jest.resetAllMocks()
     })
 
@@ -178,7 +272,65 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
     })
 
     it('should not log the expected disconnect as an application error', () => {
-      expect(httpServerErrors).toEqual([])
+      expect(loggerError).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('and middleware returns an upgrade response after cleanup', () => {
+    let clientSocket: WebSocket
+    let clientSocketError: Promise<never>
+    let handlerStarted: Promise<void>
+    let loggerError: jest.Mock
+    let middlewareFinished: Promise<void>
+    let resolveHandlerStarted: () => void
+    let resolveMiddlewareFinished: () => void
+    let running: RunningUpgradeServer
+    let webSocketConnect: jest.Mock
+    let webSocketUpgrade: jest.Mock
+
+    beforeEach(async () => {
+      loggerError = jest.fn()
+      webSocketConnect = jest.fn()
+      webSocketUpgrade = jest.fn()
+      running = await startUpgradeServer(loggerError, webSocketUpgrade)
+      handlerStarted = new Promise<void>((resolve) => {
+        resolveHandlerStarted = resolve
+      })
+      middlewareFinished = new Promise<void>((resolve) => {
+        resolveMiddlewareFinished = resolve
+      })
+      running.server.resetMiddlewares()
+      const router = new Router()
+      router.get('/ws', async (context) => {
+        resolveHandlerStarted()
+        await new Promise<void>((resolve) => {
+          context.request.signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        resolveMiddlewareFinished()
+        return upgradeWebSocketResponse(webSocketConnect)
+      })
+      running.server.use(router.middleware())
+      running.server.use(router.allowedMethods())
+
+      clientSocket = new WebSocket(`${running.url}/ws`)
+      clientSocketError = new Promise((_, reject) => clientSocket.once('error', reject))
+      await withTimeout(Promise.race([handlerStarted, clientSocketError]), 'Upgrade middleware did not start')
+      clientSocket.terminate()
+      await withTimeout(middlewareFinished, 'Upgrade middleware did not finish cleanup')
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    })
+
+    afterEach(async () => {
+      clientSocket.terminate()
+      await (running.server.stop as () => Promise<void>)()
+      jest.resetAllMocks()
+    })
+
+    it('should not pass the abandoned connection to the WebSocket server', () => {
+      expect({ connectCalls: webSocketConnect.mock.calls.length, upgradeCalls: webSocketUpgrade.mock.calls.length }).toEqual({
+        connectCalls: 0,
+        upgradeCalls: 0
+      })
     })
   })
 })

@@ -10,6 +10,7 @@ import { getServer, success, getRequestFromNodeMessage, exceedsContentLength, as
 import type { ServerComponents, IHttpServerOptions } from './types'
 import { createServerHandler } from './server-handler'
 import * as http from 'http'
+import { Readable } from 'stream'
 import { createServerTerminator } from './terminator'
 import { Socket } from 'net'
 import { getWebSocketCallback } from './ws'
@@ -182,6 +183,16 @@ export async function createServerComponent<Context extends object>(
     )
     const response = await serverHandler.processRequest(configuredContext, request)
 
+    // Middleware may handle cancellation and still return a response. Do not start writing that
+    // response to a connection which disappeared while the middleware was cleaning up, and dispose
+    // a returned stream which otherwise has no consumer.
+    if (res.destroyed) {
+      if (response.body instanceof Readable) {
+        destroy(response.body)
+      }
+      return
+    }
+
     if (bodyExceeded) {
       res.setHeader('connection', 'close')
     }
@@ -220,6 +231,12 @@ export async function createServerComponent<Context extends object>(
     } finally {
       socket.removeListener('end', abortOnDisconnect)
       socket.removeListener('close', abortOnDisconnect)
+    }
+
+    // Middleware may observe the abort, finish cleanup, and return normally. In that case the
+    // transport is still gone and must not be handed to the WebSocket server or written to.
+    if (disconnectController.signal.aborted || socket.destroyed) {
+      return
     }
 
     const websocketConnect = getWebSocketCallback(response)
