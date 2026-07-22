@@ -92,6 +92,34 @@ describe('when writing a successful response with multiple Set-Cookie headers', 
 })
 
 describe('when building a request from a Node message', () => {
+  describe('and an abort signal is provided', () => {
+    let controller: AbortController
+    let request: ReturnType<typeof getRequestFromNodeMessage>
+
+    beforeEach(() => {
+      controller = new AbortController()
+      request = getRequestFromNodeMessage(
+        { method: 'GET', url: '/resource', headers: {} } as any,
+        '0.0.0.0',
+        undefined,
+        undefined,
+        controller.signal
+      )
+      controller.abort(new DOMException('Client disconnected.', 'AbortError'))
+    })
+
+    afterEach(() => {
+      jest.resetAllMocks()
+    })
+
+    it('should propagate cancellation to the Fetch request', () => {
+      expect({ aborted: request.signal.aborted, reason: request.signal.reason }).toEqual({
+        aborted: true,
+        reason: new DOMException('Client disconnected.', 'AbortError')
+      })
+    })
+  })
+
   describe('and a header carries multiple values', () => {
     let nodeMessage: any
 

@@ -163,16 +163,34 @@ export async function createServerComponent<Context extends object>(
     // normal response path, which wouldn't close the connection. Flag it here so we can add
     // `Connection: close` and stop the client from continuing to stream into a doomed request.
     let bodyExceeded = false
-    const request = getRequestFromNodeMessage(req, host, maxBodySize, () => {
-      bodyExceeded = true
-    })
-    const response = await serverHandler.processRequest(configuredContext, request)
-
-    if (bodyExceeded) {
-      res.setHeader('connection', 'close')
+    const disconnectController = new AbortController()
+    const abortOnDisconnect = (): void => {
+      if (!res.writableEnded) {
+        disconnectController.abort(new DOMException('Client disconnected.', 'AbortError'))
+      }
     }
+    res.once('close', abortOnDisconnect)
 
-    success(response, res)
+    try {
+      const request = getRequestFromNodeMessage(
+        req,
+        host,
+        maxBodySize,
+        () => {
+          bodyExceeded = true
+        },
+        disconnectController.signal
+      )
+      const response = await serverHandler.processRequest(configuredContext, request)
+
+      if (bodyExceeded) {
+        res.setHeader('connection', 'close')
+      }
+
+      success(response, res)
+    } finally {
+      res.removeListener('close', abortOnDisconnect)
+    }
   }
 
   async function handleUpgrade(req: http.IncomingMessage, socket: Socket, head: Buffer) {
@@ -180,8 +198,18 @@ export async function createServerComponent<Context extends object>(
       throw new Error('No WebSocketServer present')
     }
 
-    const request = getRequestFromNodeMessage(req, host)
-    const response = await serverHandler.processRequest(configuredContext, request)
+    const disconnectController = new AbortController()
+    const abortOnDisconnect = (): void => {
+      disconnectController.abort(new DOMException('Client disconnected.', 'AbortError'))
+    }
+    socket.once('close', abortOnDisconnect)
+    const request = getRequestFromNodeMessage(req, host, undefined, undefined, disconnectController.signal)
+    let response: IHttpServerComponent.IResponse
+    try {
+      response = await serverHandler.processRequest(configuredContext, request)
+    } finally {
+      socket.removeListener('close', abortOnDisconnect)
+    }
 
     const websocketConnect = getWebSocketCallback(response)
 
@@ -216,6 +244,9 @@ export async function createServerComponent<Context extends object>(
 
   function handler(request: http.IncomingMessage, response: http.ServerResponse) {
     asyncHandle(request, response).catch((error) => {
+      if (response.destroyed) {
+        return
+      }
       logger.error(error)
 
       if (error.code == 'ERR_INVALID_URL') {
