@@ -171,26 +171,25 @@ export async function createServerComponent<Context extends object>(
     }
     res.once('close', abortOnDisconnect)
 
-    try {
-      const request = getRequestFromNodeMessage(
-        req,
-        host,
-        maxBodySize,
-        () => {
-          bodyExceeded = true
-        },
-        disconnectController.signal
-      )
-      const response = await serverHandler.processRequest(configuredContext, request)
+    const request = getRequestFromNodeMessage(
+      req,
+      host,
+      maxBodySize,
+      () => {
+        bodyExceeded = true
+      },
+      disconnectController.signal
+    )
+    const response = await serverHandler.processRequest(configuredContext, request)
 
-      if (bodyExceeded) {
-        res.setHeader('connection', 'close')
-      }
-
-      success(response, res)
-    } finally {
-      res.removeListener('close', abortOnDisconnect)
+    if (bodyExceeded) {
+      res.setHeader('connection', 'close')
     }
+
+    // Keep the one-shot close listener installed while a returned Readable is still piping. A
+    // normal response has already set writableEnded when close fires, whereas a premature close
+    // must continue to abort request-scoped stream/proxy work after the middleware has returned.
+    success(response, res)
   }
 
   async function handleUpgrade(req: http.IncomingMessage, socket: Socket, head: Buffer) {
@@ -202,12 +201,24 @@ export async function createServerComponent<Context extends object>(
     const abortOnDisconnect = (): void => {
       disconnectController.abort(new DOMException('Client disconnected.', 'AbortError'))
     }
+    // A client can half-close a pending upgrade, emitting `end` while the server side remains open
+    // waiting for middleware. Listen for both that case and a full transport close.
+    socket.once('end', abortOnDisconnect)
     socket.once('close', abortOnDisconnect)
     const request = getRequestFromNodeMessage(req, host, undefined, undefined, disconnectController.signal)
     let response: IHttpServerComponent.IResponse
     try {
       response = await serverHandler.processRequest(configuredContext, request)
+    } catch (error) {
+      // A client abandoning a pending upgrade is expected transport cancellation, not an
+      // application failure. Only consume the exact reason emitted by this connection's signal;
+      // unrelated middleware errors must still reach the outer error logger.
+      if (disconnectController.signal.aborted && error === disconnectController.signal.reason) {
+        return
+      }
+      throw error
     } finally {
+      socket.removeListener('end', abortOnDisconnect)
       socket.removeListener('close', abortOnDisconnect)
     }
 
