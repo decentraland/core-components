@@ -184,11 +184,22 @@ export function getDefaultMiddlewares(): Middleware<any>[] {
 // disappears together with its request.
 const parsedUrlByRequest = new WeakMap<IHttpServerComponent.IRequest, URL>()
 
+/**
+ * Adapts a Node request to the Fetch API request used by HTTP-server handlers.
+ *
+ * @param request Incoming Node request.
+ * @param host Fallback host used to build the absolute URL.
+ * @param maxBodySize Optional streaming body limit.
+ * @param onBodyExceeded Optional callback invoked when the streaming body limit is exceeded.
+ * @param signal Optional signal tied to the underlying client connection.
+ * @returns A Fetch request whose body, headers, URL, and cancellation follow the Node request.
+ */
 export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { originalUrl?: string }>(
   request: T,
   host: string,
   maxBodySize?: number,
-  onBodyExceeded?: () => void
+  onBodyExceeded?: () => void,
+  signal?: AbortSignal
 ): IHttpServerComponent.IRequest => {
   const headers = new Headers()
 
@@ -206,7 +217,8 @@ export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { ori
   const method = request.method!.toUpperCase()
   const requestInit: RequestInit & { duplex?: 'half' } = {
     headers,
-    method
+    method,
+    signal
   }
 
   // Only stream a body when the incoming Node message hasn't been consumed yet.

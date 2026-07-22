@@ -10,6 +10,7 @@ import { getServer, success, getRequestFromNodeMessage, exceedsContentLength, as
 import type { ServerComponents, IHttpServerOptions } from './types'
 import { createServerHandler } from './server-handler'
 import * as http from 'http'
+import { Stream } from 'stream'
 import { createServerTerminator } from './terminator'
 import { Socket } from 'net'
 import { getWebSocketCallback } from './ws'
@@ -163,15 +164,45 @@ export async function createServerComponent<Context extends object>(
     // normal response path, which wouldn't close the connection. Flag it here so we can add
     // `Connection: close` and stop the client from continuing to stream into a doomed request.
     let bodyExceeded = false
-    const request = getRequestFromNodeMessage(req, host, maxBodySize, () => {
-      bodyExceeded = true
-    })
+    const disconnectController = new AbortController()
+    const abortOnDisconnect = (): void => {
+      if (!res.writableEnded) {
+        disconnectController.abort(new DOMException('Client disconnected.', 'AbortError'))
+      }
+    }
+    res.once('close', abortOnDisconnect)
+
+    const request = getRequestFromNodeMessage(
+      req,
+      host,
+      maxBodySize,
+      () => {
+        bodyExceeded = true
+      },
+      disconnectController.signal
+    )
     const response = await serverHandler.processRequest(configuredContext, request)
+
+    // Middleware may handle cancellation and still return a response. Do not start writing that
+    // response to a connection which disappeared while the middleware was cleaning up, and dispose
+    // a returned stream which otherwise has no consumer.
+    if (res.destroyed) {
+      if (response.body instanceof Stream) {
+        // Ensure a cleanup error is handled even when the stream has no listener of its own, while
+        // preserving application-owned listeners which may perform metrics or resource cleanup.
+        response.body.on('error', () => {})
+        destroy(response.body)
+      }
+      return
+    }
 
     if (bodyExceeded) {
       res.setHeader('connection', 'close')
     }
 
+    // Keep the one-shot close listener installed while a returned Readable is still piping. A
+    // normal response has already set writableEnded when close fires, whereas a premature close
+    // must continue to abort request-scoped stream/proxy work after the middleware has returned.
     success(response, res)
   }
 
@@ -180,8 +211,36 @@ export async function createServerComponent<Context extends object>(
       throw new Error('No WebSocketServer present')
     }
 
-    const request = getRequestFromNodeMessage(req, host)
-    const response = await serverHandler.processRequest(configuredContext, request)
+    const disconnectController = new AbortController()
+    const abortOnDisconnect = (): void => {
+      disconnectController.abort(new DOMException('Client disconnected.', 'AbortError'))
+    }
+    // A client can half-close a pending upgrade, emitting `end` while the server side remains open
+    // waiting for middleware. Listen for both that case and a full transport close.
+    socket.once('end', abortOnDisconnect)
+    socket.once('close', abortOnDisconnect)
+    const request = getRequestFromNodeMessage(req, host, undefined, undefined, disconnectController.signal)
+    let response: IHttpServerComponent.IResponse
+    try {
+      response = await serverHandler.processRequest(configuredContext, request)
+    } catch (error) {
+      // A client abandoning a pending upgrade is expected transport cancellation, not an
+      // application failure. Only consume the exact reason emitted by this connection's signal;
+      // unrelated middleware errors must still reach the outer error logger.
+      if (disconnectController.signal.aborted && error === disconnectController.signal.reason) {
+        return
+      }
+      throw error
+    } finally {
+      socket.removeListener('end', abortOnDisconnect)
+      socket.removeListener('close', abortOnDisconnect)
+    }
+
+    // Middleware may observe the abort, finish cleanup, and return normally. In that case the
+    // transport is still gone and must not be handed to the WebSocket server or written to.
+    if (disconnectController.signal.aborted || socket.destroyed) {
+      return
+    }
 
     const websocketConnect = getWebSocketCallback(response)
 
@@ -216,6 +275,9 @@ export async function createServerComponent<Context extends object>(
 
   function handler(request: http.IncomingMessage, response: http.ServerResponse) {
     asyncHandle(request, response).catch((error) => {
+      if (response.destroyed) {
+        return
+      }
       logger.error(error)
 
       if (error.code == 'ERR_INVALID_URL') {
