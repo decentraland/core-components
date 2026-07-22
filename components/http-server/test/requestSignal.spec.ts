@@ -155,11 +155,10 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
     let responseBodyClosed: Promise<void>
     let responseBodyPipe: jest.SpyInstance
     let resolveHandlerStarted: () => void
-    let streamError: jest.Mock
+    let runDisconnectedRequest: () => Promise<void>
 
-    beforeEach(async () => {
+    beforeEach(() => {
       clientController = new AbortController()
-      streamError = jest.fn()
       responseBody = new Readable({
         read() {},
         destroy(_error, callback) {
@@ -167,7 +166,6 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
         }
       })
       responseBodyClosed = new Promise<void>((resolve) => responseBody.once('close', resolve))
-      responseBody.on('error', streamError)
       responseBodyPipe = jest.spyOn(responseBody, 'pipe')
       handlerStarted = new Promise<void>((resolve) => {
         resolveHandlerStarted = resolve
@@ -181,11 +179,13 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
         return { body: responseBody }
       })
 
-      clientRequest = components.fetch.fetch('/', { signal: clientController.signal }).catch((error) => error)
-      await withTimeout(handlerStarted, 'Handler did not start')
-      clientController.abort()
-      await withTimeout(clientRequest, 'Disconnected client request did not settle')
-      await withTimeout(responseBodyClosed, 'Discarded response stream did not close')
+      runDisconnectedRequest = async () => {
+        clientRequest = components.fetch.fetch('/', { signal: clientController.signal }).catch((error) => error)
+        await withTimeout(handlerStarted, 'Handler did not start')
+        clientController.abort()
+        await withTimeout(clientRequest, 'Disconnected client request did not settle')
+        await withTimeout(responseBodyClosed, 'Discarded response stream did not close')
+      }
     })
 
     afterEach(() => {
@@ -194,15 +194,30 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
       jest.resetAllMocks()
     })
 
-    it('should discard the response stream without starting it', () => {
-      expect({
-        destroyed: responseBody.destroyed,
-        errorCalls: streamError.mock.calls.length,
-        pipeCalls: responseBodyPipe.mock.calls.length
-      }).toEqual({
-        destroyed: true,
-        errorCalls: 0,
-        pipeCalls: 0
+    describe('and the response stream has no error listener', () => {
+      beforeEach(async () => {
+        await runDisconnectedRequest()
+      })
+
+      it('should handle the cleanup error while discarding the stream without starting it', () => {
+        expect({ destroyed: responseBody.destroyed, pipeCalls: responseBodyPipe.mock.calls.length }).toEqual({
+          destroyed: true,
+          pipeCalls: 0
+        })
+      })
+    })
+
+    describe('and the response stream has an application error listener', () => {
+      let streamError: jest.Mock
+
+      beforeEach(async () => {
+        streamError = jest.fn()
+        responseBody.on('error', streamError)
+        await runDisconnectedRequest()
+      })
+
+      it('should preserve and notify the application error listener', () => {
+        expect(streamError).toHaveBeenCalledWith(expect.objectContaining({ message: 'cleanup failed' }))
       })
     })
   })

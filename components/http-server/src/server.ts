@@ -188,10 +188,8 @@ export async function createServerComponent<Context extends object>(
     // a returned stream which otherwise has no consumer.
     if (res.destroyed) {
       if (response.body instanceof Stream) {
-        // The response is already abandoned, so no consumer remains for cleanup errors. Replace
-        // stale error listeners with a no-op before disposal, matching `destroy(stream, true)` while
-        // supporting every Node Stream accepted by response normalization.
-        response.body.removeAllListeners('error')
+        // Ensure a cleanup error is handled even when the stream has no listener of its own, while
+        // preserving application-owned listeners which may perform metrics or resource cleanup.
         response.body.on('error', () => {})
         destroy(response.body)
       }
