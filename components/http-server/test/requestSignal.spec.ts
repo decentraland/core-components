@@ -1,6 +1,6 @@
 import { createConfigComponent } from '@well-known-components/env-config-provider'
 import type { Server } from 'http'
-import { PassThrough } from 'stream'
+import { PassThrough, Readable } from 'stream'
 import WebSocket from 'ws'
 import { createServerComponent, getUnderlyingServer, Router } from '../src'
 import { FullHttpServerComponent } from '../src/server'
@@ -151,15 +151,23 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
     let clientController: AbortController
     let clientRequest: Promise<unknown>
     let handlerStarted: Promise<void>
-    let responseBody: PassThrough
+    let responseBody: Readable
     let responseBodyClosed: Promise<void>
     let responseBodyPipe: jest.SpyInstance
     let resolveHandlerStarted: () => void
+    let streamError: jest.Mock
 
     beforeEach(async () => {
       clientController = new AbortController()
-      responseBody = new PassThrough()
+      streamError = jest.fn()
+      responseBody = new Readable({
+        read() {},
+        destroy(_error, callback) {
+          callback(new Error('cleanup failed'))
+        }
+      })
       responseBodyClosed = new Promise<void>((resolve) => responseBody.once('close', resolve))
+      responseBody.on('error', streamError)
       responseBodyPipe = jest.spyOn(responseBody, 'pipe')
       handlerStarted = new Promise<void>((resolve) => {
         resolveHandlerStarted = resolve
@@ -187,8 +195,13 @@ describeE2E('request disconnect signal', ({ components }: { components: TestComp
     })
 
     it('should discard the response stream without starting it', () => {
-      expect({ destroyed: responseBody.destroyed, pipeCalls: responseBodyPipe.mock.calls.length }).toEqual({
+      expect({
+        destroyed: responseBody.destroyed,
+        errorCalls: streamError.mock.calls.length,
+        pipeCalls: responseBodyPipe.mock.calls.length
+      }).toEqual({
         destroyed: true,
+        errorCalls: 0,
         pipeCalls: 0
       })
     })

@@ -10,7 +10,7 @@ import { getServer, success, getRequestFromNodeMessage, exceedsContentLength, as
 import type { ServerComponents, IHttpServerOptions } from './types'
 import { createServerHandler } from './server-handler'
 import * as http from 'http'
-import { Readable } from 'stream'
+import { Stream } from 'stream'
 import { createServerTerminator } from './terminator'
 import { Socket } from 'net'
 import { getWebSocketCallback } from './ws'
@@ -187,7 +187,12 @@ export async function createServerComponent<Context extends object>(
     // response to a connection which disappeared while the middleware was cleaning up, and dispose
     // a returned stream which otherwise has no consumer.
     if (res.destroyed) {
-      if (response.body instanceof Readable) {
+      if (response.body instanceof Stream) {
+        // The response is already abandoned, so no consumer remains for cleanup errors. Replace
+        // stale error listeners with a no-op before disposal, matching `destroy(stream, true)` while
+        // supporting every Node Stream accepted by response normalization.
+        response.body.removeAllListeners('error')
+        response.body.on('error', () => {})
         destroy(response.body)
       }
       return
