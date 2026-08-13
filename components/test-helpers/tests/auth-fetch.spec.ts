@@ -1,6 +1,6 @@
 import * as http from 'http'
 import { IConfigComponent } from '@well-known-components/interfaces'
-import { AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER } from '@dcl/crypto-middleware'
+import { AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER } from '@dcl/crypto'
 import { createLocalFetchComponent, defaultServerConfig, getIdentity } from '../src'
 import type { Identity } from '../src'
 

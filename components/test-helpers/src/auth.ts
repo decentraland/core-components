@@ -1,11 +1,6 @@
-import { Authenticator } from '@dcl/crypto'
+import { AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, Authenticator } from '@dcl/crypto'
 import type { AuthIdentity, AuthLink, IdentityType } from '@dcl/crypto'
 import { createUnsafeIdentity } from '@dcl/crypto/dist/crypto'
-import {
-  AUTH_CHAIN_HEADER_PREFIX,
-  AUTH_METADATA_HEADER,
-  AUTH_TIMESTAMP_HEADER
-} from '@dcl/crypto-middleware'
 
 /**
  * A test identity: an ephemeral key, the real account that authorized it, and
