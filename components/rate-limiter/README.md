@@ -36,8 +36,8 @@ Mount it globally, per route, or both:
 // Every endpoint, at the component-wide policy.
 server.use(rateLimiter.withRateLimitMiddleware())
 
-// A tighter budget on one endpoint, with its own bucket.
-router.post('/v1/login', rateLimiter.withRateLimitMiddleware({ name: 'login', max: 5, windowSeconds: 60 }), loginHandler)
+// A tighter budget on one endpoint. It gets its own bucket from the route — no `name` needed.
+router.post('/v1/login', rateLimiter.withRateLimitMiddleware({ max: 5, windowSeconds: 60 }), loginHandler)
 ```
 
 Outside the HTTP path:
@@ -67,19 +67,19 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 | `name`                       | `string`                                 | route, else `` `${max}p${windowSeconds}` `` | Overrides the bucket. See **Buckets**. Non-empty, no `:`. |
 | `max`                        | `number`                                 | `100`                | Requests allowed per window, per identity.                                     |
 | `windowSeconds`              | `number`                                 | `60`                 | Window length, at most `86400`. Phase is per identity, not epoch-aligned.       |
-| `getKey`                     | `(ctx) => string \| null \| undefined \| Promise<…>` | —        | Returns the identity to count against. Nullish or empty falls through to the address chain. |
+| `getKey`                     | `(ctx) => string \| null \| undefined \| Promise<…>` | —        | Returns the identity to count against. Nullish, empty or blank falls through to the address chain. |
 | `skip`                       | `fn \| string[] \| string \| RegExp`     | — (none)             | Requests exempt from counting.                                                 |
 | `failOpen`                   | `boolean`                                | `true`               | Allow (`true`) or reject (`false`) when the counter store is unreachable.       |
 | `fallbackMaxDivisor`         | `number`                                 | `10`                 | Divides `max` for the shared bucket used when no address is available.          |
 | `disclosure`                 | `RateLimitDisclosure`                    | `RETRY_AFTER`        | How much a rejected caller is told. See **Disclosure** below.                    |
-| `onLimitExceeded`            | `(ctx, result) => void`                  | —                    | Called on every rejection — the place to increment a metric.                    |
-| `onStoreError`               | `(ctx, error) => void`                   | —                    | Called on every counter failure, so a silent fail-open stays visible.           |
+| `onLimitExceeded`            | `(ctx, result) => void`                  | —                    | Called on every rejection, for service-specific reactions; the count is already a metric. |
+| `onStoreError`               | `(ctx, error) => void`                   | —                    | Called on every counter failure. Unthrottled, unlike the built-in log.           |
 | `buildLimitExceededResponse` | `(ctx, result) => IResponse`             | —                    | Replaces the built-in `429`; a throw or nullish return falls back to it.         |
 
 ## Buckets
 
-A counter key is `keyPrefix:bucket:window:identity`. The **identity** isolates callers — one IP gets
-its own count. The **bucket** decides which *endpoints* draw on the same allowance.
+A counter key is `keyPrefix:bucket:window:r|h:identity`, where `r:` marks a raw identity and `h:` a
+hashed one. The **identity** isolates callers — one IP gets its own count. The **bucket** decides which *endpoints* draw on the same allowance.
 
 You rarely set it. Inside a router, the bucket is the request's method and route template, so each
 endpoint gets its own budget automatically:
@@ -164,10 +164,15 @@ const metrics = await createMetricsComponent({ ...myMetrics, ...rateLimiterMetri
 | `rate_limiter_client_address_issues_total` | `bucket`, `issue` | The client address could not be resolved as configured. See **Key derivation**. |
 | `rate_limiter_store_errors_total` | `bucket`, `fail_open` | Counter reads/writes that failed. Non-zero means the limiter is degraded. |
 
-`handler` is the **route template** (`/v1/notes/:id`) taken from the router, empty for a middleware
-mounted with `server.use()` before any route matched. It is deliberately never the request path, and
-the identity is deliberately not a label at all: ids and IP addresses would create an unbounded number
-of series, and would put personal data on the metrics endpoint.
+`handler` is the **route template** taken from the router, empty for a middleware mounted with
+`server.use()` before any route matched. It is deliberately never the request path, and the identity is
+deliberately not a label at all: ids and IP addresses would create an unbounded number of series, and
+would put personal data on the metrics endpoint.
+
+Note that `handler` keeps the router's own spelling (`/v1/notes/:id`) while `bucket` templates it
+(`GET /v1/notes/{id}`). That is intentional: `handler` matches the label `@dcl/http-server` puts on its
+own `http_request_duration_seconds` and `http_requests_total`, so a rate limit can be read alongside the
+latency and status of the same route.
 
 `degraded` is kept separate from `allowed` so a cache outage cannot look like healthy traffic. Three
 alerts worth having: a rising `outcome="limited"` rate on one `handler`; any
@@ -189,9 +194,8 @@ condition lasts (these usually begin at a deploy, not at startup) and bounded re
 The metric counts every affected request, so the log tells you *that* it is happening and the metric
 tells you *how much*.
 
-Misconfiguration is still logged (a warning when no client address can be established, or when a
-configured trusted header yields nothing), as are store failures. Only the per-rejection event moved
-to metrics.
+Misconfiguration is still logged as well as counted — the four `issue` values above — as are store
+failures. Only the per-rejection event moved to metrics alone.
 
 ## Choosing a store
 
@@ -204,7 +208,7 @@ Both cache components implement `ICacheStorageComponent`, so the choice is one l
 
 Precedence, first match wins:
 
-1. `getKey(ctx)`, when it returns a non-empty string.
+1. `getKey(ctx)`, when it returns a string that is not empty or blank.
 2. `trustedClientIpHeader`, when present and parseable as an IP address.
 3. `context.remoteAddress` — the socket peer, provided by `@dcl/http-server`.
 4. A single shared fallback bucket, at `max(1, floor(max / fallbackMaxDivisor))`.
@@ -238,8 +242,8 @@ const rateLimiter = createRateLimiterComponent<GlobalContext>(
 )
 ```
 
-Returning `null`, `undefined` or `''` **falls through** to the address chain below, which is what makes
-that mixed pattern work. Throwing does too, with a log line — a broken key function must not turn a
+Returning `null`, `undefined`, `''` or a whitespace-only string **falls through** to the address chain
+below, which is what makes that mixed pattern work. Throwing does too, with a log line — a broken key function must not turn a
 request into a `500`. It may be async. Whatever it returns selects a bucket, so it must not be raw
 client input, and values over 128 characters are hashed automatically.
 
@@ -284,8 +288,9 @@ The in-memory half needs nothing. The redis half runs only when `REDIS_URL` is s
 otherwise, so a local `pnpm test` stays dependency-free:
 
 ```bash
-docker run --rm -p 6379:6379 redis:7
+docker run -d --rm --name rl-test-redis -p 6379:6379 redis:7
 REDIS_URL=redis://localhost:6379 pnpm test
+docker stop rl-test-redis
 ```
 
 CI provides a redis service, so both halves run on every pull request.
@@ -297,9 +302,9 @@ CI provides a redis service, so both halves run on every pull request.
 - **A global and a per-route limiter both count the same request**, once each in their own bucket — the per-route allowance and the global one both apply, which is usually the point. They can no longer collide onto one counter by accident, since the per-route bucket is route-derived and the global one is not.
 - **`keyPrefix` must be unique per service** on a shared Redis, or one service's traffic throttles another's.
 - **`Retry-After`** is in seconds and never `0` (some clients read `0` as "retry immediately", which is the storm the header exists to prevent). `RateLimit-Reset` is **seconds until the window resets**, not an absolute timestamp — that is what the standardized header name is defined to mean, and epoch seconds there would read as a backoff of tens of thousands of years to a compliant client. It therefore duplicates `Retry-After`, which is what the spec intends; `result.resetAt` carries the absolute instant for hooks that want it. The delay travels in the headers only — the `429` body is a fixed `{ ok: false, message: 'Too many requests' }` and never restates it, so there is one authoritative place for it. `result.retryAfterSeconds` is still passed to `onLimitExceeded` and `buildLimitExceededResponse` if you want it in a custom payload.
-- **Failing open is silent.** During a store outage the limiter allows everything and looks exactly like low traffic. The built-in error log is throttled to one line per 10s; wire `onStoreError` to a metric so the state is observable.
+- **Failing open is silent.** During a store outage the limiter allows everything and looks exactly like low traffic. `rate_limiter_store_errors_total` counts every failure and the requests are labelled `outcome="degraded"`, so alert on those; the log is throttled to one line per 10s, and `onStoreError` is the unthrottled hook if you want your own reaction.
 - **The fallback bucket is deliberately loud.** When no address can be established every caller shares one bucket at a tightened cap, counted as `no-client-address` and re-logged while it lasts. That is a misconfiguration signal, not a mode to run in.
-- **Case-sensitivity.** `@dcl/redis-component` lowercases every key, so identities differing only in case share a bucket. If `getKey` returns case-significant material, set `hashKeys: true`.
+- **Case-sensitivity.** `@dcl/redis-component` lowercases the keys its counter operations touch, so on that backend identities differing only in case share a bucket while on the in-memory one they do not. If `getKey` returns case-significant material, set `hashKeys: true` — the digest is lowercase hex, so both backends then agree.
 - **Counting happens before the handler runs**, so a request the handler later rejects (401, 404) still consumes budget. That is intentional — it is what protects an auth endpoint — but it means "only count successful requests" is not supported.
 - **Hooks run on the critical path** and are awaited; keep them to a counter, not an HTTP call. A throw is caught and logged rather than turned into a `500`.
 - **`skip` has no default.** For health checks, pass `skip: ['/health/live', '/health/ready']`; for CORS preflight, `skip: (request) => request.method === 'OPTIONS'`.
