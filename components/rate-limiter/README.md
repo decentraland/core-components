@@ -272,6 +272,24 @@ same signal, visible on a dashboard rather than in a log.
 
 > **Security.** A forwarding header is only trustworthy because the network makes it so. If a caller can reach the origin without passing through the proxy, they control their own bucket — which grants them an unlimited allowance *and* lets them throttle a victim by claiming the victim's address. Set `trustedClientIpHeader` only when the origin is unreachable except through that proxy, and prefer a single-value header written by the edge (`cf-connecting-ip`) over `x-forwarded-for`. A header value that does not parse as an IP address is treated as absent, so garbage cannot mint buckets.
 
+## Testing against a real server
+
+`tests/integration.spec.ts` runs the same scenarios against **both** cache backends over a real
+socket — connection, `@dcl/http-server`, router, limiter, cache — because that is the only place a few
+things can actually be observed: that the peer address reaches `context.remoteAddress`, that the
+router's matched route becomes the bucket, and that a real backend expires a counter rather than
+sliding its deadline.
+
+The in-memory half needs nothing. The redis half runs only when `REDIS_URL` is set, and is skipped
+otherwise, so a local `pnpm test` stays dependency-free:
+
+```bash
+docker run --rm -p 6379:6379 redis:7
+REDIS_URL=redis://localhost:6379 pnpm test
+```
+
+CI provides a redis service, so both halves run on every pull request.
+
 ## Notes
 
 - **The 2x boundary burst.** A caller can spend the full `max` just before its window turns over and `max` again just after — up to `2 × max` requests in a short interval. The sustained rate is still `max` per window. Pick `max` so that `2 × max` is survivable, or shorten the window: `10s/20` has the same sustained rate as `60s/120` with a 6× smaller burst.

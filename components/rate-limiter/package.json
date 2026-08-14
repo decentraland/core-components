@@ -24,6 +24,9 @@
     "@well-known-components/interfaces": "^1.5.2"
   },
   "devDependencies": {
+    "@dcl/http-server": "workspace:*",
+    "@dcl/memory-cache-component": "workspace:*",
+    "@dcl/redis-component": "workspace:*",
     "typescript": "^5.8.3"
   },
   "publishConfig": {

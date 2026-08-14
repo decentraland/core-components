@@ -334,6 +334,15 @@ importers:
         specifier: ^1.5.2
         version: 1.5.2
     devDependencies:
+      '@dcl/http-server':
+        specifier: workspace:*
+        version: link:../http-server
+      '@dcl/memory-cache-component':
+        specifier: workspace:*
+        version: link:../memory-cache
+      '@dcl/redis-component':
+        specifier: workspace:*
+        version: link:../redis
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
