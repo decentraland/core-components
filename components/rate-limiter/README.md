@@ -64,7 +64,7 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 
 | Option                       | Type                                     | Default              | Description                                                                    |
 | ---------------------------- | ---------------------------------------- | -------------------- | ------------------------------------------------------------------------------ |
-| `name`                       | `string`                                 | `` `${max}p${windowSeconds}` `` | Bucket the counter lives under. Non-empty, and may not contain `:`.  |
+| `name`                       | `string`                                 | route, else `` `${max}p${windowSeconds}` `` | Overrides the bucket. See **Buckets**. Non-empty, no `:`. |
 | `max`                        | `number`                                 | `100`                | Requests allowed per window, per identity.                                     |
 | `windowSeconds`              | `number`                                 | `60`                 | Window length, at most `86400`. Windows are aligned to the Unix epoch.          |
 | `getKey`                     | `(ctx) => string \| null \| undefined \| Promise<…>` | —        | Returns the identity to count against. Nullish or empty falls through to the address chain. |
@@ -75,6 +75,38 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 | `onLimitExceeded`            | `(ctx, result) => void`                  | —                    | Called on every rejection — the place to increment a metric.                    |
 | `onStoreError`               | `(ctx, error) => void`                   | —                    | Called on every counter failure, so a silent fail-open stays visible.           |
 | `buildLimitExceededResponse` | `(ctx, result) => IResponse`             | —                    | Replaces the built-in `429`; a throw or nullish return falls back to it.         |
+
+## Buckets
+
+A counter key is `keyPrefix:bucket:window:identity`. The **identity** isolates callers — one IP gets
+its own count. The **bucket** decides which *endpoints* draw on the same allowance.
+
+You rarely set it. Inside a router, the bucket is the request's method and route template, so each
+endpoint gets its own budget automatically:
+
+```
+POST /v1/login      → my-service:rl:POST /v1/login:29778754:r:203.0.113.7
+POST /v1/signup     → my-service:rl:POST /v1/signup:29778754:r:203.0.113.7
+GET  /v1/notes/:id  → my-service:rl:GET /v1/notes/{id}:29778754:r:203.0.113.7
+```
+
+Path parameters are templated (`{id}`), never the request path, so the number of buckets is bounded by
+your routes rather than by ids. Methods are separate, since a `GET` and a `POST` on one path rarely
+cost the same.
+
+A limiter mounted with `server.use()` runs before routing, so there is no route to attribute the
+request to — and bounding everything together is what "global" means there. It falls back to
+`` `${max}p${windowSeconds}` ``: one shared allowance across every route.
+
+Set `name` to override, which is for making endpoints deliberately **share** an allowance (several
+write endpoints on one budget) or to hold a bucket stable across a route rename:
+
+```typescript
+router.post('/v1/notes', rateLimiter.withRateLimitMiddleware({ name: 'writes', max: 20 }), createNote)
+router.patch('/v1/notes/:id', rateLimiter.withRateLimitMiddleware({ name: 'writes', max: 20 }), editNote)
+```
+
+`consume()` has no request, so it always uses the fallback bucket unless you pass a `name`.
 
 ## Disclosure
 
@@ -242,7 +274,7 @@ same signal, visible on a dashboard rather than in a log.
 
 - **The 2x boundary burst.** A caller can spend the full `max` just before its window turns over and `max` again just after — up to `2 × max` requests in a short interval. The sustained rate is still `max` per window. Pick `max` so that `2 × max` is survivable, or shorten the window: `10s/20` has the same sustained rate as `60s/120` with a 6× smaller burst.
 - **Window phase is per identity, not aligned to the epoch.** Each identity's boundary is derived from a hash of it, so learning one caller's boundary says nothing about anyone else's. That matters when disclosure is enabled: with epoch-aligned windows a single `Retry-After` would reveal the phase and a second the period, after which a bot could compute every future boundary for every client and deliberately straddle one to take the 2x burst. Per-identity phases reduce that to what a caller could already measure about itself. It also removes the synchronised edge where every counter in the fleet expires at the same instant. The trade-off is that a given client's boundary is no longer a round number, which is one more thing to reason about during an incident.
-- **Buckets.** Two limiters share a counter only when both `keyPrefix` and bucket match. The bucket defaults to `` `${max}p${windowSeconds}` ``, so two routes configured with the same limit share one pool — pass `name` to separate them. The mirror image is a footgun: a global `server.use()` limiter and a per-route limiter that resolve to the same bucket count each request **twice**, halving the effective limit. Name the per-route one.
+- **A global and a per-route limiter both count the same request**, once each in their own bucket — the per-route allowance and the global one both apply, which is usually the point. They can no longer collide onto one counter by accident, since the per-route bucket is route-derived and the global one is not.
 - **`keyPrefix` must be unique per service** on a shared Redis, or one service's traffic throttles another's.
 - **`Retry-After`** is in seconds and never `0` (some clients read `0` as "retry immediately", which is the storm the header exists to prevent). `RateLimit-Reset` is **seconds until the window resets**, not an absolute timestamp — that is what the standardized header name is defined to mean, and epoch seconds there would read as a backoff of tens of thousands of years to a compliant client. It therefore duplicates `Retry-After`, which is what the spec intends; `result.resetAt` carries the absolute instant for hooks that want it. The delay travels in the headers only — the `429` body is a fixed `{ ok: false, message: 'Too many requests' }` and never restates it, so there is one authoritative place for it. `result.retryAfterSeconds` is still passed to `onLimitExceeded` and `buildLimitExceededResponse` if you want it in a custom payload.
 - **Failing open is silent.** During a store outage the limiter allows everything and looks exactly like low traffic. The built-in error log is throttled to one line per 10s; wire `onStoreError` to a metric so the state is observable.

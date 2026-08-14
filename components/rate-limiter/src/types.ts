@@ -123,25 +123,21 @@ export type RateLimitResult = {
  */
 export type RateLimitPolicyOptions<Context extends object = object> = {
   /**
-   * Bucket the counter lives under, appended to `keyPrefix`. This is a **budget boundary, not a
-   * label**: it decides which endpoints draw from the same counter. Two limiters share a counter if
-   * and only if they resolve to the same `keyPrefix` **and** the same bucket.
+   * Overrides which counter this policy draws from. A **budget boundary, not a label**: two limiters
+   * share a counter if and only if they resolve to the same `keyPrefix` **and** the same bucket.
    *
-   * It is reported as the `bucket` metric label as a side effect, but the route a request hit is
-   * reported separately as `handler`, taken from the router's matched template (`/v1/notes/:id`), so
-   * naming buckets after routes is not needed for observability.
+   * Usually you do not need it. Left unset, a request matched by a router buckets by its method and
+   * route template — `POST /v1/login` and `POST /v1/signup` get separate budgets automatically, even
+   * with identical limits. A limiter mounted with `server.use()` has no route to attribute a request
+   * to and is meant to bound everything together, so it falls back to `` `${max}p${windowSeconds}` ``,
+   * one shared budget across every route.
    *
-   * Defaults to `` `${max}p${windowSeconds}` `` — deterministic, so every replica agrees on it and
-   * it survives restarts. That means two routes configured with the same limit share one pool; pass
-   * an explicit `name` (e.g. `'login'`) to give an endpoint its own budget.
+   * Set it to make endpoints deliberately **share** one allowance — several write endpoints drawing on
+   * a single budget — or to keep a bucket stable across a route rename.
    *
-   * Watch the mirror image: a global `server.use()` limiter and a per-route limiter that resolve to
-   * the same bucket count each request **twice**, halving the effective limit. Naming the per-route
-   * one avoids it.
-   *
-   * Must be a non-empty string that does not contain `:`, which separates the key's segments — a
-   * colon here could straddle them and make two different policies share one counter. An invalid
-   * value throws when the middleware is built.
+   * Must be a non-empty string that does not contain `:`, which separates the key's segments — a colon
+   * here could straddle them and make two different policies share one counter. An invalid value
+   * throws when the middleware is built.
    */
   name?: string
   /**

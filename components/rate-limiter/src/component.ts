@@ -234,7 +234,12 @@ type ResolvedPolicy<Context extends object> = Required<
     RateLimitPolicyOptions<Context>,
     'skip' | 'getKey' | 'onLimitExceeded' | 'onStoreError' | 'buildLimitExceededResponse'
   > & {
-    bucket: string
+    /**
+     * Used when the request is not inside a router layer — i.e. a limiter mounted with
+     * `server.use()`, where one shared budget across every route is what "global" means.
+     */
+    name: string | undefined
+    fallbackBucket: string
     windowMs: number
     fallbackMax: number
   }
@@ -305,6 +310,30 @@ export function createRateLimiterComponent<Context extends object = object>(
     }
   }
 
+  /**
+   * Which counter this request draws from.
+   *
+   * An explicit `name` always wins. Otherwise, a request inside a router layer buckets by its method
+   * and matched route, so `POST /v1/login` and `POST /v1/signup` get separate budgets even when their
+   * limits are identical — the alternative silently merged them, because the fallback bucket is
+   * derived from the limit values. Outside a router layer there is no route to attribute the request
+   * to, and a limiter mounted with `server.use()` is meant to bound everything together anyway, so the
+   * fallback applies.
+   *
+   * The matched route is a template (`/v1/notes/:id`), never the request path, so the bucket count
+   * stays bounded by the number of routes.
+   */
+  function bucketFor(policy: ResolvedPolicy<Context>, context?: IHttpServerComponent.DefaultContext<Context>): string {
+    if (policy.name !== undefined) return policy.name
+    const routerPath = context && routeHandlerOf(context)
+    if (!routerPath) return policy.fallbackBucket
+    // `:` separates the key's segments and a route template is full of it (`/v1/notes/:id`), so
+    // parameters become a brace form that also reads better as a metric label. The trailing strip is
+    // belt-and-braces for any colon a pattern might carry that is not a parameter.
+    const template = routerPath.replace(/:([^/]+)/g, '{$1}').replace(/:/g, '')
+    return `${context!.request.method} ${template}`
+  }
+
   function resolvePolicy(overrides?: RateLimitPolicyOptions<Context>): ResolvedPolicy<Context> {
     // Key-by-key rather than `{ ...options, ...overrides }`: a spread copies keys whose value is
     // `undefined`, so `withRateLimitMiddleware({ max: config.loginMax })` with an unset config field
@@ -347,7 +376,8 @@ export function createRateLimiterComponent<Context extends object = object>(
 
     return {
       // Deterministic, so every replica agrees on the bucket and it survives restarts.
-      bucket: merged.name ?? `${max}p${windowSeconds}`,
+      name: merged.name,
+      fallbackBucket: merged.name ?? `${max}p${windowSeconds}`,
       max,
       windowMs: windowSeconds * 1000,
       fallbackMax: Math.max(1, Math.floor(max / fallbackMaxDivisor)),
@@ -378,6 +408,7 @@ export function createRateLimiterComponent<Context extends object = object>(
   async function count(
     identity: string,
     policy: ResolvedPolicy<Context>,
+    bucket: string,
     max: number,
     keySource: RateLimitKeySource,
     context?: IHttpServerComponent.DefaultContext<Context>
@@ -389,7 +420,7 @@ export function createRateLimiterComponent<Context extends object = object>(
     const { windowId, resetAt } = currentWindow(
       now,
       policy.windowMs,
-      windowOffsetFor(`${policy.bucket}:${identity}`, policy.windowMs)
+      windowOffsetFor(`${bucket}:${identity}`, policy.windowMs)
     )
     const secondsLeftInWindow = Math.ceil((resetAt - now) / 1000)
     const base = {
@@ -400,10 +431,10 @@ export function createRateLimiterComponent<Context extends object = object>(
       resetAt,
       keySource,
       identity,
-      bucket: policy.bucket
+      bucket
     }
 
-    const key = buildCounterKey(keyPrefix, policy.bucket, windowId, encodeIdentity(identity, hashKeys))
+    const key = buildCounterKey(keyPrefix, bucket, windowId, encodeIdentity(identity, hashKeys))
     // The counter only has to outlive its own window: the next window uses a different key, so an
     // over-long TTL wastes a little memory but can never stretch a window, while an under-long one
     // would hand the caller a free reset mid-window.
@@ -426,14 +457,14 @@ export function createRateLimiterComponent<Context extends object = object>(
           // operator paged for a 429 spike on a fail-closed endpoint can read a line saying
           // "allowing requests" that was emitted for a different, fail-open one.
           {
-            bucket: policy.bucket,
+            bucket,
             failOpen: String(policy.failOpen),
             error: isErrorWithMessage(error) ? error.message : 'Unknown error'
           }
         )
       }
       metrics.increment('rate_limiter_store_errors_total', {
-        bucket: policy.bucket,
+        bucket,
         fail_open: String(policy.failOpen)
       })
       await runHook(policy.onStoreError && (() => policy.onStoreError!(context, error)), 'onStoreError')
@@ -457,7 +488,8 @@ export function createRateLimiterComponent<Context extends object = object>(
    */
   async function resolveIdentity(
     context: IHttpServerComponent.DefaultContext<Context>,
-    policy: ResolvedPolicy<Context>
+    policy: ResolvedPolicy<Context>,
+    bucket: string
   ): Promise<{ identity: string; source: RateLimitKeySource }> {
     if (policy.getKey) {
       try {
@@ -486,7 +518,7 @@ export function createRateLimiterComponent<Context extends object = object>(
         rawHeader === null
           ? RateLimitAddressIssue.TRUSTED_HEADER_MISSING
           : RateLimitAddressIssue.TRUSTED_HEADER_UNUSABLE,
-        policy.bucket,
+        bucket,
         rawHeader === null
           ? `The configured trustedClientIpHeader "${trustedClientIpHeader}" was not present on the request, so it is being keyed on the connecting address instead. ` +
               'Behind a proxy that is the proxy itself, which buckets every caller into one limit. ' +
@@ -510,7 +542,7 @@ export function createRateLimiterComponent<Context extends object = object>(
         if (ignored) {
           reportAddressIssue(
             RateLimitAddressIssue.FORWARDING_HEADER_IGNORED,
-            policy.bucket,
+            bucket,
             `Requests carry a "${ignored}" header but no trustedClientIpHeader is configured, so they are being keyed on the connecting address. ` +
               'Behind a proxy that is the proxy itself, which buckets every caller into one limit. ' +
               'Configure trustedClientIpHeader (with trustedProxyCount matching the hops that append to it) if this service is behind a proxy, ' +
@@ -523,7 +555,7 @@ export function createRateLimiterComponent<Context extends object = object>(
 
     reportAddressIssue(
       RateLimitAddressIssue.NO_CLIENT_ADDRESS,
-      policy.bucket,
+      bucket,
       'No client address could be established, so every caller shares one rate limit bucket at a tightened cap. ' +
         'Check that this service runs behind a proxy setting the configured trustedClientIpHeader, or on a server that exposes the socket address.'
     )
@@ -541,10 +573,11 @@ export function createRateLimiterComponent<Context extends object = object>(
         return next()
       }
 
-      const { identity, source } = await resolveIdentity(context, policy)
+      const bucket = bucketFor(policy, context)
+      const { identity, source } = await resolveIdentity(context, policy, bucket)
       // The shared bucket is a global quota, so it gets a tighter cap than a per-client one.
       const max = source === RateLimitKeySource.FALLBACK ? policy.fallbackMax : policy.max
-      const result = await count(identity, policy, max, source, context)
+      const result = await count(identity, policy, bucket, max, source, context)
 
       recordOutcome(result, routeHandlerOf(context))
 
@@ -603,15 +636,21 @@ export function createRateLimiterComponent<Context extends object = object>(
     if (identity.trim().length === 0) {
       reportAddressIssue(
         RateLimitAddressIssue.NO_CLIENT_ADDRESS,
-        policy.bucket,
+        bucketFor(policy),
         'consume() was called with an empty identity, so those calls share one bucket at a tightened cap. Pass a real identity to get per-caller limiting.'
       )
-      const fallbackResult = await count(FALLBACK_IDENTITY, policy, policy.fallbackMax, RateLimitKeySource.FALLBACK)
+      const fallbackResult = await count(
+        FALLBACK_IDENTITY,
+        policy,
+        bucketFor(policy),
+        policy.fallbackMax,
+        RateLimitKeySource.FALLBACK
+      )
       recordOutcome(fallbackResult, '')
       return fallbackResult
     }
 
-    const result = await count(identity, policy, policy.max, RateLimitKeySource.CUSTOM)
+    const result = await count(identity, policy, bucketFor(policy), policy.max, RateLimitKeySource.CUSTOM)
     recordOutcome(result, '')
     return result
   }

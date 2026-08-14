@@ -1917,3 +1917,100 @@ describe('when no trusted client IP header is configured', () => {
     })
   })
 })
+
+describe('when the middleware runs inside a router layer', () => {
+  let buckets: string[]
+
+  function routed(method: string, routerPath: string, pathname: string) {
+    return { ...createContext({ pathname }), routerPath, request: new Request(`http://rate-limiter.test${pathname}`, { method }) } as any
+  }
+
+  beforeEach(async () => {
+    limiter = createRateLimiterComponent(components, options)
+    middleware = limiter.withRateLimitMiddleware()
+    await middleware(routed('POST', '/v1/login', '/v1/login'), next)
+    await middleware(routed('POST', '/v1/signup', '/v1/signup'), next)
+    await middleware(routed('GET', '/v1/notes/:id', '/v1/notes/abc-123'), next)
+    buckets = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[2])
+  })
+
+  it('should give each endpoint its own budget rather than merging identical limits', () => {
+    expect(new Set(buckets).size).toBe(3)
+  })
+
+  it('should bucket by method and route so the endpoint is legible in the key', () => {
+    expect(buckets[0]).toBe('POST /v1/login')
+    expect(buckets[1]).toBe('POST /v1/signup')
+  })
+
+  it('should template path parameters, so the bucket count is bounded by routes not by ids', () => {
+    expect(buckets[2]).toBe('GET /v1/notes/{id}')
+  })
+
+  it('should separate methods on the same path, which usually cost different amounts', async () => {
+    cache.increment.mockClear()
+    await middleware(routed('GET', '/v1/notes', '/v1/notes'), next)
+    await middleware(routed('POST', '/v1/notes', '/v1/notes'), next)
+    const both = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[2])
+    expect(new Set(both).size).toBe(2)
+  })
+
+  describe('and one endpoint exhausts its allowance', () => {
+    let otherEndpoint: IHttpServerComponent.IResponse
+
+    beforeEach(async () => {
+      await callTimes(4, middleware, routed('POST', '/v1/login', '/v1/login'))
+      otherEndpoint = await middleware(routed('POST', '/v1/signup', '/v1/signup'), next)
+    })
+
+    it('should leave the other endpoint unaffected', () => {
+      expect(otherEndpoint.status).not.toBe(429)
+    })
+  })
+
+  describe('and an explicit name is given', () => {
+    beforeEach(async () => {
+      cache.increment.mockClear()
+      middleware = limiter.withRateLimitMiddleware({ name: 'shared-write-budget' })
+      await middleware(routed('POST', '/v1/login', '/v1/login'), next)
+      await middleware(routed('POST', '/v1/signup', '/v1/signup'), next)
+      buckets = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[2])
+    })
+
+    it('should honour it over the route, so endpoints can deliberately share a budget', () => {
+      expect(buckets).toEqual(['shared-write-budget', 'shared-write-budget'])
+    })
+  })
+})
+
+describe('when the middleware is mounted globally rather than per route', () => {
+  let buckets: string[]
+
+  beforeEach(async () => {
+    // No routerPath: this is what a `server.use()` mount sees, since it runs before routing.
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    await middleware(createContext({ pathname: '/v1/login' }), next)
+    await middleware(createContext({ pathname: '/v1/signup' }), next)
+    buckets = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[2])
+  })
+
+  it('should keep one shared budget across every route, which is what global means', () => {
+    expect(buckets).toEqual(['3p60', '3p60'])
+  })
+
+  it('should count both requests against it', async () => {
+    const responses = await callTimes(2, middleware, createContext({ pathname: '/v1/other' }))
+    expect(responses[1].status).toBe(429)
+  })
+})
+
+describe('when consuming outside the HTTP path', () => {
+  beforeEach(async () => {
+    limiter = createRateLimiterComponent(components, options)
+    await limiter.consume('address:0xabc')
+  })
+
+  it('should use the fallback bucket, since there is no route to attribute it to', () => {
+    expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining(':3p60:'), expect.anything())
+  })
+})
