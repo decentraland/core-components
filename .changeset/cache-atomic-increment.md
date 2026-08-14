@@ -16,7 +16,7 @@ This is what makes counting workloads (rate limiting, quotas) correct on a share
 
 **Nothing upgrades automatically.** Every known affected repo — `world-storage-service`, `linker-server`, `marketplace-server`, `credits-server`, `worlds-content-server` — depends on `^0.10.1`, and a caret range on a `0.x` version locks the minor (`>=0.10.1 <0.11.0`). None of them can resolve to `0.11.0` without a deliberate range change, so no existing build breaks on release.
 
-When a repo does move up, the compile error is `TS2739` (missing property `increment`) on each cache double, and the fix is one line per mock:
+When a repo does move up, the compile error is `TS2741` (missing property `increment`) on each cache double, and the fix is one line per mock:
 
 ```ts
 increment: jest.fn().mockResolvedValue({ value: 1 })

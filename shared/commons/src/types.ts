@@ -182,8 +182,9 @@ export interface ICacheStorageComponent extends IBaseComponent {
    * @returns Promise resolving to the cached value or null if not found.
    *
    * @remarks
-   * Key case sensitivity differs by implementation: the Redis backend lowercases every key, the
-   * in-memory backend does not. Normalize keys yourself when case-stability matters.
+   * Key case sensitivity differs by implementation: the Redis backend lowercases keys in its string
+   * and counter operations (though not in its hash operations, nor in the `keys` pattern), while the
+   * in-memory backend never does. Normalize keys yourself when case-stability matters.
    */
   get<T>(key: string): Promise<T | null>
   /**
@@ -231,8 +232,10 @@ export interface ICacheStorageComponent extends IBaseComponent {
    * @param options - Increment amount and creation-time TTL. See {@link IncrementOptions}.
    * @returns The post-increment value and the counter's remaining TTL in milliseconds
    *          (`undefined` when it has no expiry). See {@link IncrementResult}.
-   * @throws {TypeError} When `amount` is not a safe integer, `ttlInSeconds` is not greater than
-   *         zero, or the value stored at `key` is not an integer counter.
+   * @throws {TypeError} When `amount` is not a safe integer or `ttlInSeconds` is not greater than zero.
+   * @throws When the value stored at `key` is not an integer counter. The in-memory backend raises a
+   *         `TypeError`; the Redis backend surfaces the server's own error reply, which is **not** a
+   *         `TypeError` — do not branch on the error type for this case.
    *
    * @example Fixed-window rate limit with a correct `Retry-After`
    * ```ts

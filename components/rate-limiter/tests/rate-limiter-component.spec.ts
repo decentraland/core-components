@@ -142,9 +142,12 @@ describe('when the request count reaches the limit exactly', () => {
 })
 
 describe('when the request count exceeds the limit', () => {
+  let headers: Headers
+
   beforeEach(async () => {
     middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
     response = (await callTimes(4))[3]
+    headers = new Headers(response.headers)
   })
 
   it('should respond with a too many requests status', () => {
@@ -164,7 +167,6 @@ describe('when the request count exceeds the limit', () => {
   })
 
   it('should emit the rate limit headers by default', () => {
-    const headers = new Headers(response.headers)
     expect(headers.get('RateLimit-Limit')).toBe('3')
     expect(headers.get('RateLimit-Remaining')).toBe('0')
     // Delta-seconds, matching the standardized meaning of the header name. An absolute epoch value
@@ -262,12 +264,17 @@ describe('when a custom limit exceeded response is configured', () => {
 })
 
 describe('when the window rolls over', () => {
+  let keys: string[]
+  let lastKey: string
+
   beforeEach(async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-13T10:00:00.000Z'))
     middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
     await callTimes(4)
     jest.setSystemTime(new Date('2026-08-13T10:01:00.000Z'))
     response = await middleware(context, next)
+    keys = cache.increment.mock.calls.map(call => call[0] as string)
+    lastKey = keys[keys.length - 1]
   })
 
   afterEach(() => {
@@ -279,19 +286,19 @@ describe('when the window rolls over', () => {
   })
 
   it('should count the first request of the new window under a different key', () => {
-    const keys = cache.increment.mock.calls.map(call => call[0])
     expect(new Set(keys).size).toBe(2)
   })
 
   it('should restart the count at one', () => {
-    const lastKey = cache.increment.mock.calls[cache.increment.mock.calls.length - 1][0] as string
     expect(cache.counters.get(lastKey)?.value).toBe(1)
   })
 })
 
 describe('when the counter is created', () => {
   beforeEach(async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-08-13T10:00:30.000Z'))
+    // Deliberately off a whole second: at `.000` a floor and a ceil agree, so the rounding
+    // direction would be unpinned.
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-13T10:00:30.400Z'))
     middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
     await middleware(context, next)
   })
@@ -300,7 +307,8 @@ describe('when the counter is created', () => {
     jest.useRealTimers()
   })
 
-  it('should request a TTL covering the rest of the window plus a grace second', () => {
+  it('should round the remaining window up and add a grace second', () => {
+    // 29.6s left -> ceil to 30, plus the grace second. A floor would ask for 30.
     expect(cache.increment).toHaveBeenCalledWith(expect.any(String), { ttlInSeconds: 31 })
   })
 })
@@ -374,40 +382,56 @@ describe('when the store throws', () => {
 })
 
 describe('when no client address can be established', () => {
-  beforeEach(() => {
+  let responses: IHttpServerComponent.IResponse[]
+
+  beforeEach(async () => {
     context = createContext({ remoteAddress: undefined })
     middleware = createRateLimiterComponent(components, { ...options, max: 100 }).withRateLimitMiddleware()
+    responses = await callTimes(11)
   })
 
-  it('should count against the shared fallback bucket', async () => {
-    await middleware(context, next)
+  it('should count against the shared fallback bucket', () => {
     expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining(FALLBACK_IDENTITY), expect.anything())
   })
 
-  it('should apply the tightened cap rather than the full limit', async () => {
-    const responses = await callTimes(11)
+  it('should apply the tightened cap rather than the full limit', () => {
     expect(responses[9].status).not.toBe(429)
     expect(responses[10].status).toBe(429)
   })
 
-  it('should warn once about the shared bucket', async () => {
-    await callTimes(2)
-    expect(warnMock).toHaveBeenCalledTimes(1)
-    expect(warnMock).toHaveBeenCalledWith(expect.stringContaining('every caller shares one rate limit bucket'))
+  it('should warn once about the shared bucket, however many requests arrive', () => {
+    const sharedBucketWarnings = warnMock.mock.calls.filter(call =>
+      String(call[0]).includes('every caller shares one rate limit bucket')
+    )
+    expect(sharedBucketWarnings).toHaveLength(1)
   })
 
   describe('and the fallback divisor is disabled', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       middleware = createRateLimiterComponent(components, {
         ...options,
         max: 100,
         fallbackMaxDivisor: 1
       }).withRateLimitMiddleware()
+      responses = await callTimes(11)
     })
 
-    it('should apply the full limit', async () => {
-      const responses = await callTimes(11)
+    it('should apply the full limit', () => {
       expect(responses[10].status).not.toBe(429)
+    })
+  })
+
+  describe('and the configured limit is smaller than the fallback divisor', () => {
+    beforeEach(async () => {
+      // `max: 3` with the default divisor of 10 floors to zero; without the `Math.max(1, …)` floor
+      // every fallback request would be rejected forever, since no count is ever `<= 0`.
+      middleware = createRateLimiterComponent(components, { ...options, max: 3 }).withRateLimitMiddleware()
+      responses = await callTimes(2)
+    })
+
+    it('should still allow one request rather than rejecting everything', () => {
+      expect(responses[0].status).not.toBe(429)
+      expect(responses[1].status).toBe(429)
     })
   })
 })
@@ -472,8 +496,7 @@ describe('when a trusted client IP header is configured', () => {
     })
 
     it('should count both against one bucket', () => {
-      const keys = cache.increment.mock.calls.map(call => call[0])
-      expect(new Set(keys).size).toBe(1)
+      expect(new Set(cache.increment.mock.calls.map(call => call[0])).size).toBe(1)
     })
   })
 })
@@ -574,36 +597,44 @@ describe('when a skip predicate is configured', () => {
 describe('when two middlewares built from the same limiter use different overrides', () => {
   let loginMiddleware: Middleware
   let notesMiddleware: Middleware
+  let keys: string[]
 
-  beforeEach(() => {
+  beforeEach(async () => {
     limiter = createRateLimiterComponent(components, options)
     loginMiddleware = limiter.withRateLimitMiddleware({ name: 'login', max: 1 })
     notesMiddleware = limiter.withRateLimitMiddleware({ name: 'notes', max: 5 })
-  })
-
-  it('should count each against its own bucket', async () => {
     await loginMiddleware(context, next)
     await notesMiddleware(context, next)
-    const keys = cache.increment.mock.calls.map(call => call[0] as string)
+    keys = cache.increment.mock.calls.map(call => call[0] as string)
+  })
+
+  it('should count each against its own bucket', () => {
     expect(keys[0]).toContain(':login:')
     expect(keys[1]).toContain(':notes:')
   })
 
-  it('should still allow the other endpoint once one limit is exhausted', async () => {
-    await callTimes(2, loginMiddleware)
-    expect((await notesMiddleware(context, next)).status).not.toBe(429)
+  describe('and one of the two limits is exhausted', () => {
+    beforeEach(async () => {
+      await callTimes(2, loginMiddleware)
+      response = await notesMiddleware(context, next)
+    })
+
+    it('should still allow the other endpoint', () => {
+      expect(response.status).not.toBe(429)
+    })
   })
 
   describe('and neither middleware is named while both resolve to the same limit', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+      cache.increment.mockClear()
       loginMiddleware = limiter.withRateLimitMiddleware({ max: 4, windowSeconds: 60 })
       notesMiddleware = limiter.withRateLimitMiddleware({ max: 4, windowSeconds: 60 })
-    })
-
-    it('should count both against one counter, which is the documented double-count footgun', async () => {
       await loginMiddleware(context, next)
       await notesMiddleware(context, next)
-      const keys = cache.increment.mock.calls.map(call => call[0])
+      keys = cache.increment.mock.calls.map(call => call[0] as string)
+    })
+
+    it('should count both against one counter, which is the documented double-count footgun', () => {
       expect(new Set(keys).size).toBe(1)
     })
   })
@@ -633,9 +664,8 @@ describe('when the rate limit headers mode is set', () => {
     })
 
     it('should emit them on a successful response', () => {
-      const headers = new Headers(response.headers)
-      expect(headers.get('RateLimit-Limit')).toBe('3')
-      expect(headers.get('RateLimit-Remaining')).toBe('2')
+      expect(new Headers(response.headers).get('RateLimit-Limit')).toBe('3')
+      expect(new Headers(response.headers).get('RateLimit-Remaining')).toBe('2')
     })
   })
 
@@ -663,9 +693,8 @@ describe('when the rate limit headers mode is set', () => {
     })
 
     it('should emit only Retry-After on the rejection', () => {
-      const headers = new Headers(response.headers)
-      expect(headers.get('Retry-After')).toEqual(expect.any(String))
-      expect(headers.get('RateLimit-Limit')).toBeNull()
+      expect(Number(new Headers(response.headers).get('Retry-After'))).toBeGreaterThan(0)
+      expect(new Headers(response.headers).get('RateLimit-Limit')).toBeNull()
     })
   })
 
@@ -920,11 +949,23 @@ describe('when encoding an identity', () => {
   })
 
   describe('and a short identity impersonates the digest of a long one', () => {
-    it('should keep the two in separate keyspaces so it cannot land on the long identity bucket', () => {
+    let hashed: string
+    let impersonation: string
+
+    beforeEach(() => {
       const victim = 'u'.repeat(MAX_RAW_IDENTITY_LENGTH + 72)
-      const hashed = encodeIdentity(victim, false)
-      const impersonation = encodeIdentity(hashed.slice(2), false)
+      hashed = encodeIdentity(victim, false)
+      impersonation = encodeIdentity(hashed.slice(2), false)
+    })
+
+    it('should keep the two in separate keyspaces so it cannot land on the long identity bucket', () => {
       expect(impersonation).not.toBe(hashed)
+    })
+  })
+
+  describe('and the identity is exactly at the raw length cap', () => {
+    it('should still store it raw, pinning the boundary as inclusive', () => {
+      expect(encodeIdentity('u'.repeat(MAX_RAW_IDENTITY_LENGTH), false)).toBe(`r:${'u'.repeat(MAX_RAW_IDENTITY_LENGTH)}`)
     })
   })
 
@@ -944,16 +985,26 @@ describe('when deciding whether to skip a request', () => {
   })
 
   describe('and the skipper is an array of strings', () => {
+    let skipper: RateLimitSkipper
+
+    beforeEach(() => {
+      skipper = ['/health/live', '/health/ready']
+    })
+
     it('should skip any matching pathname', () => {
-      const skipper: RateLimitSkipper = ['/health/live', '/health/ready']
       expect(shouldSkip(createContext({ pathname: '/health/ready' }), skipper)).toBe(true)
       expect(shouldSkip(createContext({ pathname: '/v1/notes' }), skipper)).toBe(false)
     })
   })
 
   describe('and the skipper is a function', () => {
+    let skipper: jest.Mock
+
+    beforeEach(() => {
+      skipper = jest.fn().mockReturnValue(true)
+    })
+
     it('should defer to it', () => {
-      const skipper = jest.fn().mockReturnValue(true)
       expect(shouldSkip(createContext({ pathname: '/v1/notes' }), skipper)).toBe(true)
       expect(skipper).toHaveBeenCalled()
     })
@@ -967,8 +1018,13 @@ describe('when deciding whether to skip a request', () => {
   })
 
   describe('and the regular expression carries the global flag', () => {
+    let skipper: RegExp
+
+    beforeEach(() => {
+      skipper = /^\/health\//g
+    })
+
     it('should match consistently across repeated calls instead of alternating on lastIndex', () => {
-      const skipper = /^\/health\//g
       expect(shouldSkip(createContext({ pathname: '/health/live' }), skipper)).toBe(true)
       expect(shouldSkip(createContext({ pathname: '/health/live' }), skipper)).toBe(true)
     })
@@ -997,32 +1053,44 @@ describe('when asserting a positive integer', () => {
 })
 
 describe('when an override carries a key whose value is undefined', () => {
-  beforeEach(() => {
+  let responses: IHttpServerComponent.IResponse[]
+
+  beforeEach(async () => {
     // The shape an optional config field produces: `{ max: config.loginMax }` with nothing set.
     options = { ...options, max: 3, failOpen: false }
     limiter = createRateLimiterComponent(components, options)
     middleware = limiter.withRateLimitMiddleware({ max: undefined, failOpen: undefined })
+    responses = await callTimes(4)
   })
 
-  it('should keep the component-wide limit rather than falling back to the built-in default', async () => {
-    const responses = await callTimes(4)
+  it('should keep the component-wide limit rather than falling back to the built-in default', () => {
     expect(responses[2].status).not.toBe(429)
     expect(responses[3].status).toBe(429)
   })
 
-  it('should report the component-wide limit in the headers', async () => {
-    response = (await callTimes(4))[3]
-    expect(new Headers(response.headers).get('RateLimit-Limit')).toBe('3')
+  it('should report the component-wide limit in the headers', () => {
+    expect(new Headers(responses[3].headers).get('RateLimit-Limit')).toBe('3')
   })
 
-  it('should keep a component-wide failOpen of false', async () => {
-    cache.increment.mockRejectedValue(new Error('redis down'))
-    expect((await middleware(context, next)).status).toBe(429)
+  describe('and the store then fails', () => {
+    beforeEach(async () => {
+      cache.increment.mockRejectedValue(new Error('redis down'))
+      response = await middleware(context, next)
+    })
+
+    it('should keep a component-wide failOpen of false', () => {
+      expect(response.status).toBe(429)
+    })
   })
 
-  it('should keep the component-wide value through consume as well', async () => {
-    result = await limiter.consume('address:0xabc', { max: undefined })
-    expect(result.limit).toBe(3)
+  describe('and consume is called with the same shape of override', () => {
+    beforeEach(async () => {
+      result = await limiter.consume('address:0xabc', { max: undefined })
+    })
+
+    it('should keep the component-wide value there too', () => {
+      expect(result.limit).toBe(3)
+    })
   })
 })
 
@@ -1201,16 +1269,18 @@ describe('when consuming with an identity that is not usable', () => {
 })
 
 describe('when the identity carries an IPv6 zone identifier', () => {
+  let zonedKeys: string[]
+
   beforeEach(async () => {
     middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
     await middleware(createContext({ remoteAddress: 'fe80::1%eth0' }), next)
     await middleware(createContext({ remoteAddress: 'fe80::1%eth1' }), next)
+    zonedKeys = cache.increment.mock.calls.map(call => call[0] as string)
   })
 
   it('should keep peers on different interfaces in separate buckets instead of the shared one', () => {
-    const keys = cache.increment.mock.calls.map(call => call[0] as string)
-    expect(new Set(keys).size).toBe(2)
-    expect(keys.every(key => !key.includes(FALLBACK_IDENTITY))).toBe(true)
+    expect(new Set(zonedKeys).size).toBe(2)
+    expect(zonedKeys.every(key => !key.includes(FALLBACK_IDENTITY))).toBe(true)
   })
 })
 
@@ -1237,5 +1307,171 @@ describe('when the component is configured with an unusable option value', () =>
       )
       expect(() => createRateLimiterComponent(components, { ...options, ...override })).toThrow(setting)
     })
+  })
+})
+
+describe('when both a getKey function and a trusted header are configured', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      trustedClientIpHeader: 'x-forwarded-for',
+      getKey: () => 'address:0xabc'
+    }).withRateLimitMiddleware()
+    await middleware(createContext({ headers: { 'x-forwarded-for': '198.51.100.4' } }), next)
+  })
+
+  it('should prefer the getKey result, pinning the documented precedence', () => {
+    expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('address:0xabc'), expect.anything())
+  })
+})
+
+describe('when getKey returns an empty string', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, { ...options, getKey: () => '' }).withRateLimitMiddleware()
+    await middleware(context, next)
+  })
+
+  it('should fall through to the client address rather than key on nothing', () => {
+    expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('203.0.113.7'), expect.anything())
+  })
+})
+
+describe('when getKey is invoked', () => {
+  let getKey: jest.Mock
+
+  beforeEach(async () => {
+    getKey = jest.fn().mockReturnValue('address:0xabc')
+    middleware = createRateLimiterComponent(components, { ...options, getKey }).withRateLimitMiddleware()
+    await middleware(context, next)
+  })
+
+  it('should receive the request context, which is what makes reading auth off it possible', () => {
+    expect(getKey).toHaveBeenCalledWith(context)
+  })
+})
+
+describe('when hashKeys is enabled on the component', () => {
+  let keys: string[]
+
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, { ...options, hashKeys: true }).withRateLimitMiddleware()
+    await middleware(context, next)
+    keys = cache.increment.mock.calls.map(call => call[0] as string)
+  })
+
+  it('should store a digest rather than the raw address', () => {
+    expect(keys[0]).toMatch(/:h:[0-9a-f]{32}$/)
+    expect(keys[0]).not.toContain('203.0.113.7')
+  })
+})
+
+describe('when more than one proxy is trusted', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      trustedClientIpHeader: 'x-forwarded-for',
+      trustedProxyCount: 2
+    }).withRateLimitMiddleware()
+    await middleware(createContext({ headers: { 'x-forwarded-for': '1.1.1.1, 198.51.100.4, 10.0.0.1' } }), next)
+  })
+
+  it('should key on the entry the configured hop count selects, not the rightmost one', () => {
+    expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('198.51.100.4'), expect.anything())
+  })
+})
+
+describe('when the socket address is not a usable IP address', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    await middleware(createContext({ remoteAddress: 'not-an-address' }), next)
+  })
+
+  it('should route the request to the shared bucket rather than key on the garbage', () => {
+    expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining(FALLBACK_IDENTITY), expect.anything())
+  })
+})
+
+describe('when an onStoreError hook receives a failure', () => {
+  let onStoreError: jest.Mock
+  let storeError: Error
+
+  beforeEach(async () => {
+    storeError = new Error('redis down')
+    onStoreError = jest.fn()
+    cache.increment.mockRejectedValue(storeError)
+    middleware = createRateLimiterComponent(components, { ...options, onStoreError }).withRateLimitMiddleware()
+    await middleware(context, next)
+  })
+
+  it('should pass the context and the underlying error, not just fire', () => {
+    expect(onStoreError).toHaveBeenCalledWith(context, storeError)
+  })
+})
+
+describe('when the store keeps failing past the log interval', () => {
+  beforeEach(async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-13T10:00:00.000Z'))
+    cache.increment.mockRejectedValue(new Error('redis down'))
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    await middleware(context, next)
+    jest.setSystemTime(new Date('2026-08-13T10:00:11.000Z'))
+    await middleware(context, next)
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('should log again rather than going silent for the rest of the outage', () => {
+    expect(errorMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('when the downstream handler returns a Response from another implementation', () => {
+  beforeEach(async () => {
+    // A node-fetch style response: `status`/`body` live on the prototype, so spreading it would
+    // serve a bodiless 200. It fails `instanceof Response`, which is why the duck-type check exists.
+    const foreign = Object.create({
+      get status() {
+        return 207
+      },
+      get body() {
+        return 'hello'
+      },
+      clone() {
+        return this
+      }
+    })
+    foreign.headers = new Headers()
+    downstreamResponse = foreign as IHttpServerComponent.IResponse
+    next = jest.fn().mockResolvedValue(downstreamResponse)
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      emitRateLimitHeaders: RateLimitHeaderMode.ALWAYS
+    }).withRateLimitMiddleware()
+    response = await middleware(context, next)
+  })
+
+  it('should keep its status and body instead of spreading them away', () => {
+    expect(response.status).toBe(207)
+    expect(response.body).toBe('hello')
+  })
+
+  it('should still attach the rate limit headers', () => {
+    expect(new Headers(response.headers).get('RateLimit-Limit')).toBe('3')
+  })
+})
+
+describe('when a custom limit exceeded response sets its own rate limit headers', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      buildLimitExceededResponse: () => ({ status: 429, headers: { 'RateLimit-Limit': '999' } })
+    }).withRateLimitMiddleware()
+    response = (await callTimes(4))[3]
+  })
+
+  it('should overwrite them with the real limit, so the advertised value cannot be wrong', () => {
+    expect(new Headers(response.headers).get('RateLimit-Limit')).toBe('3')
   })
 })

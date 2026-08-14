@@ -1,6 +1,7 @@
 import { contextFromRequest, getRequestFromNodeMessage } from '../src/logic'
 import { getRemoteAddress, normalizeRemoteAddress, setRemoteAddress } from '../src/remote-address'
 import { createBodySizeLimitMiddleware } from '../src/body-size-limiter'
+import { createTestServerComponent } from '../src/test-component'
 
 describe('when normalizing a remote address', () => {
   describe('and it is an IPv4-mapped IPv6 address', () => {
@@ -18,6 +19,12 @@ describe('when normalizing a remote address', () => {
   describe('and it is an IPv6 address', () => {
     it('should return it unchanged', () => {
       expect(normalizeRemoteAddress('2001:db8::1')).toBe('2001:db8::1')
+    })
+  })
+
+  describe('and the mapped prefix is uppercase', () => {
+    it('should still unwrap it, since the prefix comparison is case-insensitive', () => {
+      expect(normalizeRemoteAddress('::FFFF:203.0.113.7')).toBe('203.0.113.7')
     })
   })
 
@@ -53,13 +60,17 @@ describe('when building a request from a Node message carrying a socket', () => 
     }
   })
 
+  let request: ReturnType<typeof getRequestFromNodeMessage>
+
+  beforeEach(() => {
+    request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0')
+  })
+
   it('should capture the peer address in normalized form', () => {
-    const request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0')
     expect(getRemoteAddress(request)).toBe('10.0.0.1')
   })
 
   it('should surface it on the middleware context', () => {
-    const request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0')
     expect(contextFromRequest({}, request).remoteAddress).toBe('10.0.0.1')
   })
 })
@@ -76,8 +87,44 @@ describe('when building a request from a Node message with no socket', () => {
   })
 
   it('should leave the context address undefined rather than inventing a placeholder', () => {
-    const request = getRequestFromNodeMessage(nodeMessage, '0.0.0.0')
-    expect(contextFromRequest({}, request).remoteAddress).toBeUndefined()
+    expect(contextFromRequest({}, getRequestFromNodeMessage(nodeMessage, '0.0.0.0')).remoteAddress).toBeUndefined()
+  })
+})
+
+describe('when a Node message reports a non-string socket address', () => {
+  let nodeMessage: any
+
+  beforeEach(() => {
+    // `getRequestFromNodeMessage` is public and adapters pass hand-rolled message objects, so a
+    // socket carrying something other than a string must not reach the normalizer and throw.
+    nodeMessage = { method: 'GET', url: '/resource', headers: {}, socket: { remoteAddress: 12345 } }
+  })
+
+  it('should not throw', () => {
+    expect(() => getRequestFromNodeMessage(nodeMessage, '0.0.0.0')).not.toThrow()
+  })
+
+  it('should report no address rather than a coerced one', () => {
+    expect(getRemoteAddress(getRequestFromNodeMessage(nodeMessage, '0.0.0.0'))).toBeUndefined()
+  })
+})
+
+describe('when a base context already carries a remote address', () => {
+  let baseContext: { remoteAddress: string; other: string }
+  let request: ReturnType<typeof getRequestFromNodeMessage>
+
+  beforeEach(() => {
+    baseContext = { remoteAddress: '198.51.100.9', other: 'kept' }
+    // No socket, so the request has no address of its own.
+    request = getRequestFromNodeMessage({ method: 'GET', url: '/r', headers: {} } as any, '0.0.0.0')
+  })
+
+  it('should not shadow it with undefined', () => {
+    expect(contextFromRequest(baseContext, request).remoteAddress).toBe('198.51.100.9')
+  })
+
+  it('should leave the rest of the base context reachable', () => {
+    expect(contextFromRequest(baseContext, request).other).toBe('kept')
   })
 })
 
@@ -109,5 +156,72 @@ describe('when a middleware downstream of the body size limiter reads the peer a
 
   it('should confirm the request object really was replaced', () => {
     expect(getRemoteAddress(context.request)).toBeUndefined()
+  })
+})
+
+describe('when a test server is given a peer address', () => {
+  let server: ReturnType<typeof createTestServerComponent>
+  let seen: string | undefined
+
+  beforeEach(async () => {
+    seen = undefined
+    server = createTestServerComponent({ remoteAddress: '::ffff:203.0.113.7' })
+    server.use(async ctx => {
+      seen = ctx.remoteAddress
+      return { status: 200 }
+    })
+    await server.fetch('/resource')
+  })
+
+  it('should report it on the context, normalized', () => {
+    expect(seen).toBe('203.0.113.7')
+  })
+})
+
+describe('when a test server request carries its own peer address', () => {
+  let server: ReturnType<typeof createTestServerComponent>
+  let seen: string | undefined
+  let request: Request
+
+  beforeEach(async () => {
+    seen = undefined
+    server = createTestServerComponent({ remoteAddress: '10.0.0.1' })
+    server.use(async ctx => {
+      seen = ctx.remoteAddress
+      return { status: 200 }
+    })
+    request = new Request('http://remote-address.test/resource')
+    setRemoteAddress(request, '198.51.100.5')
+    await server.fetch(request)
+  })
+
+  it('should let the per-request address win over the server-wide option', () => {
+    expect(seen).toBe('198.51.100.5')
+  })
+})
+
+describe('when a test server is given no peer address', () => {
+  let server: ReturnType<typeof createTestServerComponent>
+  let seen: string | undefined
+  let sawKey: boolean
+
+  beforeEach(async () => {
+    seen = undefined
+    sawKey = true
+    server = createTestServerComponent()
+    server.use(async ctx => {
+      seen = ctx.remoteAddress
+      sawKey = 'remoteAddress' in ctx
+      return { status: 200 }
+    })
+    await server.fetch('/resource')
+  })
+
+  it('should report no address', () => {
+    expect(seen).toBeUndefined()
+  })
+
+  it('should not leave an own undefined key on the context', () => {
+    expect(sawKey).toBe(false)
   })
 })

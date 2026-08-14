@@ -529,13 +529,6 @@ function tooManyRequestsResponse(): IHttpServerComponent.IResponse {
   }
 }
 
-/**
- * Merges headers into a response **without spreading it**. A handler is allowed to return a native
- * `Response`, whose `status`/`body` are prototype getters — `{ ...response }` would silently drop
- * them and serve a bodiless `200`, the exact bug `fromNativeResponse` exists to prevent. Headers on
- * a `Response` obtained from `fetch` are immutable, so setting one throws; a rate limit header is
- * not worth a `500`, so that case is skipped.
- */
 // A `Response` from another realm or another implementation (node-fetch, a second copy of undici)
 // fails `instanceof` while still keeping `status`/`body` on its prototype, so spreading it would
 // serve a bodiless `200` — the exact failure the branch below exists to avoid. Duck-typing on the
@@ -546,6 +539,13 @@ function isResponseLike(response: unknown): response is Response {
   return typeof candidate?.clone === 'function' && typeof candidate?.headers?.set === 'function'
 }
 
+/**
+ * Merges headers into a response **without spreading it**. A handler is allowed to return a native
+ * `Response`, whose `status`/`body` are prototype getters — `{ ...response }` would silently drop
+ * them and serve a bodiless `200`, the exact bug `fromNativeResponse` exists to prevent. Headers on
+ * a `Response` obtained from `fetch` are immutable, so setting one throws; a rate limit header is
+ * not worth a `500`, so that case is skipped.
+ */
 function withHeaders(
   response: IHttpServerComponent.IResponse,
   headers: Record<string, string>,

@@ -44,8 +44,9 @@ construction for every caller in the process.
 const { value, ttlRemainingInMilliseconds } = await cache.increment('quota:0xabc', { ttlInSeconds: 60 })
 ```
 
-`ttlInSeconds` is applied **only when the counter is created**, so repeated increments leave the
-deadline where it is and a fixed window actually terminates. A non-positive `ttlInSeconds` throws
+`ttlInSeconds` is applied **only when the counter is created**, or when an existing counter has no
+deadline at all, so repeated increments leave an existing deadline where it is and a fixed window
+actually terminates. A non-positive `ttlInSeconds` throws
 (the Redis backend would interpret `0` as "delete now" and this one as "never expire", so it is
 rejected in both).
 

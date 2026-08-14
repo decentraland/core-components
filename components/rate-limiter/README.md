@@ -55,25 +55,25 @@ Component-wide only — these describe the process and its storage, not an endpo
 | Option                  | Type      | Default        | Description                                                                                       |
 | ----------------------- | --------- | -------------- | ------------------------------------------------------------------------------------------------- |
 | `keyPrefix`             | `string`  | `'rate-limit'` | Namespace for every counter key. **Set this per service.**                                         |
-| `trustedClientIpHeader` | `string`  | —              | Header carrying the client address. Only set it when the origin is unreachable except via a proxy. |
+| `trustedClientIpHeader` | `string`  | —              | Header carrying the client address. Only set it when the origin is unreachable except via a proxy. Warns once if configured but unusable. |
 | `trustedProxyCount`     | `number`  | `1`            | Proxies in front of this service that append to the forwarded header.                              |
-| `hashKeys`              | `boolean` | `false`        | Store a SHA-256 digest of the identity instead of the identity itself.                             |
+| `hashKeys`              | `boolean` | `false`        | Store a SHA-256 digest of the identity instead of the identity itself. Keys carry an `r:`/`h:` tag either way. |
 
 Policy — accepted component-wide and overridable per middleware or per `consume` call:
 
 | Option                       | Type                                     | Default              | Description                                                                    |
 | ---------------------------- | ---------------------------------------- | -------------------- | ------------------------------------------------------------------------------ |
-| `name`                       | `string`                                 | `` `${max}p${windowSeconds}` `` | Bucket the counter lives under.                                     |
+| `name`                       | `string`                                 | `` `${max}p${windowSeconds}` `` | Bucket the counter lives under. Non-empty, and may not contain `:`.  |
 | `max`                        | `number`                                 | `100`                | Requests allowed per window, per identity.                                     |
-| `windowSeconds`              | `number`                                 | `60`                 | Window length. Windows are aligned to the Unix epoch.                          |
-| `getKey`                     | `(ctx) => string \| null \| undefined`   | —                    | Derives the identity; returning nullish falls through to the client address.    |
+| `windowSeconds`              | `number`                                 | `60`                 | Window length, at most `86400`. Windows are aligned to the Unix epoch.          |
+| `getKey`                     | `(ctx) => string \| null \| undefined \| Promise<…>` | —        | Derives the identity; returning nullish or empty falls through to the client address. |
 | `skip`                       | `fn \| string[] \| string \| RegExp`     | — (none)             | Requests exempt from counting.                                                 |
 | `failOpen`                   | `boolean`                                | `true`               | Allow (`true`) or reject (`false`) when the counter store is unreachable.       |
 | `fallbackMaxDivisor`         | `number`                                 | `10`                 | Divides `max` for the shared bucket used when no address is available.          |
 | `emitRateLimitHeaders`       | `RateLimitHeaderMode`                    | `ON_LIMIT`           | When to emit `RateLimit-*`: `NEVER`, `ON_LIMIT`, or `ALWAYS`.                   |
 | `onLimitExceeded`            | `(ctx, result) => void`                  | —                    | Called on every rejection — the place to increment a metric.                    |
 | `onStoreError`               | `(ctx, error) => void`                   | —                    | Called on every counter failure, so a silent fail-open stays visible.           |
-| `buildLimitExceededResponse` | `(ctx, result) => IResponse`             | —                    | Replaces the built-in `429` body/status.                                        |
+| `buildLimitExceededResponse` | `(ctx, result) => IResponse`             | —                    | Replaces the built-in `429`; a throw or nullish return falls back to it.         |
 
 ## Choosing a store
 
@@ -114,4 +114,9 @@ Each proxy appends the address it saw, so the rightmost entries come from infras
 - **Counting happens before the handler runs**, so a request the handler later rejects (401, 404) still consumes budget. That is intentional — it is what protects an auth endpoint — but it means "only count successful requests" is not supported.
 - **Hooks run on the critical path** and are awaited; keep them to a counter, not an HTTP call. A throw is caught and logged rather than turned into a `500`.
 - **`skip` has no default.** For health checks, pass `skip: ['/health/live', '/health/ready']`; for CORS preflight, `skip: (request) => request.method === 'OPTIONS'`.
-- **Key cardinality.** One key per (bucket, window, identity), bounded by TTL to roughly two windows. A distributed attack from many source addresses creates many keys, so keep windows short.
+- **`consume` with an empty identity** is routed to the shared fallback bucket at the tightened cap, not given its own bucket at the full limit — so `consume(session.address ?? '')` degrades safely. A non-string identity throws.
+- **Only `@dcl/http-server` populates `context.remoteAddress` today.** `@dcl/uws-http-server` returns the raw uWS app and does not, so a uWS-based service must supply `getKey` or a trusted header, or every caller lands in the shared fallback bucket.
+- **Requests rejected before the middleware chain are never counted.** `@dcl/http-server` answers an oversized `Content-Length` with a `413` before any middleware runs, so those requests consume no budget.
+- **In integration tests, pass `createTestServerComponent({ remoteAddress })`.** It defaults to no address, which means an untouched suite exercises the fallback bucket rather than the per-client path — a limiter can look tested while its real code path never ran.
+- **Give the limiter its own cache instance** when using the in-memory backend. Counter churn shares the LRU with whatever else the service caches, so each evicts the other.
+- **Key cardinality.** One key per (bucket, window, identity). A counter's TTL is the remainder of its window plus a grace second, so live keys span one window plus a brief overlap. A distributed attack from many source addresses creates many keys, so keep windows short.

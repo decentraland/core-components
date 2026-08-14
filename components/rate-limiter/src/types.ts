@@ -27,7 +27,12 @@ export enum RateLimitHeaderMode {
   NEVER = 'never',
   /** Emit them only on the `429`. The default. */
   ON_LIMIT = 'on-limit',
-  /** Emit them on every response, so a client can back off before it is throttled. */
+  /**
+   * Emit them on every response, so a client can back off before it is throttled. They are still
+   * suppressed on a request served while the counter store is unavailable: the counts are not real
+   * then, and advertising `RateLimit-Remaining: 0` would tell a well-behaved client to stop sending
+   * for the rest of the window — the opposite of what failing open is for.
+   */
   ALWAYS = 'always'
 }
 
@@ -109,6 +114,10 @@ export type RateLimitPolicyOptions = {
    * Watch the mirror image: a global `server.use()` limiter and a per-route limiter that resolve to
    * the same bucket count each request **twice**, halving the effective limit. Naming the per-route
    * one avoids it.
+   *
+   * Must be a non-empty string that does not contain `:`, which separates the key's segments — a
+   * colon here could straddle them and make two different policies share one counter. An invalid
+   * value throws when the middleware is built.
    */
   name?: string
   /**
@@ -117,8 +126,9 @@ export type RateLimitPolicyOptions = {
    */
   max?: number
   /**
-   * Window length in seconds. Must be a positive integer. Windows are aligned to the Unix epoch,
-   * not anchored to a caller's first request — see the README note on the 2x boundary burst.
+   * Window length in seconds. Must be a positive integer no greater than `86400` (a day); anything
+   * larger is rejected as a probable seconds/milliseconds mix-up. Windows are aligned to the Unix
+   * epoch, not anchored to a caller's first request — see the README note on the 2x boundary burst.
    * @defaultValue 60
    */
   windowSeconds?: number
@@ -167,7 +177,8 @@ export type RateLimitPolicyOptions = {
    */
   fallbackMaxDivisor?: number
   /**
-   * When the `RateLimit-*` headers are emitted.
+   * When the `RateLimit-*` headers are emitted. A value outside the enum throws rather than being
+   * silently treated as the default, so a misspelled `'Never'` cannot leave headers switched on.
    * @defaultValue RateLimitHeaderMode.ON_LIMIT
    */
   emitRateLimitHeaders?: RateLimitHeaderMode
@@ -196,6 +207,9 @@ export type RateLimitPolicyOptions = {
    *
    * `Retry-After` is added to whatever this returns **only if it does not already set it**, so a
    * custom response can override the delay but cannot accidentally omit it.
+   *
+   * If it throws or returns nothing, the failure is logged and the built-in `429` is served instead —
+   * a broken response builder must not turn a rejection into a `500` with no `Retry-After`.
    */
   buildLimitExceededResponse?: (
     context: IHttpServerComponent.DefaultContext<object>,
@@ -231,7 +245,11 @@ export type RateLimiterOptions = RateLimitPolicyOptions & {
    * `x-forwarded-for`, which sidesteps the hop counting below entirely.
    *
    * A value that does not parse as an IP address is treated as absent rather than used as a key, so
-   * a caller cannot mint unlimited buckets (or oversized Redis keys) by sending garbage.
+   * a caller cannot mint unlimited buckets (or oversized Redis keys) by sending garbage. When this is
+   * configured but yields no address, the component warns once — behind a proxy the socket fallback
+   * always succeeds, so the failure would otherwise silently turn the per-client limit into a global
+   * one. An empty, blank or non-string value throws at construction rather than quietly disabling the
+   * feature.
    */
   trustedClientIpHeader?: string
   /**
@@ -256,7 +274,8 @@ export type RateLimiterOptions = RateLimitPolicyOptions & {
    * control. Costs you the ability to read a bucket's owner off the key when debugging.
    *
    * Identities longer than 128 characters are hashed regardless of this setting, so an oversized
-   * value can never become an oversized key.
+   * value can never become an oversized key. Either way the stored key carries a short tag (`r:` for
+   * a raw identity, `h:` for a digest) so the two encodings cannot collide.
    * @defaultValue false
    */
   hashKeys?: boolean
@@ -283,7 +302,11 @@ export type IRateLimiterComponent = {
    * budget.
    *
    * Never throws for a store failure: the result carries `storeUnavailable`, and `allowed` follows
-   * the configured `failOpen` policy.
+   * the configured `failOpen` policy. It does throw for an identity that is not a string.
+   *
+   * An empty or blank identity — `consume(session.address ?? '')` — is routed to the shared fallback
+   * bucket at the tightened cap rather than given a bucket of its own at the full limit, matching how
+   * the middleware handles a request with no resolvable client address.
    */
   consume: (identity: string, overrides?: RateLimitPolicyOptions) => Promise<RateLimitResult>
   /**
