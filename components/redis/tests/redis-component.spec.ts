@@ -29,6 +29,7 @@ let evalMock: jest.Mock
 let evalShaMock: jest.Mock
 let debugLogMock: jest.Mock
 let errorLogMock: jest.Mock
+let warnLogMock: jest.Mock
 
 const hostUrl = 'redis://localhost:6379'
 
@@ -55,6 +56,7 @@ beforeEach(async () => {
   })
   debugLogMock = jest.fn()
   errorLogMock = jest.fn()
+  warnLogMock = jest.fn()
 
   mockRedisClient = {
     connect: connectMock,
@@ -79,6 +81,7 @@ beforeEach(async () => {
 
   logs = createLoggerMockedComponent({
     error: errorLogMock,
+    warn: warnLogMock,
     debug: debugLogMock
   })
 
@@ -798,5 +801,65 @@ describe('when connecting to a Redis URL that carries credentials', () => {
     expect(debugLogMock).toHaveBeenCalledWith('Connecting to Redis', {
       hostUrl: expect.stringContaining('redis.internal')
     })
+  })
+})
+
+describe('when the connection cannot be established at startup', () => {
+  let failure: Error
+
+  beforeEach(() => {
+    failure = new Error('ECONNREFUSED')
+    connectMock.mockRejectedValueOnce(failure)
+  })
+
+  it('should report it at error level, unlike the per-operation failures', async () => {
+    await expect(component[START_COMPONENT]!({} as any)).rejects.toThrow(failure)
+    expect(errorLogMock).toHaveBeenCalledWith('Error connecting to Redis', failure)
+  })
+
+  it('should still rethrow, so the caller decides whether to abort the boot', async () => {
+    await expect(component[START_COMPONENT]!({} as any)).rejects.toThrow(failure)
+  })
+})
+
+describe('when the client emits errors before it has ever connected', () => {
+  let emitError: (error: Error) => void
+
+  beforeEach(() => {
+    // `connect()` does not reject on an unreachable server, it retries, so `start()` stays pending and
+    // only this event reports anything at all.
+    emitError = mockRedisClient.on.mock.calls.find(([event]: [string]) => event === 'error')[1]
+    emitError(new Error('ECONNREFUSED'))
+    emitError(new Error('ECONNREFUSED'))
+    emitError(new Error('ECONNREFUSED'))
+  })
+
+  it('should warn, so a service hanging on an unreachable Redis is not silent', () => {
+    expect(debugLogMock).not.toHaveBeenCalledWith(expect.stringContaining('before the first successful'), expect.anything())
+    expect(warnLogMock).toHaveBeenCalledWith(
+      expect.stringContaining('before the first successful connection'),
+      expect.objectContaining({ error: 'ECONNREFUSED' })
+    )
+  })
+
+  it('should warn only once, since the client emits one error per retry attempt', () => {
+    expect(warnLogMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('should not put the connection URL credentials in that line', () => {
+    expect(JSON.stringify(warnLogMock.mock.calls)).not.toContain('s3cr3t')
+  })
+})
+
+describe('when the client emits an error after a successful connection', () => {
+  beforeEach(async () => {
+    await component[START_COMPONENT]!({} as any)
+    const emitError = mockRedisClient.on.mock.calls.find(([event]: [string]) => event === 'error')[1]
+    emitError(new Error('connection reset'))
+  })
+
+  it('should stay at debug, since operations surface their own failures by throwing', () => {
+    expect(warnLogMock).not.toHaveBeenCalled()
+    expect(debugLogMock).toHaveBeenCalledWith('Redis client error', { error: 'connection reset' })
   })
 })

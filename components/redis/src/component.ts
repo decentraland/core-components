@@ -91,7 +91,25 @@ export async function createRedisComponent(
   // Initialize client immediately for testing
   const client: RedisClientType = createClient({ url: hostUrl })
 
+  // Whether the component has ever completed a connection. Startup is the one phase where a failure
+  // has no caller to report it: `connect()` does not reject on an unreachable server, it retries, so
+  // `start()` stays pending and its own catch never runs. Without a line here a service booting
+  // against a dead Redis simply hangs with nothing above debug to say why.
+  let hasConnected = false
+  let warnedAboutStartupFailure = false
+
   client.on('error', (err: Error) => {
+    // Only before the first success, and only once: node-redis emits an error per retry attempt, so
+    // this must not scale with the retry loop. Everything after it, and every blip once the component
+    // has connected, stays at debug — those failures reach a caller through a throw.
+    if (!hasConnected && !warnedAboutStartupFailure) {
+      warnedAboutStartupFailure = true
+      logger.warn(
+        'Redis client error before the first successful connection. If this is startup, the client is retrying and the service will not become ready until Redis is reachable.',
+        { error: err.message, hostUrl: redactUrl(hostUrl) }
+      )
+      return
+    }
     logger.debug('Redis client error', { error: err.message })
   })
 
@@ -118,9 +136,13 @@ export async function createRedisComponent(
     try {
       logger.debug('Connecting to Redis', { hostUrl: redactUrl(hostUrl) })
       await client.connect()
+      hasConnected = true
       logger.debug('Successfully connected to Redis')
     } catch (err: any) {
-      logger.debug('Error connecting to Redis', err)
+      // Error level here, unlike the operation methods: a service that cannot reach its cache at boot
+      // is not going to serve, and this is a single bounded event rather than one per request. It is
+      // still rethrown, so the caller decides whether to abort.
+      logger.error('Error connecting to Redis', err)
       throw err
     }
   }

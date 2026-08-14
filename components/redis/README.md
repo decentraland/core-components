@@ -26,13 +26,26 @@ const value = await cache.get('key')
 - Automatic JSON serialization
 - Connection lifecycle management
 - Cached Lua scripts addressed by digest (`EVALSHA`), with an automatic fallback
-- Debug-level logging, with failures surfaced by throwing
+- Debug-level logging, with failures surfaced by throwing (startup being the exception)
 
 ## Logging
 
-Every log this component writes is at **debug** level, including failures. Each operation rethrows
-what it caught, so the caller decides the severity and gets to add its own context — logging at error
-here as well would double-report the same failure, once without context and once with.
+Outside startup, every log this component writes is at **debug** level, including per-operation
+failures. Each operation rethrows what it caught, so the caller decides the severity and gets to add
+its own context; logging at error here as well would double-report the same failure, once without
+context and once with.
+
+Startup is louder, because it is the one phase with no caller to report to:
+
+- `start()` logs at **error** when the connection attempt rejects, then rethrows.
+- The client's `error` event logs at **warn** the first time it fires before any successful
+  connection, then falls back to debug. This matters because `connect()` does **not** reject on an
+  unreachable server — it retries — so `start()` stays pending and its own `catch` never runs. Without
+  that line, a service booting against a dead Redis hangs with nothing above debug to explain why. It
+  is emitted once rather than per retry attempt, and the URL in it is redacted.
+
+Note that a hanging `start()` is node-redis's default retry behaviour, not something this component
+imposes. If you would rather fail fast than retry, pass your own `reconnectStrategy`.
 
 ## Scripted operations
 

@@ -10,7 +10,9 @@ This is what makes counting workloads (rate limiting, quotas) correct on a share
 
 Redis invokes its Lua scripts (`increment` and `releaseLock`) with `EVALSHA` rather than `EVAL`, so a per-request workload sends a 40-byte digest instead of re-uploading the script body every call. A `NOSCRIPT` reply falls back to sending the body, which keeps it correct across a restart, failover or `SCRIPT FLUSH` as well as on a cold cache.
 
-All logging in `@dcl/redis-component` moved to **debug** level. Every operation rethrows what it caught, so the caller owns the severity and the context; logging at error here as well double-reported the same failure.
+Per-operation logging in `@dcl/redis-component` moved to **debug** level. Every operation rethrows what it caught, so the caller owns the severity and the context; logging at error here as well double-reported the same failure.
+
+Startup keeps a louder voice, because it has no caller to report to: `start()` logs at error when the connection rejects, and the client's `error` event logs at warn the first time it fires before any successful connection. `connect()` does not reject on an unreachable server — it retries — so `start()` stays pending and its own catch never runs; without that line a service booting against a dead Redis hangs silently. It is emitted once rather than per retry, and the URL is redacted, since a Redis URL carries its password in the userinfo.
 
 ## Note for anyone mocking the interface
 
