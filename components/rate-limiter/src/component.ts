@@ -388,7 +388,7 @@ export function createRateLimiterComponent(
 
       const response = policy.buildLimitExceededResponse
         ? await policy.buildLimitExceededResponse(context, result)
-        : tooManyRequestsResponse(result)
+        : tooManyRequestsResponse()
 
       return policy.emitRateLimitHeaders === RateLimitHeaderMode.NEVER
         ? withRetryAfter(response, result)
@@ -404,10 +404,12 @@ export function createRateLimiterComponent(
   return { consume, withRateLimitMiddleware }
 }
 
-function tooManyRequestsResponse(result: RateLimitResult): IHttpServerComponent.IResponse {
+// The retry delay travels in `Retry-After` only, never in the body: one authoritative place for it
+// means a client cannot read a stale or contradicting value out of the payload.
+function tooManyRequestsResponse(): IHttpServerComponent.IResponse {
   return {
     status: 429,
-    body: { ok: false, message: `Too many requests. Retry in ${result.retryAfterSeconds} seconds.` }
+    body: { ok: false, message: 'Too many requests' }
   }
 }
 

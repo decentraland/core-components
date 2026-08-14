@@ -159,8 +159,8 @@ describe('when the request count exceeds the limit', () => {
     expect(Number(new Headers(response.headers).get('Retry-After'))).toBeGreaterThan(0)
   })
 
-  it('should respond with a body naming the retry delay', () => {
-    expect(response.body).toEqual({ ok: false, message: expect.stringContaining('Too many requests') })
+  it('should respond with a body that does not restate the retry delay', () => {
+    expect(response.body).toEqual({ ok: false, message: 'Too many requests' })
   })
 
   it('should emit the rate limit headers by default', () => {
