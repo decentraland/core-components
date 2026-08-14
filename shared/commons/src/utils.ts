@@ -2,8 +2,23 @@
 
 import type { IncrementOptions } from './types'
 
+/**
+ * Whether a thrown value carries a `message` that can be read as a string.
+ *
+ * The string check is the point: callers use this as a licence to touch `error.message`, so accepting
+ * `{ message: 42 }` would let `error.message.includes(...)` raise a second `TypeError` that masks the
+ * original failure entirely.
+ *
+ * @public
+ */
 export function isErrorWithMessage(error: unknown): error is Error {
-  return error !== undefined && error !== null && typeof error === 'object' && 'message' in error
+  return (
+    error !== undefined &&
+    error !== null &&
+    typeof error === 'object' &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  )
 }
 
 // Quotes strings so a numeric-looking string is distinguishable from the number in an error
@@ -42,6 +57,25 @@ export function assertValidIncrementOptions(options?: IncrementOptions): {
   }
 
   return { amount, ttlInSeconds }
+}
+
+/**
+ * Asserts that the result of an increment is still exactly representable.
+ *
+ * `Number.MAX_SAFE_INTEGER + 1` is a `number` like any other, so without this a counter that ran past
+ * the range silently returns an imprecise value — and the *next* increment fails
+ * {@link assertIntegerCounter} with a message about the stored value not being a counter, which points
+ * at the wrong thing. A counter that cannot be reported exactly is an error, not a rounded answer.
+ *
+ * @throws {RangeError} When the value is outside the exactly-representable integer range.
+ * @public
+ */
+export function assertCounterWithinSafeRange(value: number): void {
+  if (!Number.isSafeInteger(value)) {
+    throw new RangeError(
+      `increment: the counter reached ${value}, beyond the range JavaScript represents exactly. Reset it, or count in smaller units.`
+    )
+  }
 }
 
 /**

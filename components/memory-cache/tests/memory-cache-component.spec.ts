@@ -1026,3 +1026,32 @@ describe('when incrementing a counter', () => {
     })
   })
 })
+
+describe('when a counter would pass the exactly-representable range', () => {
+  const counterKey = 'overflow-key'
+
+  beforeEach(async () => {
+    await component.set(counterKey, Number.MAX_SAFE_INTEGER)
+  })
+
+  it('should throw rather than return a rounded count', async () => {
+    await expect(component.increment(counterKey, { ttlInSeconds: 60 })).rejects.toThrow(RangeError)
+  })
+
+  it('should leave the stored counter untouched, so the error is not also a lost write', async () => {
+    await expect(component.increment(counterKey, { ttlInSeconds: 60 })).rejects.toThrow(RangeError)
+    expect(await component.get<number>(counterKey)).toBe(Number.MAX_SAFE_INTEGER)
+  })
+
+  describe('and the counter is still inside the range', () => {
+    beforeEach(async () => {
+      await component.set(counterKey, Number.MAX_SAFE_INTEGER - 1)
+    })
+
+    it('should reach the boundary without complaint', async () => {
+      await expect(component.increment(counterKey, { ttlInSeconds: 60 })).resolves.toEqual(
+        expect.objectContaining({ value: Number.MAX_SAFE_INTEGER })
+      )
+    })
+  })
+})

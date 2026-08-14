@@ -284,7 +284,10 @@ export function createRateLimiterComponent<Context extends object = object>(
       throw new InvalidRateLimitConfigurationError('trustedClientIpHeader', options.trustedClientIpHeader)
     }
   }
-  const trustedClientIpHeader = options.trustedClientIpHeader?.toLowerCase()
+  // Trimmed, not merely validated as non-blank: `Headers.get(' cf-connecting-ip ')` does not miss —
+  // it throws `Invalid header name`, so a padded value (what `CLIENT_IP_HEADER=" x "` in an env file
+  // produces) would raise on every request rather than quietly falling back to the socket address.
+  const trustedClientIpHeader = options.trustedClientIpHeader?.trim().toLowerCase()
   const trustedProxyCount = options.trustedProxyCount ?? DEFAULT_TRUSTED_PROXY_COUNT
   assertPositiveInteger('trustedProxyCount', trustedProxyCount)
   const hashKeys = options.hashKeys ?? false

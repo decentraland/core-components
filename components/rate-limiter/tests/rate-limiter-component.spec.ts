@@ -2157,3 +2157,23 @@ describe('when getKey returns a whitespace-only value', () => {
     expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('203.0.113.7'), expect.anything())
   })
 })
+
+describe('when the trusted client IP header is configured with surrounding whitespace', () => {
+  beforeEach(async () => {
+    // What `CLIENT_IP_HEADER=" cf-connecting-ip "` in an env file produces. `Headers.get` rejects a
+    // padded name with `Invalid header name`, so an untrimmed value would raise on every request.
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      trustedClientIpHeader: '  cf-connecting-ip  '
+    }).withRateLimitMiddleware()
+    response = await middleware(createContext({ headers: { 'cf-connecting-ip': '198.51.100.4' } }), next)
+  })
+
+  it('should serve the request rather than throw on the header lookup', () => {
+    expect(response).toEqual(downstreamResponse)
+  })
+
+  it('should still read the header, rather than falling back to the socket address', () => {
+    expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('198.51.100.4'), expect.anything())
+  })
+})

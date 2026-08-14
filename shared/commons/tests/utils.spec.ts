@@ -1,11 +1,15 @@
-import { assertIntegerCounter, assertValidIncrementOptions, isErrorWithMessage } from '../src/utils'
+import {
+  assertCounterWithinSafeRange,
+  assertIntegerCounter,
+  assertValidIncrementOptions,
+  isErrorWithMessage
+} from '../src/utils'
 import { IncrementOptions } from '../src/types'
 
 describe('when checking whether a value is an error with a message', () => {
   describe.each([
     ['an Error instance', new Error('boom')],
-    ['a plain object carrying a message', { message: 'boom' }],
-    ['an object whose message is not a string', { message: 42 }]
+    ['a plain object carrying a message', { message: 'boom' }]
   ])('and the value is %s', (_label, value) => {
     it('should report it as an error with a message', () => {
       expect(isErrorWithMessage(value)).toBe(true)
@@ -17,10 +21,48 @@ describe('when checking whether a value is an error with a message', () => {
     ['null', null],
     ['a string', 'boom'],
     ['a number', 42],
-    ['an object without a message', { code: 'ENOENT' }]
+    ['an object without a message', { code: 'ENOENT' }],
+    ['an object whose message is a number', { message: 42 }],
+    ['an object whose message is null', { message: null }],
+    ['an object whose message is an object', { message: { nested: true } }]
   ])('and the value is %s', (_label, value) => {
     it('should not report it as an error with a message', () => {
       expect(isErrorWithMessage(value)).toBe(false)
+    })
+  })
+
+  describe('and the message is not a string', () => {
+    it('should say no, because callers read the message and would raise a second error on it', () => {
+      // The guard exists so `error.message.includes(...)` cannot throw and mask the original failure.
+      const weird = { message: 42 }
+      expect(isErrorWithMessage(weird)).toBe(false)
+    })
+  })
+})
+
+describe('when asserting a counter is within the safe range', () => {
+  describe.each([
+    ['zero', 0],
+    ['a small count', 42],
+    ['the largest exactly representable integer', Number.MAX_SAFE_INTEGER],
+    ['its negative counterpart', -Number.MAX_SAFE_INTEGER]
+  ])('and the value is %s', (_label, value) => {
+    it('should not throw', () => {
+      expect(() => assertCounterWithinSafeRange(value)).not.toThrow()
+    })
+  })
+
+  describe.each([
+    ['one past the safe range', Number.MAX_SAFE_INTEGER + 1],
+    ['far past it', 1e300],
+    ['Infinity', Infinity]
+  ])('and the value is %s', (_label, value) => {
+    it('should throw a RangeError rather than report a rounded count', () => {
+      expect(() => assertCounterWithinSafeRange(value)).toThrow(RangeError)
+    })
+
+    it('should say what to do about it', () => {
+      expect(() => assertCounterWithinSafeRange(value)).toThrow(/Reset it, or count in smaller units/)
     })
   })
 })

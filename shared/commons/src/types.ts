@@ -233,6 +233,8 @@ export interface ICacheStorageComponent extends IBaseComponent {
    * @returns The post-increment value and the counter's remaining TTL in milliseconds
    *          (`undefined` when it has no expiry). See {@link IncrementResult}.
    * @throws {TypeError} When `amount` is not a safe integer or `ttlInSeconds` is not greater than zero.
+   * @throws {RangeError} When the resulting value passes `Number.MAX_SAFE_INTEGER`, since it could
+   *         then only be reported rounded. Reset the counter or count in smaller units.
    * @throws When the value stored at `key` is not an integer counter. The in-memory backend raises a
    *         `TypeError`; the Redis backend surfaces the server's own error reply, which is **not** a
    *         `TypeError` — do not branch on the error type for this case.

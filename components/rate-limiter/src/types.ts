@@ -287,7 +287,8 @@ export type RateLimiterOptions<Context extends object = object> = RateLimitPolic
    * client. Behind a proxy it is a misconfiguration: the socket address is the proxy's, so every
    * caller shares one bucket at the full `max`. Because both are legitimate configurations, the
    * component warns only when a request actually carries a forwarding header while none is configured
-   * to be read.
+   * to be read. Surrounding whitespace is trimmed, since a padded header name is not merely unmatched —
+   * `Headers.get` rejects it outright.
    */
   trustedClientIpHeader?: string
   /**

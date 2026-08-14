@@ -5,6 +5,7 @@ import {
   ICacheStorageComponent,
   IncrementOptions,
   IncrementResult,
+  assertCounterWithinSafeRange,
   assertValidIncrementOptions,
   fromSecondsToMilliseconds,
   isErrorWithMessage,
@@ -318,6 +319,10 @@ export async function createRedisComponent(
         [key.toLowerCase()],
         args
       )
+
+      // Redis counts in int64, which reaches further than JavaScript represents exactly, so a counter
+      // past that range would arrive here already rounded.
+      assertCounterWithinSafeRange(value)
 
       return {
         value,

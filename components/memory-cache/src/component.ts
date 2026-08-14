@@ -4,6 +4,7 @@ import {
   ICacheStorageComponent,
   IncrementOptions,
   IncrementResult,
+  assertCounterWithinSafeRange,
   assertIntegerCounter,
   assertValidIncrementOptions,
   sleep,
@@ -100,6 +101,9 @@ export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): IC
         assertIntegerCounter(current)
       }
       const value = current === undefined ? amount : current + amount
+      // The sum of two safe integers can leave the safe range, and reporting it rounded would be a
+      // silently wrong counter.
+      assertCounterWithinSafeRange(value)
 
       // Whether the entry already has a deadline decides between "leave it alone" and "apply the
       // requested one", so it has to be read *before* the write. `Infinity` is lru-cache's "no
