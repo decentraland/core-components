@@ -1,11 +1,11 @@
 {
-  "name": "@dcl/core-commons",
-  "version": "0.10.1",
-  "description": "Shared utilities and types for core components",
+  "name": "@dcl/rate-limiter-component",
+  "version": "0.1.0",
+  "description": "Fixed-window rate limiter component and middleware for core components library",
   "repository": {
     "type": "git",
     "url": "https://github.com/decentraland/core-components",
-    "directory": "shared/commons"
+    "directory": "components/rate-limiter"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,13 +19,17 @@
     "test": "jest",
     "lint": "echo \"No linting configured\""
   },
+  "dependencies": {
+    "@dcl/core-commons": "workspace:*",
+    "@well-known-components/interfaces": "^1.5.2"
+  },
   "devDependencies": {
+    "@dcl/http-server": "workspace:*",
+    "@dcl/memory-cache-component": "workspace:*",
+    "@dcl/redis-component": "workspace:*",
     "typescript": "^5.8.3"
   },
   "publishConfig": {
     "access": "public"
-  },
-  "dependencies": {
-    "@well-known-components/interfaces": "^1.5.2"
   }
 }

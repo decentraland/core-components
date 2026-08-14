@@ -87,6 +87,39 @@ handlers errors with a `413` once the limit is crossed. Either `413` sets `Conne
 oversized or stalled client can't tie up the socket. `bytes` must be a positive integer or the
 factory throws. It composes with the server-wide `maxBodySize` (the global cap still applies first).
 
+## Reading the client address
+
+Every middleware context carries `remoteAddress`, the address of the socket the request arrived on:
+
+```ts
+server.use(async (ctx, next) => {
+  logger.info('request', { from: ctx.remoteAddress ?? 'unknown' })
+  return next()
+})
+```
+
+The value is captured synchronously while the request is built, so it survives a socket torn down
+before the handler runs, and IPv4-mapped IPv6 is normalized (`::ffff:127.0.0.1` becomes
+`127.0.0.1`) so a client keys the same whether the listener is dual-stack or not. It lives on the
+context rather than being looked up from the request, so it also survives middleware that replace
+`ctx.request` — `createBodySizeLimitMiddleware` does exactly that.
+
+It is `undefined` for requests that did not arrive over a socket (`createTestServerComponent`, or a
+`Request` built directly). No placeholder is substituted, so a consumer that keys on the address has
+to decide what absence means rather than silently bucketing every such request together.
+
+> This is the **socket** address, not the originating client. Behind a proxy or load balancer it is
+> the proxy's address and is identical for every client. Anything that needs the real client — a rate
+> limiter, an audit log — must read a trusted forwarding header first and fall back to this only when
+> the server is directly exposed.
+
+In tests, give the in-memory server a peer address with `createTestServerComponent({ remoteAddress })`,
+or set one per request with `setRemoteAddress(request, address)` (which takes precedence):
+
+```ts
+const server = createTestServerComponent({ remoteAddress: '203.0.113.7' })
+```
+
 ## Returning a native `Response` from a handler
 
 Handlers return the structural `IResponse` (Node `Readable`/`Buffer`/string/JSON

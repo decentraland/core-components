@@ -1,0 +1,25 @@
+---
+'@dcl/rate-limiter-component': minor
+---
+
+Add `@dcl/rate-limiter-component`: a fixed-window rate limiter exposed as a middleware for `@dcl/http-server`, usable server-wide or per route, and backed by any `ICacheStorageComponent` — `@dcl/memory-cache-component` for a single instance, `@dcl/redis-component` for a fleet, chosen purely by wiring. Counting is one atomic `increment` per request, so a burst cannot slip through a read-modify-write race.
+
+```ts
+const rateLimiter = createRateLimiterComponent(
+  { cache, logs, metrics },
+  { keyPrefix: 'my-service:rl', trustedClientIpHeader: 'cf-connecting-ip' }
+)
+
+server.use(rateLimiter.withRateLimitMiddleware())
+router.post('/v1/login', rateLimiter.withRateLimitMiddleware({ name: 'login', max: 5, windowSeconds: 60 }), handler)
+```
+
+Rate limit activity is reported through `IMetricsComponent`, not the logger: `rate_limiter_requests_total{bucket,handler,outcome,key_source}` and `rate_limiter_store_errors_total{bucket,fail_open}`, with `metricDeclarations` exported for registration. A throttled caller retries, so a log line per rejection would be unbounded write amplification driven by the abuse being blocked, and the useful questions are aggregate ones. `handler` is the router's route template rather than the request path, and the identity is never a label — both would be unbounded cardinality, and the identity would put client addresses on the metrics endpoint.
+
+Rejections are `429`, with how much the caller is told controlled by an ordered `disclosure` scale: `NONE` sends the status code alone — no `Retry-After`, no `RateLimit-*` and no body, since a body naming the limit is disclosure too — then `RETRY_AFTER` (the default) adds the delay and a generic body, `ON_LIMIT` adds the standard `RateLimit-Limit`/`-Remaining`/`-Reset` triplet to the rejection, and `ALWAYS` also sends the triplet on successful responses so a client can pace itself before being throttled. Each level is a superset of the one below, and the level changes only what is disclosed: counting, rejection and metrics are identical at every level. Key derivation runs `getKey` → configured trusted header → `context.remoteAddress` → a shared fallback bucket at a tightened cap. Forwarded headers are read from the **right**, offset by `trustedProxyCount`, because the leftmost entry is client-supplied — reading it would let a caller both evade their own limit and throttle a victim by claiming the victim's address. A store outage fails open by default (`failOpen: false` inverts it), with an `onStoreError` hook so a silently disabled limiter stays visible. `consume(identity, overrides?)` covers non-HTTP call sites.
+
+Window phase is derived per identity rather than aligned to the Unix epoch. Epoch alignment makes every boundary global and permanent, so a single disclosed `Retry-After` would reveal the phase and a second the period — after which a caller could compute every future boundary for every client and deliberately spend a full allowance on each side of one, taking the 2x burst a fixed window inherently permits. Phasing per identity reduces that to what a caller could already measure about itself, and removes the synchronised edge where every counter in the fleet expires at the same instant. The offset is deterministic, so replicas sharing a Redis still agree on the window without coordinating.
+
+An integration suite exercises both cache backends through a real HTTP server — socket, router, limiter and store — covering per-client and per-endpoint isolation, the 429 shape at each disclosure level, window rollover in real time, and two limiter instances sharing one store. The redis half runs when `REDIS_URL` is set and is skipped otherwise, so a local run needs no server.
+
+`skip` accepts `string`, `string[]` or a predicate, and deliberately **not** a `RegExp`, unlike `@dcl/http-requests-logger-component`'s option of the same name. There `skip` decides whether a log line is written; here it decides whether the limit applies at all, and a pattern run against a caller-chosen pathname fails in two ways nothing can detect from the pattern: unanchored it matches more than intended, letting a caller opt out of the limit, and ambiguous it backtracks exponentially — `/^\/health\/(.*)+$/` costs 421ms of CPU for a 24-character path, on one thread, where `requestTimeout` cannot fire. A predicate expresses anything a pattern can while making it plainly the service's own decision.

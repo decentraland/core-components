@@ -2,6 +2,11 @@ import { LRUCache } from 'lru-cache'
 import { randomUUID } from 'crypto'
 import {
   ICacheStorageComponent,
+  IncrementOptions,
+  IncrementResult,
+  assertCounterWithinSafeRange,
+  assertIntegerCounter,
+  assertValidIncrementOptions,
   sleep,
   fromSecondsToMilliseconds,
   DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS,
@@ -78,6 +83,57 @@ export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): IC
       const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const regex = new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`)
       return allKeys.filter((key: string) => regex.test(key))
+    },
+
+    async increment(key: string, options?: IncrementOptions): Promise<IncrementResult> {
+      const { amount, ttlInSeconds } = assertValidIncrementOptions(options)
+
+      // Read-modify-write with no `await` between the read and the write. JavaScript cannot
+      // interleave another task inside a synchronous block, so this is atomic by construction for
+      // every caller in this process. DO NOT introduce an `await` (or any other suspension point)
+      // between the `get` and the `set` — that reopens the lost-update race this method exists to
+      // close. `async` only defers the returned promise; the body runs to completion first.
+      const current = cache.get(key)
+      // Not `typeof current === 'number'`: `NaN`, `±Infinity` and fractional values are all numbers,
+      // and incrementing them produces a counter that never crosses a threshold again. `NaN + 1` is
+      // `NaN`, so a single poisoned key would make a limiter fail open forever — silently.
+      if (current !== undefined) {
+        assertIntegerCounter(current)
+      }
+      const value = current === undefined ? amount : current + amount
+      // The sum of two safe integers can leave the safe range, and reporting it rounded would be a
+      // silently wrong counter.
+      assertCounterWithinSafeRange(value)
+
+      // Whether the entry already has a deadline decides between "leave it alone" and "apply the
+      // requested one", so it has to be read *before* the write. `Infinity` is lru-cache's "no
+      // expiry"; a missing key reports `0`, which is harmless here because lru-cache forces
+      // `noUpdateTTL` off when *adding* an entry, so a new counter always gets its TTL either way.
+      const hasExpiry = Number.isFinite(cache.getRemainingTTL(key))
+
+      // `noUpdateTTL` keeps an existing deadline intact, which is what stops every increment from
+      // sliding the window — including sliding the constructor's default TTL when no per-call TTL is
+      // given. It is deliberately dropped for a counter that has no deadline at all while a TTL was
+      // requested: that is the repair case, and leaving the flag on would keep an immortal counter
+      // immortal forever, diverging from the Redis backend (`PTTL < 0` there) and from the documented
+      // contract. Mirrors Redis in only repairing when a TTL was actually passed.
+      cache.set(key, value, {
+        noUpdateTTL: hasExpiry || ttlInSeconds === undefined,
+        ...(ttlInSeconds !== undefined ? { ttl: fromSecondsToMilliseconds(ttlInSeconds) } : {})
+      })
+
+      // Read again after the write: lru-cache installs the real `getRemainingTTL` lazily when TTL
+      // tracking is first initialized, so the pre-write read can come from the stub.
+      const remaining = cache.getRemainingTTL(key)
+      return {
+        value,
+        // Rounded up to whole milliseconds: lru-cache derives this from `performance.now()` and hands
+        // back a sub-millisecond float (`59999.964333`), where Redis reports an integer. Without this
+        // the two backends disagree on the type of a documented public field, and a consumer piping it
+        // into a header emits an invalid `Retry-After`. Ceiling matches the direction Redis rounds on
+        // the way in, and keeps a counter with <1ms left from reporting `0`.
+        ttlRemainingInMilliseconds: Number.isFinite(remaining) ? Math.max(0, Math.ceil(remaining)) : undefined
+      }
     },
 
     async setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
