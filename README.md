@@ -21,6 +21,7 @@ core-components/
 │   ├── metrics/          # Prometheus metrics component handler
 │   ├── pg/               # PostgreSQL database component
 │   ├── queue-consumer/   # Queue message consumer and handler component
+│   ├── rate-limiter/     # Fixed-window HTTP rate limiter middleware component
 │   ├── redis/            # Redis cache component
 │   ├── s3/               # AWS S3 storage component
 │   ├── schema-validator/ # JSON schema validation component
@@ -80,6 +81,7 @@ core-components/
 - **Job Component** (`@dcl/job-component`) - Job scheduling and execution
 - **Features Component** (`@dcl/features-component`) - Feature flag resolution from environment variables and the feature-flags service
 - **Schema Validator Component** (`@dcl/schema-validator-component`) - JSON schema validation middleware
+- **Rate Limiter Component** (`@dcl/rate-limiter-component`) - Fixed-window HTTP rate limiter middleware backed by any cache component
 - **Fetch Component** (`@dcl/fetch-component`) - HTTP client with retries and timeouts on the native Node fetch API
 - **Traced Fetch Component** (`@dcl/traced-fetch-component`) - HTTP requests with distributed tracing
 - **Core Commons** (`@dcl/core-commons`) - Shared utilities, types, and constants
@@ -170,6 +172,7 @@ This project uses [Changesets](https://github.com/changesets/changesets) for aut
 - `@dcl/metrics`
 - `@dcl/pg-component`
 - `@dcl/queue-consumer-component`
+- `@dcl/rate-limiter-component`
 - `@dcl/redis-component`
 - `@dcl/s3-component`
 - `@dcl/fetch-component`
