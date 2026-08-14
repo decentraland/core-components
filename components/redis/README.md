@@ -25,12 +25,29 @@ const value = await cache.get('key')
 - Pattern-based key scanning
 - Automatic JSON serialization
 - Connection lifecycle management
-- Error handling and logging
+- Cached Lua scripts addressed by digest (`EVALSHA`), with an automatic fallback
+- Debug-level logging, with failures surfaced by throwing
+
+## Logging
+
+Every log this component writes is at **debug** level, including failures. Each operation rethrows
+what it caught, so the caller decides the severity and gets to add its own context — logging at error
+here as well would double-report the same failure, once without context and once with.
+
+## Scripted operations
+
+`increment` and `releaseLock` run Lua server-side. They are invoked with `EVALSHA`, which sends a
+40-byte digest rather than the script body — worth having when a per-request workload like a rate
+limiter would otherwise re-upload the source on every call. The digest is computed locally (Redis
+addresses a cached script by the SHA-1 of its body, so no `SCRIPT LOAD` round trip is needed), and a
+`NOSCRIPT` reply falls back to sending the body, which both answers that call and caches the script
+for the next one. That fallback is not just a cold-start concern: it is also what makes the component
+survive a Redis restart, a failover, or a `SCRIPT FLUSH`.
 
 ## Atomic counters
 
 `increment` adds to an integer counter and returns the new value together with the counter's
-remaining lifetime, as one indivisible operation — a single Lua `EVAL` doing `INCRBY`, `PTTL` and a
+remaining lifetime, as one indivisible operation — a single Lua script doing `INCRBY`, `PTTL` and a
 conditional `PEXPIRE`. Use it for rate limiting, quotas and any other "count events without a lock"
 workload: `get` + `set` loses updates across the network round trip, and `acquireLock` costs several
 extra round trips per call.

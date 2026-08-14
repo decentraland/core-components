@@ -24,6 +24,10 @@ increment: jest.fn().mockResolvedValue({ value: 1 })
 
 Declaring it optional was considered and rejected: it would convert a compile-time guarantee into a runtime failure, and a rate limiter whose counter silently no-ops is the worst available failure mode.
 
+Redis invokes its Lua scripts (`increment` and `releaseLock`) with `EVALSHA` rather than `EVAL`, so a per-request workload sends a 40-byte digest instead of re-uploading the script body every call. A `NOSCRIPT` reply falls back to sending the body, which keeps it correct across a restart, failover or `SCRIPT FLUSH` as well as on a cold cache.
+
+All logging in `@dcl/redis-component` moved to **debug** level. Every operation rethrows what it caught, so the caller owns the severity and the context; logging at error here as well double-reported the same failure.
+
 ## Two behaviours worth knowing
 
 - In-memory counters are subject to LRU eviction and can reset before their TTL expires (`max` defaults to 10 000), where Redis counters cannot.
