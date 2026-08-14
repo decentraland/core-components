@@ -62,8 +62,13 @@ export enum RateLimitDisclosure {
  * - `string[]` — exempt when any entry equals `url.pathname`.
  * - `RegExp` — tested against `url.pathname`. Global/sticky flags are stripped, since the same
  *   regex is reused across requests and `lastIndex` would otherwise make matches alternate.
- *   **Anchor it.** The pathname is caller-controlled, so an unanchored `/health\//` also matches
- *   `/v1/notes/health/live`, handing anyone a way to opt out of the limit.
+ *   Two cautions, both because the pathname is chosen by the caller. **Anchor it**: an unanchored
+ *   `/health\//` also matches `/v1/notes/health/live`, handing anyone a way to opt out of the limit.
+ *   And **keep it linear**: a pattern with nested quantifiers such as `/^\/(a+)+$/` backtracks
+ *   catastrophically on a crafted path — measured at 416ms of CPU for a single 26-character request,
+ *   growing exponentially with length — and Node is single-threaded, so that stalls every other
+ *   request too. A `string[]` or a predicate cannot do either, so prefer them unless a pattern is
+ *   genuinely needed.
  * - function — receives the request; return `true` to exempt it.
  *
  * A skipped request is neither counted nor rejected. There is **no default**: unlike the request
