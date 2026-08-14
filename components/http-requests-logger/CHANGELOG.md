@@ -1,5 +1,13 @@
 # @dcl/http-requests-logger-component
 
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [6871695]
+- Updated dependencies [6871695]
+  - @dcl/core-commons@0.11.0
+
 ## 1.0.0
 
 ### Major Changes

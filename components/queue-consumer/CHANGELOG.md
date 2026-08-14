@@ -1,5 +1,14 @@
 # @dcl/queue-consumer-component
 
+## 3.0.6
+
+### Patch Changes
+
+- Updated dependencies [6871695]
+- Updated dependencies [6871695]
+  - @dcl/core-commons@0.11.0
+  - @dcl/sqs-component@2.2.6
+
 ## 3.0.5
 
 ### Patch Changes

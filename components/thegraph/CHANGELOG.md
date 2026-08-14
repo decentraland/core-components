@@ -1,5 +1,13 @@
 # @dcl/thegraph-component
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [6871695]
+- Updated dependencies [6871695]
+  - @dcl/core-commons@0.11.0
+
 ## 0.1.2
 
 ### Patch Changes

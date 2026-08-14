@@ -1,5 +1,14 @@
 # @dcl/traced-fetch-component
 
+## 1.0.9
+
+### Patch Changes
+
+- Updated dependencies [6871695]
+- Updated dependencies [6871695]
+  - @dcl/core-commons@0.11.0
+  - @dcl/fetch-component@1.1.2
+
 ## 1.0.8
 
 ### Patch Changes

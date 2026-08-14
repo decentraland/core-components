@@ -1,6 +1,6 @@
 {
   "name": "@dcl/rate-limiter-component",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Fixed-window rate limiter component and middleware for core components library",
   "repository": {
     "type": "git",
