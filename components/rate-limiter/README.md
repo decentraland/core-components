@@ -10,6 +10,7 @@ A component that exposes a fixed-window rate limiter as a middleware, applicable
 - Configurable key derivation with a safe, tightened fallback when no client address is available.
 - Fails open by default on a store outage, with a switch to fail closed.
 - `429` + `Retry-After`, plus standard `RateLimit-*` headers.
+- Prometheus metrics instead of log lines, labelled by bucket, route and outcome.
 - A `consume` API for non-HTTP call sites (websocket handlers, queue consumers, domain actions).
 
 ## Usage
@@ -18,7 +19,7 @@ A component that exposes a fixed-window rate limiter as a middleware, applicable
 import { createRateLimiterComponent } from '@dcl/rate-limiter-component'
 
 const rateLimiter = createRateLimiterComponent(
-  { cache, logs },
+  { cache, logs, metrics },
   {
     // Namespace per service — several services on one Redis would otherwise share counters.
     keyPrefix: 'my-service:rl',
@@ -75,6 +76,39 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 | `onStoreError`               | `(ctx, error) => void`                   | —                    | Called on every counter failure, so a silent fail-open stays visible.           |
 | `buildLimitExceededResponse` | `(ctx, result) => IResponse`             | —                    | Replaces the built-in `429`; a throw or nullish return falls back to it.         |
 
+## Metrics
+
+Rate limit activity is reported as metrics, never logged. A throttled caller retries, so a line per
+rejection is unbounded write amplification driven by the very abuse the limiter exists to stop — and
+the useful questions are aggregate ones a counter answers directly.
+
+Register the declarations with your metrics component:
+
+```typescript
+import { metricDeclarations as rateLimiterMetrics } from '@dcl/rate-limiter-component'
+
+const metrics = await createMetricsComponent({ ...myMetrics, ...rateLimiterMetrics }, { config })
+```
+
+| Metric | Labels | Meaning |
+| --- | --- | --- |
+| `rate_limiter_requests_total` | `bucket`, `handler`, `outcome`, `key_source` | Every counted request. `outcome` is `allowed`, `limited` or `degraded`. |
+| `rate_limiter_store_errors_total` | `bucket`, `fail_open` | Counter reads/writes that failed. Non-zero means the limiter is degraded. |
+
+`handler` is the **route template** (`/v1/notes/:id`) taken from the router, empty for a middleware
+mounted with `server.use()` before any route matched. It is deliberately never the request path, and
+the identity is deliberately not a label at all: ids and IP addresses would create an unbounded number
+of series, and would put personal data on the metrics endpoint.
+
+`degraded` is kept separate from `allowed` so a cache outage cannot look like healthy traffic. Two
+alerts worth having: a rising `outcome="limited"` rate on one `handler`, and any
+`rate_limiter_store_errors_total` at all — with `fail_open="true"` that means the limiter has quietly
+stopped limiting.
+
+Misconfiguration is still logged (a warning when no client address can be established, or when a
+configured trusted header yields nothing), as are store failures. Only the per-rejection event moved
+to metrics.
+
 ## Choosing a store
 
 Both cache components implement `ICacheStorageComponent`, so the choice is one line of wiring:
@@ -114,6 +148,7 @@ Each proxy appends the address it saw, so the rightmost entries come from infras
 - **Counting happens before the handler runs**, so a request the handler later rejects (401, 404) still consumes budget. That is intentional — it is what protects an auth endpoint — but it means "only count successful requests" is not supported.
 - **Hooks run on the critical path** and are awaited; keep them to a counter, not an HTTP call. A throw is caught and logged rather than turned into a `500`.
 - **`skip` has no default.** For health checks, pass `skip: ['/health/live', '/health/ready']`; for CORS preflight, `skip: (request) => request.method === 'OPTIONS'`.
+- **Skipped requests are not counted and produce no metric** — they never reach the counter.
 - **`consume` with an empty identity** is routed to the shared fallback bucket at the tightened cap, not given its own bucket at the full limit — so `consume(session.address ?? '')` degrades safely. A non-string identity throws.
 - **Only `@dcl/http-server` populates `context.remoteAddress` today.** `@dcl/uws-http-server` returns the raw uWS app and does not, so a uWS-based service must supply `getKey` or a trusted header, or every caller lands in the shared fallback bucket.
 - **Requests rejected before the middleware chain are never counted.** `@dcl/http-server` answers an oversized `Content-Length` with a `413` before any middleware runs, so those requests consume no budget.

@@ -2,6 +2,7 @@ import { isIP } from 'net'
 import { createHash } from 'crypto'
 import { isErrorWithMessage, type IHttpServerComponent } from '@dcl/core-commons'
 import { CacheIncrementUnsupportedError, InvalidRateLimitConfigurationError } from './errors'
+import { RateLimitOutcome } from './metrics'
 import {
   IRateLimiterComponent,
   RateLimiterComponents,
@@ -211,7 +212,7 @@ export function createRateLimiterComponent(
   components: RateLimiterComponents,
   options: RateLimiterOptions = {}
 ): IRateLimiterComponent {
-  const { cache, logs } = components
+  const { cache, logs, metrics } = components
   const logger = logs.getLogger('rate-limiter')
 
   // A cache from an older release would fail per request, deep inside the fail-open path, where the
@@ -364,6 +365,10 @@ export function createRateLimiterComponent(
           }
         )
       }
+      metrics.increment('rate_limiter_store_errors_total', {
+        bucket: policy.bucket,
+        fail_open: String(policy.failOpen)
+      })
       await runHook(policy.onStoreError && (() => policy.onStoreError!(context, error)), 'onStoreError')
 
       return { ...base, allowed: policy.failOpen, remaining: 0, firstRejectionInWindow: false, storeUnavailable: true }
@@ -450,6 +455,8 @@ export function createRateLimiterComponent(
       const max = source === RateLimitKeySource.FALLBACK ? policy.fallbackMax : policy.max
       const result = await count(identity, policy, max, source, context)
 
+      recordOutcome(result, routeHandlerOf(context))
+
       if (result.allowed) {
         const response = await next()
         // Not while the store is down: the counts are not real, and advertising `Remaining: 0` to a
@@ -460,16 +467,6 @@ export function createRateLimiterComponent(
           : response
       }
 
-      // Once per bucket per window: a caller that keeps retrying while throttled would otherwise
-      // write a line per request.
-      if (result.firstRejectionInWindow) {
-        logger.warn('Request rejected by the rate limiter', {
-          bucket: result.bucket,
-          keySource: result.keySource,
-          limit: result.limit,
-          retryAfterSeconds: result.retryAfterSeconds
-        })
-      }
       await runHook(policy.onLimitExceeded && (() => policy.onLimitExceeded!(context, result)), 'onLimitExceeded')
 
       // Falls back to the built-in `429` if the custom builder throws or returns nothing. It is the
@@ -511,13 +508,49 @@ export function createRateLimiterComponent(
           'consume() was called with an empty identity, so those calls share one bucket at a tightened cap. Pass a real identity to get per-caller limiting.'
         )
       }
-      return count(FALLBACK_IDENTITY, policy, policy.fallbackMax, RateLimitKeySource.FALLBACK)
+      const fallbackResult = await count(FALLBACK_IDENTITY, policy, policy.fallbackMax, RateLimitKeySource.FALLBACK)
+      recordOutcome(fallbackResult, '')
+      return fallbackResult
     }
 
-    return count(identity, policy, policy.max, RateLimitKeySource.CUSTOM)
+    const result = await count(identity, policy, policy.max, RateLimitKeySource.CUSTOM)
+    recordOutcome(result, '')
+    return result
+  }
+
+  /**
+   * Reports the decision as a counter rather than a log line. `handler` is the matched route template,
+   * so an endpoint being throttled is visible without the request path — which would be unbounded as a
+   * label and would carry ids.
+   */
+  function recordOutcome(result: RateLimitResult, handler: string): void {
+    const outcome = result.storeUnavailable
+      ? RateLimitOutcome.DEGRADED
+      : result.allowed
+        ? RateLimitOutcome.ALLOWED
+        : RateLimitOutcome.LIMITED
+
+    metrics.increment('rate_limiter_requests_total', {
+      bucket: result.bucket,
+      handler,
+      outcome,
+      key_source: result.keySource
+    })
   }
 
   return { consume, withRateLimitMiddleware }
+}
+
+/**
+ * The matched route template for the `handler` metric label, e.g. `/v1/notes/:id`.
+ *
+ * The router puts it on the context; a middleware mounted with `server.use()` runs before any route
+ * matched, so it is empty there. Deliberately never the raw pathname: ids in a path would create an
+ * unbounded number of Prometheus series.
+ */
+function routeHandlerOf(context: IHttpServerComponent.DefaultContext<object>): string {
+  const routed = context as { routerPath?: unknown }
+  return typeof routed.routerPath === 'string' ? routed.routerPath : ''
 }
 
 // The retry delay travels in `Retry-After` only, never in the body: one authoritative place for it

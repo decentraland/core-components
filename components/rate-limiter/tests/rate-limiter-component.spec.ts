@@ -23,6 +23,7 @@ import {
   RateLimitResult,
   RateLimitSkipper
 } from '../src/types'
+import { RateLimitOutcome } from '../src/metrics'
 
 type Middleware = IHttpServerComponent.IRequestHandler<object>
 
@@ -48,7 +49,19 @@ function createFakeCache() {
   }
 }
 
+function createFakeMetrics() {
+  return {
+    increment: jest.fn(),
+    decrement: jest.fn(),
+    observe: jest.fn(),
+    startTimer: jest.fn().mockReturnValue({ end: jest.fn() }),
+    reset: jest.fn(),
+    resetAll: jest.fn()
+  }
+}
+
 let cache: ReturnType<typeof createFakeCache>
+let metrics: ReturnType<typeof createFakeMetrics>
 let warnMock: jest.Mock
 let errorMock: jest.Mock
 let logs: ILoggerComponent
@@ -87,6 +100,7 @@ async function callTimes(times: number, mw: Middleware = middleware, ctx = conte
 
 beforeEach(() => {
   cache = createFakeCache()
+  metrics = createFakeMetrics()
   warnMock = jest.fn()
   errorMock = jest.fn()
   logs = {
@@ -98,7 +112,7 @@ beforeEach(() => {
       error: errorMock
     })
   }
-  components = { cache, logs }
+  components = { cache, logs, metrics: metrics as unknown as RateLimiterComponents['metrics'] }
   options = { keyPrefix: 'svc:rl', max: 3, windowSeconds: 60 }
   context = createContext()
   downstreamResponse = { status: 200, body: { ok: true } }
@@ -176,23 +190,37 @@ describe('when the request count exceeds the limit', () => {
     expect(Number(headers.get('RateLimit-Reset'))).toBeLessThanOrEqual(60)
   })
 
-  describe('and it is the first rejection in the window', () => {
-    it('should warn once naming the bucket, key source and limit', () => {
-      expect(warnMock).toHaveBeenCalledTimes(1)
-      expect(warnMock).toHaveBeenCalledWith(
-        'Request rejected by the rate limiter',
-        expect.objectContaining({ bucket: '3p60', keySource: RateLimitKeySource.SOCKET, limit: 3 })
-      )
+  it('should count the rejection as a metric rather than writing a log line', () => {
+    expect(metrics.increment).toHaveBeenCalledWith('rate_limiter_requests_total', {
+      bucket: '3p60',
+      handler: '',
+      outcome: RateLimitOutcome.LIMITED,
+      key_source: RateLimitKeySource.SOCKET
     })
   })
 
-  describe('and a later request in the same window is also rejected', () => {
+  it('should not log the rejection, since a throttled caller retries and would amplify the writes', () => {
+    expect(warnMock).not.toHaveBeenCalled()
+    expect(errorMock).not.toHaveBeenCalled()
+  })
+
+  it('should count the allowed requests too, so a rejection rate is computable', () => {
+    expect(metrics.increment).toHaveBeenCalledWith(
+      'rate_limiter_requests_total',
+      expect.objectContaining({ outcome: RateLimitOutcome.ALLOWED })
+    )
+  })
+
+  describe('and further requests in the same window are rejected', () => {
     beforeEach(async () => {
       await middleware(context, next)
     })
 
-    it('should not warn again', () => {
-      expect(warnMock).toHaveBeenCalledTimes(1)
+    it('should count each one rather than deduplicating like a log would', () => {
+      const limited = metrics.increment.mock.calls.filter(
+        call => call[0] === 'rate_limiter_requests_total' && call[1]?.outcome === RateLimitOutcome.LIMITED
+      )
+      expect(limited).toHaveLength(2)
     })
   })
 })
@@ -795,7 +823,7 @@ describe('when the limiter is created with an invalid configuration', () => {
 
   describe('and the cache does not implement increment', () => {
     it('should throw so a stale dependency does not look like an outage', () => {
-      expect(() => createRateLimiterComponent({ cache: {} as any, logs }, options)).toThrow(
+      expect(() => createRateLimiterComponent({ ...components, cache: {} as any }, options)).toThrow(
         CacheIncrementUnsupportedError
       )
     })
@@ -1473,5 +1501,80 @@ describe('when a custom limit exceeded response sets its own rate limit headers'
 
   it('should overwrite them with the real limit, so the advertised value cannot be wrong', () => {
     expect(new Headers(response.headers).get('RateLimit-Limit')).toBe('3')
+  })
+})
+
+describe('when the limiter is mounted inside a router', () => {
+  let routedContext: IHttpServerComponent.DefaultContext<object>
+
+  beforeEach(async () => {
+    // The router puts the matched template on the context; that, not the request path, is the label.
+    routedContext = { ...createContext({ pathname: '/v1/notes/abc-123' }), routerPath: '/v1/notes/:id' } as any
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    await middleware(routedContext, next)
+  })
+
+  it('should label the metric with the route template, not the request path', () => {
+    expect(metrics.increment).toHaveBeenCalledWith(
+      'rate_limiter_requests_total',
+      expect.objectContaining({ handler: '/v1/notes/:id' })
+    )
+  })
+
+  it('should keep the path out of the labels, since ids there would be unbounded cardinality', () => {
+    const labels = metrics.increment.mock.calls.map(call => JSON.stringify(call[1]))
+    expect(labels.every(label => !label.includes('abc-123'))).toBe(true)
+  })
+})
+
+describe('when the counter store fails', () => {
+  beforeEach(async () => {
+    cache.increment.mockRejectedValue(new Error('redis down'))
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    await middleware(context, next)
+  })
+
+  it('should count a store error against the bucket, recording the fail-open policy', () => {
+    expect(metrics.increment).toHaveBeenCalledWith('rate_limiter_store_errors_total', {
+      bucket: '3p60',
+      fail_open: 'true'
+    })
+  })
+
+  it('should mark the request degraded rather than allowed, so an outage cannot look healthy', () => {
+    expect(metrics.increment).toHaveBeenCalledWith(
+      'rate_limiter_requests_total',
+      expect.objectContaining({ outcome: RateLimitOutcome.DEGRADED })
+    )
+  })
+})
+
+describe('when consuming a key directly outside the HTTP path', () => {
+  beforeEach(async () => {
+    limiter = createRateLimiterComponent(components, options)
+    await limiter.consume('address:0xabc')
+  })
+
+  it('should still record the outcome, with no route to attribute it to', () => {
+    expect(metrics.increment).toHaveBeenCalledWith('rate_limiter_requests_total', {
+      bucket: '3p60',
+      handler: '',
+      outcome: RateLimitOutcome.ALLOWED,
+      key_source: RateLimitKeySource.CUSTOM
+    })
+  })
+})
+
+describe('when a request is skipped', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      skip: '/health/live'
+    }).withRateLimitMiddleware()
+    await middleware(createContext({ pathname: '/health/live' }), next)
+  })
+
+  it('should not record a metric for it, since it was never counted', () => {
+    expect(metrics.increment).not.toHaveBeenCalled()
   })
 })

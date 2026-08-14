@@ -1,5 +1,6 @@
-import type { ILoggerComponent } from '@well-known-components/interfaces'
+import type { ILoggerComponent, IMetricsComponent } from '@well-known-components/interfaces'
 import type { ICacheStorageComponent, IHttpServerComponent } from '@dcl/core-commons'
+import type { metricDeclarations } from './metrics'
 
 /**
  * Where the identity a request was counted against came from. Surfaced on {@link RateLimitResult}
@@ -290,6 +291,16 @@ export type RateLimiterOptions = RateLimitPolicyOptions & {
 export type RateLimiterComponents = {
   cache: Pick<ICacheStorageComponent, 'increment'>
   logs: ILoggerComponent
+  /**
+   * Where rate limit activity is reported. Rejections are counted here rather than logged: a
+   * throttled caller retries, so a log line per rejection is unbounded write amplification driven by
+   * the abuse the limiter exists to stop, and the useful questions ("which endpoint is being
+   * throttled, how much, is it getting worse?") are aggregate questions a counter answers and a log
+   * search does not.
+   *
+   * Register {@link metricDeclarations} with your metrics component so the series exist.
+   */
+  metrics: IMetricsComponent<keyof typeof metricDeclarations>
 }
 
 /**
