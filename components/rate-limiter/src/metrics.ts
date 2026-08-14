@@ -59,8 +59,6 @@ export enum RateLimitAddressIssue {
   TRUSTED_HEADER_MISSING = 'trusted-header-missing',
   /** The configured header was present but held no usable address, or fewer hops than trusted. */
   TRUSTED_HEADER_UNUSABLE = 'trusted-header-unusable',
-  /** A forwarding header arrived while none is configured to be read. */
-  FORWARDING_HEADER_IGNORED = 'forwarding-header-ignored',
   /** No address at all, so the request went to the shared fallback bucket. */
   NO_CLIENT_ADDRESS = 'no-client-address'
 }

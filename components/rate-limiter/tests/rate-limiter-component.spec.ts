@@ -1865,25 +1865,18 @@ describe('when no trusted client IP header is configured', () => {
         await middleware(createContext({ headers: { [header]: '198.51.100.4' } }), next)
       })
 
-      it('should warn that a proxy is reporting the client and being ignored', () => {
-        expect(warnMock).toHaveBeenCalledWith(
-          expect.stringContaining('no trustedClientIpHeader is configured'),
-          expect.objectContaining({ issue: RateLimitAddressIssue.FORWARDING_HEADER_IGNORED })
+      it('should stay silent, since any client can send that header at will', () => {
+        expect(warnMock).not.toHaveBeenCalled()
+      })
+
+      it('should count no issue, so an outsider cannot inflate an alert-worthy counter', () => {
+        expect(metrics.increment).not.toHaveBeenCalledWith(
+          'rate_limiter_client_address_issues_total',
+          expect.anything()
         )
       })
 
-      it('should name the header it saw', () => {
-        expect(warnMock).toHaveBeenCalledWith(expect.stringContaining(header), expect.anything())
-      })
-
-      it('should count the issue', () => {
-        expect(metrics.increment).toHaveBeenCalledWith('rate_limiter_client_address_issues_total', {
-          bucket: '3p60',
-          issue: RateLimitAddressIssue.FORWARDING_HEADER_IGNORED
-        })
-      })
-
-      it('should still key on the socket address rather than trusting the header', () => {
+      it('should key on the socket address rather than the unverified header', () => {
         expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('203.0.113.7'), expect.anything())
       })
     }
@@ -1895,11 +1888,8 @@ describe('when no trusted client IP header is configured', () => {
       await callTimes(3, middleware, createContext({ headers: { 'x-forwarded-for': '198.51.100.4' } }))
     })
 
-    it('should log once inside the interval, so it does not scale with traffic', () => {
-      const ignored = warnMock.mock.calls.filter(call =>
-        String(call[0]).includes('no trustedClientIpHeader is configured')
-      )
-      expect(ignored).toHaveLength(1)
+    it('should stay silent however many arrive, since the trigger would be caller-controlled', () => {
+      expect(warnMock).not.toHaveBeenCalled()
     })
   })
 

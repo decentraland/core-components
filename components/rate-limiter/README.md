@@ -180,13 +180,12 @@ alerts worth having: a rising `outcome="limited"` rate on one `handler`; any
 stopped limiting; and any sustained `rate_limiter_client_address_issues_total`, which means the limiter
 is keying on the wrong thing and callers are probably sharing a bucket.
 
-`issue` takes one of four values, each a distinct misconfiguration:
+`issue` takes one of three values, each a misconfiguration that no caller can trigger:
 
 | `issue` | Cause |
 | --- | --- |
 | `trusted-header-missing` | A header is configured but this request did not carry it — wrong name, or the request bypassed the proxy. |
 | `trusted-header-unusable` | The header was there but held no usable address, commonly a `trustedProxyCount` that no longer matches the hops. |
-| `forwarding-header-ignored` | A forwarding header arrived while none is configured to be read. |
 | `no-client-address` | Nothing to key on at all, so the request took the shared fallback bucket. |
 
 Each is also logged, at most once per ten minutes per issue: often enough to reappear while the
@@ -194,7 +193,7 @@ condition lasts (these usually begin at a deploy, not at startup) and bounded re
 The metric counts every affected request, so the log tells you *that* it is happening and the metric
 tells you *how much*.
 
-Misconfiguration is still logged as well as counted — the four `issue` values above — as are store
+Misconfiguration is still logged as well as counted — the three `issue` values above — as are store
 failures. Only the per-rejection event moved to metrics alone.
 
 ## Choosing a store
@@ -254,25 +253,32 @@ address really is the client, and nothing is logged. Behind a proxy it is a misc
 sharp edge — the socket address is the *proxy's*, so every caller in the world shares one bucket, and
 at the **full** `max` rather than the tightened fallback cap, because a socket address was found.
 
-Since a directly exposed service is legitimate, the component cannot warn merely because the option is
-unset. It warns when a request carries a forwarding header (`cf-connecting-ip`, `x-forwarded-for`,
-`x-real-ip`, `true-client-ip`, `forwarded`) while none is configured to be read — something in front is
-reporting the client and being ignored. The header is never *used* on that path, only noticed.
+**This case is deliberately not reported, and that is a trade.** The only way to detect it from a
+request is to notice a forwarding header arriving while none is configured to be read — and a client can
+send `x-forwarded-for` at will. Reporting on that would let an outsider raise a warning, and inflate a
+counter people alert on, against a service that is configured perfectly. A signal an unauthenticated
+caller controls is worse than no signal, so there is none.
 
-The four cases, for reference:
+What replaces it is not client-controlled: **`key_source="socket"` dominating** on a service you believe
+sits behind a proxy says exactly the same thing, on a dashboard, and cannot be forged. Watch that
+instead.
 
-| Deployment | Keyed on | Cap | Logged |
+The three reported cases, and the one that is not:
+
+| Deployment | Keyed on | Cap | Reported |
 | --- | --- | --- | --- |
 | No header configured, directly exposed | client IP | `max` | nothing — this is correct |
-| No header configured, behind a proxy | the proxy's IP — one bucket for all | `max` | `forwarding-header-ignored` |
+| No header configured, behind a proxy | the proxy's IP — one bucket for all | `max` | **nothing** — watch `key_source` |
 | Header configured but yields nothing | the proxy's IP — one bucket for all | `max` | `trusted-header-missing` / `-unusable` |
 | No client address at all (e.g. uWS) | shared fallback bucket | `max / fallbackMaxDivisor` | `no-client-address` |
 
+The header cases above *are* reported, and legitimately so: the trigger there is our own configuration
+saying a header will arrive and it not arriving, which no caller can manufacture — if they could reach
+the origin directly to omit it, the report is telling you something true and worse.
+
 Both collapse cases keep the full `max` deliberately: the tightened cap exists for the bucket that is
 *known* to be shared, and applying it to a socket address would quietly divide every limit by ten in
-local development, where all traffic arrives from `127.0.0.1`. The `key_source` metric label is the
-other half of this — `key_source="socket"` dominating on a service you believe sits behind a CDN is the
-same signal, visible on a dashboard rather than in a log.
+local development, where all traffic arrives from `127.0.0.1`.
 
 > **Security.** A forwarding header is only trustworthy because the network makes it so. If a caller can reach the origin without passing through the proxy, they control their own bucket — which grants them an unlimited allowance *and* lets them throttle a victim by claiming the victim's address. Set `trustedClientIpHeader` only when the origin is unreachable except through that proxy, and prefer a single-value header written by the edge (`cf-connecting-ip`) over `x-forwarded-for`. A header value that does not parse as an IP address is treated as absent, so garbage cannot mint buckets.
 
