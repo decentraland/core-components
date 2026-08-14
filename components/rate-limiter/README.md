@@ -177,8 +177,8 @@ const metrics = await createMetricsComponent({ ...myMetrics, ...rateLimiterMetri
 deliberately not a label at all: ids and IP addresses would create an unbounded number of series, and
 would put personal data on the metrics endpoint.
 
-Note that `handler` keeps the router's own spelling (`/v1/notes/:id`) while `bucket` templates it
-(`GET /v1/notes/{id}`). That is intentional: `handler` matches the label `@dcl/http-server` puts on its
+Note that `handler` keeps the router's own spelling (`/v1/notes/:id`) while `bucket` templates it and
+appends the policy (`/v1/notes/{id} 100p60`). That is intentional: `handler` matches the label `@dcl/http-server` puts on its
 own `http_request_duration_seconds` and `http_requests_total`, so a rate limit can be read alongside the
 latency and status of the same route.
 
@@ -232,22 +232,20 @@ Each proxy appends the address it saw, so the rightmost entries come from infras
 ### Keying on something other than an address
 
 `getKey` receives the middleware context and returns the identity string to count against — a user, a
-tenant, an API key, anything with bounded cardinality:
+tenant, an API key, anything with bounded cardinality. Parameterize the component with your own
+context type so `getKey` and every hook see it:
 
 ```typescript
 // Signed traffic per wallet; anonymous traffic still bounded per IP, from one limiter.
-getKey: ctx => ctx.verification?.auth ?? null
-```
-
-The context is typed as whatever the component was created with, so parameterizing it removes the need
-for casts in `getKey` and in every hook:
-
-```typescript
 const rateLimiter = createRateLimiterComponent<GlobalContext>(
   { cache, logs, metrics },
   { getKey: ctx => ctx.verification?.auth ?? null }   // ctx is GlobalContext, no cast
 )
 ```
+
+The type parameter is not decoration. Left off, `ctx` is `DefaultContext<object>` and reading anything
+your own middleware attached is a compile error — `Property 'verification' does not exist on type
+'DefaultContext<object>'` for the line above — so the alternative is a cast in every hook.
 
 Returning `null`, `undefined`, `''` or a whitespace-only string **falls through** to the address chain
 below, which is what makes that mixed pattern work. Throwing does too, with a log line — a broken key function must not turn a
@@ -351,7 +349,7 @@ CI provides a redis service, so both halves run on every pull request.
 - **Skipped requests are not counted and produce no metric** — they never reach the counter.
 - **`consume` with an empty identity** is routed to the shared fallback bucket at the tightened cap, not given its own bucket at the full limit — so `consume(session.address ?? '')` degrades safely. A non-string identity throws.
 - **Only `@dcl/http-server` populates `context.remoteAddress` today.** `@dcl/uws-http-server` returns the raw uWS app and does not, so a uWS-based service must supply `getKey` or a trusted header, or every caller lands in the shared fallback bucket.
-- **Requests rejected before the middleware chain are never counted.** `@dcl/http-server` answers an oversized `Content-Length` with a `413` before any middleware runs, so those requests consume no budget.
+- **Requests rejected before the middleware chain are never counted.** When the server is created with `maxBodySize`, `@dcl/http-server` answers an oversized declared `Content-Length` with a `413` in `asyncHandle`, before any middleware runs, so those requests consume no budget. That option has no default — omitting it means no pre-chain rejection — and the per-route `createBodySizeLimitMiddleware` is an ordinary middleware, so it only precedes the limiter where it is mounted first. A global `server.use(rateLimiter…)` counts the request before either.
 - **In integration tests, pass `createTestServerComponent({ remoteAddress })`.** It defaults to no address, which means an untouched suite exercises the fallback bucket rather than the per-client path — a limiter can look tested while its real code path never ran.
 - **Give the limiter its own cache instance** when using the in-memory backend. Counter churn shares the LRU with whatever else the service caches, so each evicts the other.
 - **Key cardinality.** One key per (bucket, window, identity). A counter's TTL is the remainder of its window plus a grace second, so live keys span one window plus a brief overlap. A distributed attack from many source addresses creates many keys, so keep windows short.
