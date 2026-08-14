@@ -67,7 +67,7 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 | `name`                       | `string`                                 | `` `${max}p${windowSeconds}` `` | Bucket the counter lives under. Non-empty, and may not contain `:`.  |
 | `max`                        | `number`                                 | `100`                | Requests allowed per window, per identity.                                     |
 | `windowSeconds`              | `number`                                 | `60`                 | Window length, at most `86400`. Windows are aligned to the Unix epoch.          |
-| `getKey`                     | `(ctx) => string \| null \| undefined \| Promise<…>` | —        | Derives the identity; returning nullish or empty falls through to the client address. |
+| `getKey`                     | `(ctx) => string \| null \| undefined \| Promise<…>` | —        | Returns the identity to count against. Nullish or empty falls through to the address chain. |
 | `skip`                       | `fn \| string[] \| string \| RegExp`     | — (none)             | Requests exempt from counting.                                                 |
 | `failOpen`                   | `boolean`                                | `true`               | Allow (`true`) or reject (`false`) when the counter store is unreachable.       |
 | `fallbackMaxDivisor`         | `number`                                 | `10`                 | Divides `max` for the shared bucket used when no address is available.          |
@@ -127,6 +127,7 @@ const metrics = await createMetricsComponent({ ...myMetrics, ...rateLimiterMetri
 | Metric | Labels | Meaning |
 | --- | --- | --- |
 | `rate_limiter_requests_total` | `bucket`, `handler`, `outcome`, `key_source` | Every counted request. `outcome` is `allowed`, `limited` or `degraded`. |
+| `rate_limiter_client_address_issues_total` | `bucket`, `issue` | The client address could not be resolved as configured. See **Key derivation**. |
 | `rate_limiter_store_errors_total` | `bucket`, `fail_open` | Counter reads/writes that failed. Non-zero means the limiter is degraded. |
 
 `handler` is the **route template** (`/v1/notes/:id`) taken from the router, empty for a middleware
@@ -134,10 +135,25 @@ mounted with `server.use()` before any route matched. It is deliberately never t
 the identity is deliberately not a label at all: ids and IP addresses would create an unbounded number
 of series, and would put personal data on the metrics endpoint.
 
-`degraded` is kept separate from `allowed` so a cache outage cannot look like healthy traffic. Two
-alerts worth having: a rising `outcome="limited"` rate on one `handler`, and any
+`degraded` is kept separate from `allowed` so a cache outage cannot look like healthy traffic. Three
+alerts worth having: a rising `outcome="limited"` rate on one `handler`; any
 `rate_limiter_store_errors_total` at all — with `fail_open="true"` that means the limiter has quietly
-stopped limiting.
+stopped limiting; and any sustained `rate_limiter_client_address_issues_total`, which means the limiter
+is keying on the wrong thing and callers are probably sharing a bucket.
+
+`issue` takes one of four values, each a distinct misconfiguration:
+
+| `issue` | Cause |
+| --- | --- |
+| `trusted-header-missing` | A header is configured but this request did not carry it — wrong name, or the request bypassed the proxy. |
+| `trusted-header-unusable` | The header was there but held no usable address, commonly a `trustedProxyCount` that no longer matches the hops. |
+| `forwarding-header-ignored` | A forwarding header arrived while none is configured to be read. |
+| `no-client-address` | Nothing to key on at all, so the request took the shared fallback bucket. |
+
+Each is also logged, at most once per ten minutes per issue: often enough to reappear while the
+condition lasts (these usually begin at a deploy, not at startup) and bounded regardless of traffic.
+The metric counts every affected request, so the log tells you *that* it is happening and the metric
+tells you *how much*.
 
 Misconfiguration is still logged (a warning when no client address can be established, or when a
 configured trusted header yields nothing), as are store failures. Only the per-rejection event moved
@@ -168,6 +184,21 @@ X-Forwarded-For: <client-supplied>, <written by proxy 2>, <written by proxy 1>
 
 Each proxy appends the address it saw, so the rightmost entries come from infrastructure you control and the leftmost is whatever the client sent. A header holding fewer entries than the trusted chain would produce is discarded rather than trusted.
 
+### Keying on something other than an address
+
+`getKey` receives the middleware context and returns the identity string to count against — a user, a
+tenant, an API key, anything with bounded cardinality:
+
+```typescript
+// Signed traffic per wallet; anonymous traffic still bounded per IP, from one limiter.
+getKey: ctx => ctx.verification?.auth ?? null
+```
+
+Returning `null`, `undefined` or `''` **falls through** to the address chain below, which is what makes
+that mixed pattern work. Throwing does too, with a log line — a broken key function must not turn a
+request into a `500`. It may be async. Whatever it returns selects a bucket, so it must not be raw
+client input, and values over 128 characters are hashed automatically.
+
 ### When no trusted header is configured
 
 Leaving `trustedClientIpHeader` unset is correct for a **directly exposed** service: the socket
@@ -184,10 +215,10 @@ The four cases, for reference:
 
 | Deployment | Keyed on | Cap | Logged |
 | --- | --- | --- | --- |
-| No header configured, directly exposed | client IP | `max` | nothing |
-| No header configured, behind a proxy | the proxy's IP — one bucket for all | `max` | warns once |
-| Header configured but yields nothing | the proxy's IP — one bucket for all | `max` | warns once |
-| No client address at all (e.g. uWS) | shared fallback bucket | `max / fallbackMaxDivisor` | warns once |
+| No header configured, directly exposed | client IP | `max` | nothing — this is correct |
+| No header configured, behind a proxy | the proxy's IP — one bucket for all | `max` | `forwarding-header-ignored` |
+| Header configured but yields nothing | the proxy's IP — one bucket for all | `max` | `trusted-header-missing` / `-unusable` |
+| No client address at all (e.g. uWS) | shared fallback bucket | `max / fallbackMaxDivisor` | `no-client-address` |
 
 Both collapse cases keep the full `max` deliberately: the tightened cap exists for the bucket that is
 *known* to be shared, and applying it to a socket address would quietly divide every limit by ten in

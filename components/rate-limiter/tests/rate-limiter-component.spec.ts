@@ -24,7 +24,7 @@ import {
   RateLimitResult,
   RateLimitSkipper
 } from '../src/types'
-import { RateLimitOutcome } from '../src/metrics'
+import { RateLimitAddressIssue, RateLimitOutcome } from '../src/metrics'
 
 type Middleware = IHttpServerComponent.IRequestHandler<object>
 
@@ -480,7 +480,7 @@ describe('when no client address can be established', () => {
     expect(responses[10].status).toBe(429)
   })
 
-  it('should warn once about the shared bucket, however many requests arrive', () => {
+  it('should log about the shared bucket once, however many requests arrive', () => {
     const sharedBucketWarnings = warnMock.mock.calls.filter(call =>
       String(call[0]).includes('every caller shares one rate limit bucket')
     )
@@ -1272,9 +1272,20 @@ describe('when a trusted client IP header is configured but yields no address', 
 
     it('should warn that requests are being keyed on the connecting address', () => {
       expect(warnMock).toHaveBeenCalledWith(
-        expect.stringContaining('did not yield a client address'),
-        expect.objectContaining({ headerPresent: 'false' })
+        expect.stringContaining('was not present on the request'),
+        expect.objectContaining({ issue: RateLimitAddressIssue.TRUSTED_HEADER_MISSING })
       )
+    })
+
+    it('should count the issue so it is alertable rather than only greppable', () => {
+      expect(metrics.increment).toHaveBeenCalledWith('rate_limiter_client_address_issues_total', {
+        bucket: '3p60',
+        issue: RateLimitAddressIssue.TRUSTED_HEADER_MISSING
+      })
+    })
+
+    it('should still fall through to the socket address', () => {
+      expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('203.0.113.7'), expect.anything())
     })
   })
 
@@ -1283,21 +1294,53 @@ describe('when a trusted client IP header is configured but yields no address', 
       await middleware(createContext({ headers: { 'cf-connecting-ip': 'garbage' } }), next)
     })
 
-    it('should record that the header was present, distinguishing a rename from a bad value', () => {
+    it('should distinguish a bad value from a missing header, which have different causes', () => {
       expect(warnMock).toHaveBeenCalledWith(
-        expect.stringContaining('did not yield a client address'),
-        expect.objectContaining({ headerPresent: 'true' })
+        expect.stringContaining('held no usable address'),
+        expect.objectContaining({ issue: RateLimitAddressIssue.TRUSTED_HEADER_UNUSABLE })
       )
+    })
+
+    it('should count it under its own issue label', () => {
+      expect(metrics.increment).toHaveBeenCalledWith('rate_limiter_client_address_issues_total', {
+        bucket: '3p60',
+        issue: RateLimitAddressIssue.TRUSTED_HEADER_UNUSABLE
+      })
     })
   })
 
-  describe('and many requests arrive', () => {
+  describe('and many requests arrive inside the log interval', () => {
     beforeEach(async () => {
       await callTimes(3, middleware, createContext())
     })
 
-    it('should warn only once per instance', () => {
-      expect(warnMock.mock.calls.filter(call => String(call[0]).includes('did not yield')).length).toBe(1)
+    it('should log once, so the message does not scale with traffic', () => {
+      expect(warnMock.mock.calls.filter(call => String(call[0]).includes('was not present')).length).toBe(1)
+    })
+
+    it('should still count every affected request, so the metric shows the real volume', () => {
+      const counted = metrics.increment.mock.calls.filter(
+        call => call[0] === 'rate_limiter_client_address_issues_total'
+      )
+      expect(counted).toHaveLength(3)
+    })
+  })
+
+  describe('and the condition persists past the log interval', () => {
+    beforeEach(async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-13T10:00:00.000Z'))
+      middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+      await middleware(createContext(), next)
+      jest.setSystemTime(new Date('2026-08-13T10:11:00.000Z'))
+      await middleware(createContext(), next)
+    })
+
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
+    it('should say so again, rather than going quiet for the life of the process', () => {
+      expect(warnMock.mock.calls.filter(call => String(call[0]).includes('was not present')).length).toBe(2)
     })
   })
 })
@@ -1353,7 +1396,7 @@ describe('when consuming with an identity that is not usable', () => {
     })
 
     it('should warn so the caller learns it is not getting per-caller limiting', () => {
-      expect(warnMock).toHaveBeenCalledWith(expect.stringContaining('empty identity'))
+      expect(warnMock).toHaveBeenCalledWith(expect.stringContaining('empty identity'), expect.anything())
     })
   })
 
@@ -1809,11 +1852,21 @@ describe('when no trusted client IP header is configured', () => {
       })
 
       it('should warn that a proxy is reporting the client and being ignored', () => {
-        expect(warnMock).toHaveBeenCalledWith(expect.stringContaining('no trustedClientIpHeader is configured'))
+        expect(warnMock).toHaveBeenCalledWith(
+          expect.stringContaining('no trustedClientIpHeader is configured'),
+          expect.objectContaining({ issue: RateLimitAddressIssue.FORWARDING_HEADER_IGNORED })
+        )
       })
 
       it('should name the header it saw', () => {
-        expect(warnMock).toHaveBeenCalledWith(expect.stringContaining(header))
+        expect(warnMock).toHaveBeenCalledWith(expect.stringContaining(header), expect.anything())
+      })
+
+      it('should count the issue', () => {
+        expect(metrics.increment).toHaveBeenCalledWith('rate_limiter_client_address_issues_total', {
+          bucket: '3p60',
+          issue: RateLimitAddressIssue.FORWARDING_HEADER_IGNORED
+        })
       })
 
       it('should still key on the socket address rather than trusting the header', () => {
@@ -1828,7 +1881,7 @@ describe('when no trusted client IP header is configured', () => {
       await callTimes(3, middleware, createContext({ headers: { 'x-forwarded-for': '198.51.100.4' } }))
     })
 
-    it('should warn only once per instance', () => {
+    it('should log once inside the interval, so it does not scale with traffic', () => {
       const ignored = warnMock.mock.calls.filter(call =>
         String(call[0]).includes('no trustedClientIpHeader is configured')
       )
@@ -1857,7 +1910,10 @@ describe('when no trusted client IP header is configured', () => {
     })
 
     it('should report the shared bucket rather than the ignored-header case', () => {
-      expect(warnMock).toHaveBeenCalledWith(expect.stringContaining('every caller shares one rate limit bucket'))
+      expect(warnMock).toHaveBeenCalledWith(
+        expect.stringContaining('every caller shares one rate limit bucket'),
+        expect.objectContaining({ issue: RateLimitAddressIssue.NO_CLIENT_ADDRESS })
+      )
     })
   })
 })

@@ -2,7 +2,7 @@ import { isIP } from 'net'
 import { createHash } from 'crypto'
 import { isErrorWithMessage, type IHttpServerComponent } from '@dcl/core-commons'
 import { CacheIncrementUnsupportedError, InvalidRateLimitConfigurationError } from './errors'
-import { RateLimitOutcome } from './metrics'
+import { RateLimitAddressIssue, RateLimitOutcome } from './metrics'
 import {
   IRateLimiterComponent,
   RateLimiterComponents,
@@ -33,6 +33,12 @@ const IPV4_MAPPED_IPV6 = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/
 // whatever rounding the store applies. Over-living is harmless: the next window uses a different
 // key, so the counter is never read again once its window id has moved on.
 const COUNTER_TTL_GRACE_SECONDS = 1
+
+// How often a client-address misconfiguration is re-logged while it persists. Warning once per
+// process is not enough: the condition usually starts at a deploy or a CDN change, long after startup,
+// and a single line that scrolled past hours ago is not something anyone alerts on. Re-stating it on a
+// slow interval keeps the signal alive and stays bounded no matter the request rate.
+const ADDRESS_ISSUE_LOG_INTERVAL_MS = 10 * 60_000
 
 // A store outage produces one failure per request; log at most this often instead.
 const STORE_ERROR_LOG_INTERVAL_MS = 10_000
@@ -278,10 +284,24 @@ export function createRateLimiterComponent(
 
   // Scoped to this instance rather than the module, so a service running several limiters with
   // different key configs hears about each one — and so tests need no reset hatch in production code.
-  let warnedAboutMissingClientAddress = false
-  let warnedAboutUnusableTrustedHeader = false
-  let warnedAboutIgnoredForwardingHeader = false
+  const addressIssueLoggedAt = new Map<RateLimitAddressIssue, number>()
   let lastStoreErrorLoggedAt = 0
+
+  /**
+   * Records a client-address misconfiguration: always as a metric, and as a log line at most once per
+   * {@link ADDRESS_ISSUE_LOG_INTERVAL_MS} so the message keeps reappearing while the condition lasts
+   * without scaling with traffic.
+   */
+  function reportAddressIssue(issue: RateLimitAddressIssue, bucket: string, message: string): void {
+    metrics.increment('rate_limiter_client_address_issues_total', { bucket, issue })
+
+    const now = Date.now()
+    const lastLoggedAt = addressIssueLoggedAt.get(issue)
+    if (lastLoggedAt === undefined || now - lastLoggedAt >= ADDRESS_ISSUE_LOG_INTERVAL_MS) {
+      addressIssueLoggedAt.set(issue, now)
+      logger.warn(message, { issue })
+    }
+  }
 
   function resolvePolicy(overrides?: RateLimitPolicyOptions): ResolvedPolicy {
     // Key-by-key rather than `{ ...options, ...overrides }`: a spread copies keys whose value is
@@ -460,15 +480,19 @@ export function createRateLimiterComponent(
       // so every client in the world collapses onto the proxy's address and the limit becomes a
       // global cap — a self-inflicted outage with nothing in the logs. Causes: the header was renamed,
       // the CDN was bypassed or removed, or `trustedProxyCount` no longer matches the real hop count.
-      if (!warnedAboutUnusableTrustedHeader) {
-        warnedAboutUnusableTrustedHeader = true
-        logger.warn(
-          `The configured trustedClientIpHeader "${trustedClientIpHeader}" did not yield a client address, so requests are being keyed on the connecting address instead. ` +
-            'Behind a proxy that is the proxy itself, which buckets every client together and turns the per-client limit into a global one. ' +
-            `Check the header name and that trustedProxyCount (${trustedProxyCount}) matches the number of proxies that append to it.`,
-          { headerPresent: String(rawHeader !== null) }
-        )
-      }
+      reportAddressIssue(
+        rawHeader === null
+          ? RateLimitAddressIssue.TRUSTED_HEADER_MISSING
+          : RateLimitAddressIssue.TRUSTED_HEADER_UNUSABLE,
+        policy.bucket,
+        rawHeader === null
+          ? `The configured trustedClientIpHeader "${trustedClientIpHeader}" was not present on the request, so it is being keyed on the connecting address instead. ` +
+              'Behind a proxy that is the proxy itself, which buckets every caller into one limit. ' +
+              'Either the header name is wrong, or this request did not come through the proxy that sets it.'
+          : `The configured trustedClientIpHeader "${trustedClientIpHeader}" held no usable address, so the request is being keyed on the connecting address instead. ` +
+              'Behind a proxy that is the proxy itself, which buckets every caller into one limit. ' +
+              `Check that trustedProxyCount (${trustedProxyCount}) matches the number of proxies that append to the header.`
+      )
     }
 
     const socketAddress = canonicalizeIpAddress(context.remoteAddress)
@@ -479,11 +503,12 @@ export function createRateLimiterComponent(
       // "No header configured" cannot be a warning on its own, since a directly exposed service is a
       // legitimate deployment. A forwarding header arriving while we read none of them is the
       // discriminator: it means something in front is telling us the real client and we are ignoring it.
-      if (!trustedClientIpHeader && !warnedAboutIgnoredForwardingHeader) {
+      if (!trustedClientIpHeader) {
         const ignored = FORWARDING_HEADERS.find(header => context.request.headers.get(header) !== null)
         if (ignored) {
-          warnedAboutIgnoredForwardingHeader = true
-          logger.warn(
+          reportAddressIssue(
+            RateLimitAddressIssue.FORWARDING_HEADER_IGNORED,
+            policy.bucket,
             `Requests carry a "${ignored}" header but no trustedClientIpHeader is configured, so they are being keyed on the connecting address. ` +
               'Behind a proxy that is the proxy itself, which buckets every caller into one limit. ' +
               'Configure trustedClientIpHeader (with trustedProxyCount matching the hops that append to it) if this service is behind a proxy, ' +
@@ -494,13 +519,12 @@ export function createRateLimiterComponent(
       return { identity: socketAddress, source: RateLimitKeySource.SOCKET }
     }
 
-    if (!warnedAboutMissingClientAddress) {
-      warnedAboutMissingClientAddress = true
-      logger.warn(
-        'No client address could be established, so every caller shares one rate limit bucket at a tightened cap. ' +
-          'Check that this service runs behind a proxy setting the configured trustedClientIpHeader, or on a server that exposes the socket address.'
-      )
-    }
+    reportAddressIssue(
+      RateLimitAddressIssue.NO_CLIENT_ADDRESS,
+      policy.bucket,
+      'No client address could be established, so every caller shares one rate limit bucket at a tightened cap. ' +
+        'Check that this service runs behind a proxy setting the configured trustedClientIpHeader, or on a server that exposes the socket address.'
+    )
     return { identity: FALLBACK_IDENTITY, source: RateLimitKeySource.FALLBACK }
   }
 
@@ -575,12 +599,11 @@ export function createRateLimiterComponent(
     // Treating it as a normal key would give every anonymous caller one shared bucket at the FULL
     // limit, which is exactly backwards; route it the way the middleware routes a missing address.
     if (identity.trim().length === 0) {
-      if (!warnedAboutMissingClientAddress) {
-        warnedAboutMissingClientAddress = true
-        logger.warn(
-          'consume() was called with an empty identity, so those calls share one bucket at a tightened cap. Pass a real identity to get per-caller limiting.'
-        )
-      }
+      reportAddressIssue(
+        RateLimitAddressIssue.NO_CLIENT_ADDRESS,
+        policy.bucket,
+        'consume() was called with an empty identity, so those calls share one bucket at a tightened cap. Pass a real identity to get per-caller limiting.'
+      )
       const fallbackResult = await count(FALLBACK_IDENTITY, policy, policy.fallbackMax, RateLimitKeySource.FALLBACK)
       recordOutcome(fallbackResult, '')
       return fallbackResult

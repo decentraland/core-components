@@ -17,6 +17,11 @@ export const metricDeclarations = {
     type: IMetricsComponent.CounterType,
     labelNames: rateLimitLabels
   },
+  rate_limiter_client_address_issues_total: {
+    help: 'Requests whose client address could not be resolved as configured. A sustained rate means the limiter is keying on the wrong thing — most often that every caller is sharing one bucket.',
+    type: IMetricsComponent.CounterType,
+    labelNames: ['bucket', 'issue'] as const
+  },
   rate_limiter_store_errors_total: {
     help: 'Failures reading or writing a rate limit counter. A non-zero rate means the limiter is degraded: with failOpen it is not limiting, without it everything is being rejected.',
     type: IMetricsComponent.CounterType,
@@ -39,4 +44,23 @@ export enum RateLimitOutcome {
    * separate from `allowed` so a cache outage cannot masquerade as healthy traffic on a dashboard.
    */
   DEGRADED = 'degraded'
+}
+
+/**
+ * The value of the `issue` label on `rate_limiter_client_address_issues_total`.
+ *
+ * Each of these is a misconfiguration rather than a request-level event, and each one collapses
+ * callers into a shared bucket, so a sustained rate on any of them is worth an alert.
+ *
+ * @public
+ */
+export enum RateLimitAddressIssue {
+  /** A `trustedClientIpHeader` is configured but the request did not carry it. */
+  TRUSTED_HEADER_MISSING = 'trusted-header-missing',
+  /** The configured header was present but held no usable address, or fewer hops than trusted. */
+  TRUSTED_HEADER_UNUSABLE = 'trusted-header-unusable',
+  /** A forwarding header arrived while none is configured to be read. */
+  FORWARDING_HEADER_IGNORED = 'forwarding-header-ignored',
+  /** No address at all, so the request went to the shared fallback bucket. */
+  NO_CLIENT_ADDRESS = 'no-client-address'
 }
