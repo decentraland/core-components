@@ -54,6 +54,28 @@ function isString(s: any): s is string {
   return typeof s === 'string' || s instanceof String
 }
 
+/**
+ * Adds `field` to `Vary` without dropping the values already listed there. A response can vary on
+ * several request headers at once — the origin and the requested headers on a preflight, plus
+ * whatever the handler itself varies on — and overwriting the header would leave a shared cache
+ * keying on only the last one, so it could serve a response built for a different origin.
+ */
+function appendVary(headers: Headers, field: string) {
+  const current = headers.get('Vary')
+  if (!current) {
+    headers.set('Vary', field)
+    return
+  }
+  const listed = current.split(',').map((value) => value.trim())
+  // `Vary: *` already means "never reuse this response"; narrowing it to named fields would be wrong.
+  if (listed.includes('*')) {
+    return
+  }
+  if (!listed.some((value) => value.toLowerCase() === field.toLowerCase())) {
+    headers.set('Vary', `${current}, ${field}`)
+  }
+}
+
 function isOriginAllowed(
   origin: string,
   allowedOrigin: (string | RegExp)[] | RegExp | string | boolean | CustomOrigin
@@ -86,12 +108,12 @@ function configureOrigin(options: CorsOptions, req: Request, headers: Headers) {
   } else if (isString(options.origin)) {
     // fixed origin
     headers.set('Access-Control-Allow-Origin', options.origin)
-    headers.set('Vary', 'Origin')
+    appendVary(headers, 'Origin')
   } else if (requestOrigin && options.origin) {
     isAllowed = isOriginAllowed(requestOrigin, options.origin)
     // reflect origin
     headers.set('Access-Control-Allow-Origin', isAllowed ? requestOrigin : 'false')
-    headers.set('Vary', 'Origin')
+    appendVary(headers, 'Origin')
   }
 }
 
@@ -112,7 +134,7 @@ function configureAllowedHeaders(options: CorsOptions, req: Request, headers: He
 
   if (!allowedHeaders) {
     allowedHeaders = req.headers.get('access-control-request-headers')! // .headers wasn't specified, so reflect the request headers
-    headers.set('Vary', 'Access-Control-Request-Headers')
+    appendVary(headers, 'Access-Control-Request-Headers')
   }
   if (allowedHeaders && !isString(allowedHeaders)) {
     allowedHeaders = allowedHeaders.join(',') // .headers is an array, so turn it into a string
@@ -192,7 +214,15 @@ export function createCorsMiddleware<Context>(options: CorsOptions): IHttpServer
 
       // actual response
       const headers = new Headers(base.headers)
-      getActualResponseCorsHeaders(options, request).forEach((value, key) => headers.set(key, value))
+      getActualResponseCorsHeaders(options, request).forEach((value, key) => {
+        // Every CORS header replaces whatever the handler set, except `Vary`, which accumulates:
+        // the handler may already vary on something of its own (e.g. `Accept-Encoding`).
+        if (key.toLowerCase() === 'vary') {
+          appendVary(headers, value)
+        } else {
+          headers.set(key, value)
+        }
+      })
 
       return { ...base, headers }
     }

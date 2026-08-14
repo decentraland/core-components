@@ -285,3 +285,157 @@ describe('when building an OPTIONS response directly', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(corsHeaders['Access-Control-Allow-Origin'])
   })
 })
+
+describe('when setting the Vary header on a preflight response', () => {
+  let next: jest.MockedFunction<() => Promise<IHttpServerComponent.IResponse>>
+  let handler: IHttpServerComponent.IRequestHandler<{}>
+  let context: IHttpServerComponent.DefaultContext
+
+  beforeEach(() => {
+    next = jest.fn()
+  })
+
+  afterEach(() => {
+    jest.resetAllMocks()
+  })
+
+  describe('and the origin is reflected while the allowed headers are left unpinned', () => {
+    beforeEach(() => {
+      handler = createCorsMiddleware<{}>({ origin: true })
+      context = contextForRequest(
+        new Request('http://localhost/', {
+          method: 'OPTIONS',
+          headers: { origin: 'http://a.example', 'access-control-request-headers': 'x-identity-auth-chain-0' }
+        })
+      )
+    })
+
+    it('should vary on both the origin and the requested headers', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Vary')).toBe('Origin, Access-Control-Request-Headers')
+    })
+
+    it('should reflect the requesting origin', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Access-Control-Allow-Origin')).toBe('http://a.example')
+    })
+
+    it('should reflect the requested headers', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Access-Control-Allow-Headers')).toBe('x-identity-auth-chain-0')
+    })
+  })
+
+  describe('and the origin is a fixed string while the allowed headers are left unpinned', () => {
+    beforeEach(() => {
+      handler = createCorsMiddleware<{}>({ origin: 'http://a.example' })
+      context = contextForRequest(
+        new Request('http://localhost/', {
+          method: 'OPTIONS',
+          headers: { origin: 'http://a.example', 'access-control-request-headers': 'x-custom' }
+        })
+      )
+    })
+
+    it('should vary on both the origin and the requested headers', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Vary')).toBe('Origin, Access-Control-Request-Headers')
+    })
+  })
+
+  describe('and the origin is permissive while the allowed headers are left unpinned', () => {
+    beforeEach(() => {
+      handler = createCorsMiddleware<{}>({ origin: '*' })
+      context = contextForRequest(
+        new Request('http://localhost/', {
+          method: 'OPTIONS',
+          headers: { origin: 'http://a.example', 'access-control-request-headers': 'x-custom' }
+        })
+      )
+    })
+
+    it('should vary only on the requested headers', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Vary')).toBe('Access-Control-Request-Headers')
+    })
+  })
+
+  describe('and the origin is reflected while the allowed headers are pinned', () => {
+    beforeEach(() => {
+      handler = createCorsMiddleware<{}>({ origin: true, allowedHeaders: ['X-Custom'] })
+      context = contextForRequest(
+        new Request('http://localhost/', {
+          method: 'OPTIONS',
+          headers: { origin: 'http://a.example', 'access-control-request-headers': 'x-custom' }
+        })
+      )
+    })
+
+    it('should vary only on the origin', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Vary')).toBe('Origin')
+    })
+  })
+})
+
+describe('when merging CORS headers onto an actual response', () => {
+  let next: jest.MockedFunction<() => Promise<IHttpServerComponent.IResponse>>
+  let handler: IHttpServerComponent.IRequestHandler<{}>
+  let context: IHttpServerComponent.DefaultContext
+
+  beforeEach(() => {
+    next = jest.fn()
+    handler = createCorsMiddleware<{}>({ origin: true })
+    context = contextForRequest(
+      new Request('http://localhost/data', { method: 'GET', headers: { origin: 'http://a.example' } })
+    )
+  })
+
+  afterEach(() => {
+    jest.resetAllMocks()
+  })
+
+  describe('and the handler already varies on a header of its own', () => {
+    beforeEach(() => {
+      next.mockResolvedValueOnce({ status: 200, headers: new Headers({ vary: 'Accept-Encoding' }) })
+    })
+
+    it('should keep the handler value and add the origin to it', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Vary')).toBe('Accept-Encoding, Origin')
+    })
+  })
+
+  describe('and the handler already varies on the origin', () => {
+    beforeEach(() => {
+      next.mockResolvedValueOnce({ status: 200, headers: new Headers({ vary: 'Origin' }) })
+    })
+
+    it('should not repeat the origin', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Vary')).toBe('Origin')
+    })
+  })
+
+  describe('and the handler opted out of caching altogether', () => {
+    beforeEach(() => {
+      next.mockResolvedValueOnce({ status: 200, headers: new Headers({ vary: '*' }) })
+    })
+
+    it('should leave the wildcard untouched', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Vary')).toBe('*')
+    })
+  })
+
+  describe('and the handler set no Vary header', () => {
+    beforeEach(() => {
+      next.mockResolvedValueOnce({ status: 200, headers: new Headers({ 'content-type': 'application/json' }) })
+    })
+
+    it('should vary on the origin', async () => {
+      const response = await handler(context, next)
+      expect((response.headers as Headers).get('Vary')).toBe('Origin')
+    })
+  })
+})
