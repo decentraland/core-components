@@ -36,6 +36,15 @@ const COUNTER_TTL_GRACE_SECONDS = 1
 // A store outage produces one failure per request; log at most this often instead.
 const STORE_ERROR_LOG_INTERVAL_MS = 10_000
 
+// A day. Beyond this a `windowSeconds` value is far more likely to be milliseconds by mistake than
+// a genuine window.
+const MAX_WINDOW_SECONDS = 86_400
+
+const HEADER_MODES = new Set<string>(Object.values(RateLimitHeaderMode))
+
+// Anything but `:`, which is the key's segment separator, and non-empty.
+const VALID_BUCKET_NAME = /^[^:\s][^:]*$/
+
 export function assertPositiveInteger(setting: string, value: unknown): void {
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
     throw new InvalidRateLimitConfigurationError(setting, value)
@@ -63,7 +72,19 @@ function stripPort(value: string): string {
  */
 export function canonicalizeIpAddress(value: string | null | undefined): string | null {
   if (!value) return null
-  const candidate = stripPort(value.trim())
+  const withZone = stripPort(value.trim())
+
+  // A link-local address carries a `%interface` suffix that `new URL()` rejects, so the whole value
+  // used to come back `null` and every zoned peer landed in the shared fallback bucket. Canonicalize
+  // the address, then re-attach the zone, which keeps peers on different interfaces distinct — the
+  // same reasoning `@dcl/http-server`'s `normalizeRemoteAddress` uses when it preserves the zone.
+  const zoneAt = withZone.indexOf('%')
+  if (zoneAt > 0) {
+    const canonical = canonicalizeIpAddress(withZone.slice(0, zoneAt))
+    return canonical === null ? null : `${canonical}%${withZone.slice(zoneAt + 1)}`
+  }
+
+  const candidate = withZone
   const version = isIP(candidate)
   // Anything that is not an address would let a caller mint unlimited buckets.
   if (version === 0) return null
@@ -137,8 +158,11 @@ export function buildCounterKey(keyPrefix: string, bucket: string, windowId: num
  * collisions are not a practical concern — and a collision only merges two buckets.
  */
 export function encodeIdentity(identity: string, hashKeys: boolean): string {
-  if (!hashKeys && identity.length <= MAX_RAW_IDENTITY_LENGTH) return identity
-  return createHash('sha256').update(identity).digest('hex').slice(0, 32)
+  // The `r:`/`h:` tag keeps the two encodings in separate keyspaces. Without it a caller could send
+  // the 32-hex digest of a long victim identity as its own (short, so stored raw) identity and land
+  // on the victim's counter — and mixed-length identities could collide by accident.
+  if (!hashKeys && identity.length <= MAX_RAW_IDENTITY_LENGTH) return `r:${identity}`
+  return `h:${createHash('sha256').update(identity).digest('hex').slice(0, 32)}`
 }
 
 /**
@@ -201,6 +225,14 @@ export function createRateLimiterComponent(
     throw new InvalidRateLimitConfigurationError('keyPrefix', keyPrefix)
   }
 
+  if (options.trustedClientIpHeader !== undefined) {
+    // Validated rather than coerced: an empty string silently disables the whole feature (the
+    // lookup below is guarded on truthiness), which is what `process.env.CLIENT_IP_HEADER ?? ''`
+    // produces, and a non-string used to throw a bare `TypeError` out of `toLowerCase`.
+    if (typeof options.trustedClientIpHeader !== 'string' || options.trustedClientIpHeader.trim().length === 0) {
+      throw new InvalidRateLimitConfigurationError('trustedClientIpHeader', options.trustedClientIpHeader)
+    }
+  }
   const trustedClientIpHeader = options.trustedClientIpHeader?.toLowerCase()
   const trustedProxyCount = options.trustedProxyCount ?? DEFAULT_TRUSTED_PROXY_COUNT
   assertPositiveInteger('trustedProxyCount', trustedProxyCount)
@@ -209,10 +241,24 @@ export function createRateLimiterComponent(
   // Scoped to this instance rather than the module, so a service running several limiters with
   // different key configs hears about each one — and so tests need no reset hatch in production code.
   let warnedAboutMissingClientAddress = false
+  let warnedAboutUnusableTrustedHeader = false
   let lastStoreErrorLoggedAt = 0
 
   function resolvePolicy(overrides?: RateLimitPolicyOptions): ResolvedPolicy {
-    const merged = { ...options, ...overrides }
+    // Key-by-key rather than `{ ...options, ...overrides }`: a spread copies keys whose value is
+    // `undefined`, so `withRateLimitMiddleware({ max: config.loginMax })` with an unset config field
+    // would erase a component-wide `max` and silently fall through to the built-in default — a
+    // loosening, not a tightening. The same spread would flip an operator's `failOpen: false` back
+    // to `true`. Only a key that carries a real value overrides.
+    const merged: RateLimitPolicyOptions = { ...options }
+    if (overrides) {
+      for (const [key, value] of Object.entries(overrides)) {
+        if (value !== undefined) {
+          ;(merged as Record<string, unknown>)[key] = value
+        }
+      }
+    }
+
     const max = merged.max ?? DEFAULT_MAX
     const windowSeconds = merged.windowSeconds ?? DEFAULT_WINDOW_SECONDS
     const fallbackMaxDivisor = merged.fallbackMaxDivisor ?? DEFAULT_FALLBACK_MAX_DIVISOR
@@ -220,6 +266,23 @@ export function createRateLimiterComponent(
     assertPositiveInteger('max', max)
     assertPositiveInteger('windowSeconds', windowSeconds)
     assertPositiveInteger('fallbackMaxDivisor', fallbackMaxDivisor)
+    // A window longer than a day is almost always a seconds/milliseconds mix-up — `windowSeconds:
+    // 3_600_000` for an intended hour is a 41-day window otherwise accepted in silence. A daily
+    // quota is legitimate, so the ceiling sits there; note that a mix-up landing *under* a day
+    // (60_000 for an intended minute) is indistinguishable from a real 16.7-hour window by
+    // magnitude and still passes.
+    if (windowSeconds > MAX_WINDOW_SECONDS) {
+      throw new InvalidRateLimitConfigurationError('windowSeconds', windowSeconds)
+    }
+    if (merged.emitRateLimitHeaders !== undefined && !HEADER_MODES.has(merged.emitRateLimitHeaders)) {
+      throw new InvalidRateLimitConfigurationError('emitRateLimitHeaders', merged.emitRateLimitHeaders)
+    }
+    // The bucket sits between the prefix and the window id in the key, so a `:` inside it could
+    // straddle those segments and make two different policies share one counter. The identity is
+    // the final segment and is therefore free to contain `:`.
+    if (merged.name !== undefined && (typeof merged.name !== 'string' || !VALID_BUCKET_NAME.test(merged.name))) {
+      throw new InvalidRateLimitConfigurationError('name', merged.name)
+    }
 
     return {
       // Deterministic, so every replica agrees on the bucket and it survives restarts.
@@ -291,7 +354,14 @@ export function createRateLimiterComponent(
           policy.failOpen
             ? 'The rate limit counter is unavailable; allowing requests until it recovers'
             : 'The rate limit counter is unavailable; rejecting requests until it recovers',
-          { bucket: policy.bucket, error: isErrorWithMessage(error) ? error.message : 'Unknown error' }
+          // `failOpen` is logged because the throttle is shared across policies: without it, an
+          // operator paged for a 429 spike on a fail-closed endpoint can read a line saying
+          // "allowing requests" that was emitted for a different, fail-open one.
+          {
+            bucket: policy.bucket,
+            failOpen: String(policy.failOpen),
+            error: isErrorWithMessage(error) ? error.message : 'Unknown error'
+          }
         )
       }
       await runHook(policy.onStoreError && (() => policy.onStoreError!(context, error)), 'onStoreError')
@@ -331,11 +401,24 @@ export function createRateLimiterComponent(
     }
 
     if (trustedClientIpHeader) {
-      const fromHeader = clientIpFromForwardedHeader(
-        context.request.headers.get(trustedClientIpHeader),
-        trustedProxyCount
-      )
+      const rawHeader = context.request.headers.get(trustedClientIpHeader)
+      const fromHeader = clientIpFromForwardedHeader(rawHeader, trustedProxyCount)
       if (fromHeader) return { identity: fromHeader, source: RateLimitKeySource.TRUSTED_HEADER }
+
+      // A configured header that yields nothing is the loudest misconfiguration this component has,
+      // and it used to be completely silent: behind a proxy the socket address below always succeeds,
+      // so every client in the world collapses onto the proxy's address and the limit becomes a
+      // global cap — a self-inflicted outage with nothing in the logs. Causes: the header was renamed,
+      // the CDN was bypassed or removed, or `trustedProxyCount` no longer matches the real hop count.
+      if (!warnedAboutUnusableTrustedHeader) {
+        warnedAboutUnusableTrustedHeader = true
+        logger.warn(
+          `The configured trustedClientIpHeader "${trustedClientIpHeader}" did not yield a client address, so requests are being keyed on the connecting address instead. ` +
+            'Behind a proxy that is the proxy itself, which buckets every client together and turns the per-client limit into a global one. ' +
+            `Check the header name and that trustedProxyCount (${trustedProxyCount}) matches the number of proxies that append to it.`,
+          { headerPresent: String(rawHeader !== null) }
+        )
+      }
     }
 
     const socketAddress = canonicalizeIpAddress(context.remoteAddress)
@@ -369,7 +452,10 @@ export function createRateLimiterComponent(
 
       if (result.allowed) {
         const response = await next()
-        return policy.emitRateLimitHeaders === RateLimitHeaderMode.ALWAYS
+        // Not while the store is down: the counts are not real, and advertising `Remaining: 0` to a
+        // client that honours the standard headers tells it to stop sending for the rest of the
+        // window — the opposite of what failing open is for.
+        return policy.emitRateLimitHeaders === RateLimitHeaderMode.ALWAYS && !result.storeUnavailable
           ? withRateLimitHeaders(response, result)
           : response
       }
@@ -386,9 +472,22 @@ export function createRateLimiterComponent(
       }
       await runHook(policy.onLimitExceeded && (() => policy.onLimitExceeded!(context, result)), 'onLimitExceeded')
 
-      const response = policy.buildLimitExceededResponse
-        ? await policy.buildLimitExceededResponse(context, result)
-        : tooManyRequestsResponse()
+      // Falls back to the built-in `429` if the custom builder throws or returns nothing. It is the
+      // only one of these callbacks that produces the response rather than observing it, so an
+      // unguarded throw here escaped as a `500` with no `Retry-After` and the stack in the body —
+      // contradicting the documented "a throwing hook never changes the response", hiding the
+      // rejection from 429 dashboards, and inviting an immediate client retry.
+      let response: IHttpServerComponent.IResponse | undefined
+      if (policy.buildLimitExceededResponse) {
+        try {
+          response = await policy.buildLimitExceededResponse(context, result)
+        } catch (error) {
+          logger.error('The buildLimitExceededResponse hook threw; falling back to the default response', {
+            error: isErrorWithMessage(error) ? error.message : 'Unknown error'
+          })
+        }
+      }
+      response ??= tooManyRequestsResponse()
 
       return policy.emitRateLimitHeaders === RateLimitHeaderMode.NEVER
         ? withRetryAfter(response, result)
@@ -397,7 +496,24 @@ export function createRateLimiterComponent(
   }
 
   async function consume(identity: string, overrides?: RateLimitPolicyOptions): Promise<RateLimitResult> {
+    if (typeof identity !== 'string') {
+      throw new InvalidRateLimitConfigurationError('identity', identity)
+    }
     const policy = overrides ? resolvePolicy(overrides) : defaultPolicy
+
+    // An empty identity means the caller could not establish one — `consume(session.address ?? '')`.
+    // Treating it as a normal key would give every anonymous caller one shared bucket at the FULL
+    // limit, which is exactly backwards; route it the way the middleware routes a missing address.
+    if (identity.trim().length === 0) {
+      if (!warnedAboutMissingClientAddress) {
+        warnedAboutMissingClientAddress = true
+        logger.warn(
+          'consume() was called with an empty identity, so those calls share one bucket at a tightened cap. Pass a real identity to get per-caller limiting.'
+        )
+      }
+      return count(FALLBACK_IDENTITY, policy, policy.fallbackMax, RateLimitKeySource.FALLBACK)
+    }
+
     return count(identity, policy, policy.max, RateLimitKeySource.CUSTOM)
   }
 
@@ -420,12 +536,26 @@ function tooManyRequestsResponse(): IHttpServerComponent.IResponse {
  * a `Response` obtained from `fetch` are immutable, so setting one throws; a rate limit header is
  * not worth a `500`, so that case is skipped.
  */
+// A `Response` from another realm or another implementation (node-fetch, a second copy of undici)
+// fails `instanceof` while still keeping `status`/`body` on its prototype, so spreading it would
+// serve a bodiless `200` — the exact failure the branch below exists to avoid. Duck-typing on the
+// mutable-headers-plus-`clone` shape catches those; a plain `IResponse` object literal has neither.
+function isResponseLike(response: unknown): response is Response {
+  if (response instanceof Response) return true
+  const candidate = response as { headers?: { set?: unknown }; clone?: unknown } | null
+  return typeof candidate?.clone === 'function' && typeof candidate?.headers?.set === 'function'
+}
+
 function withHeaders(
   response: IHttpServerComponent.IResponse,
   headers: Record<string, string>,
   overwrite: boolean
 ): IHttpServerComponent.IResponse {
-  if (response instanceof Response) {
+  // A handler is allowed to return nothing; the server turns that into a `501` of its own. Reading
+  // `.headers` off it here would raise a `TypeError` and regress that to a `500`.
+  if (response === null || response === undefined) return response
+
+  if (isResponseLike(response)) {
     try {
       for (const [name, value] of Object.entries(headers)) {
         if (overwrite || !response.headers.has(name)) response.headers.set(name, value)

@@ -6,6 +6,9 @@
     "types": ["node", "jest"],
     "declaration": true,
     "outDir": "./dist",
+    // Only `src` is compiled and it is the build root, so the published tree is `dist/index.js`
+    // rather than `dist/src/index.js` and no test file is ever emitted into the package.
+    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -13,6 +16,6 @@
     "resolveJsonModule": true,
     "composite": true
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 } 

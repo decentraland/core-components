@@ -120,7 +120,7 @@ describe('when the request count is under the limit', () => {
   })
 
   it('should count the request under a key namespaced with the prefix, bucket and canonical address', () => {
-    expect(cache.increment).toHaveBeenCalledWith(expect.stringMatching(/^svc:rl:3p60:\d+:203\.0\.113\.7$/), {
+    expect(cache.increment).toHaveBeenCalledWith(expect.stringMatching(/^svc:rl:3p60:\d+:r:203\.0\.113\.7$/), {
       ttlInSeconds: expect.any(Number)
     })
   })
@@ -902,20 +902,29 @@ describe('when building a counter key', () => {
 
 describe('when encoding an identity', () => {
   describe('and hashing is off and the identity is short', () => {
-    it('should return it unchanged', () => {
-      expect(encodeIdentity('203.0.113.7', false)).toBe('203.0.113.7')
+    it('should return it tagged as raw rather than bare', () => {
+      expect(encodeIdentity('203.0.113.7', false)).toBe('r:203.0.113.7')
     })
   })
 
   describe('and hashing is on', () => {
-    it('should return 32 lowercase hex characters', () => {
-      expect(encodeIdentity('203.0.113.7', true)).toMatch(/^[0-9a-f]{32}$/)
+    it('should return a tagged 32-character lowercase hex digest', () => {
+      expect(encodeIdentity('203.0.113.7', true)).toMatch(/^h:[0-9a-f]{32}$/)
     })
   })
 
   describe('and the identity exceeds the raw cap with hashing off', () => {
     it('should hash it anyway so an oversized value cannot become an oversized key', () => {
-      expect(encodeIdentity('a'.repeat(MAX_RAW_IDENTITY_LENGTH + 1), false)).toMatch(/^[0-9a-f]{32}$/)
+      expect(encodeIdentity('a'.repeat(MAX_RAW_IDENTITY_LENGTH + 1), false)).toMatch(/^h:[0-9a-f]{32}$/)
+    })
+  })
+
+  describe('and a short identity impersonates the digest of a long one', () => {
+    it('should keep the two in separate keyspaces so it cannot land on the long identity bucket', () => {
+      const victim = 'u'.repeat(MAX_RAW_IDENTITY_LENGTH + 72)
+      const hashed = encodeIdentity(victim, false)
+      const impersonation = encodeIdentity(hashed.slice(2), false)
+      expect(impersonation).not.toBe(hashed)
     })
   })
 
@@ -983,6 +992,250 @@ describe('when asserting a positive integer', () => {
   describe('and the value is a positive integer', () => {
     it('should not throw', () => {
       expect(() => assertPositiveInteger('max', 1)).not.toThrow()
+    })
+  })
+})
+
+describe('when an override carries a key whose value is undefined', () => {
+  beforeEach(() => {
+    // The shape an optional config field produces: `{ max: config.loginMax }` with nothing set.
+    options = { ...options, max: 3, failOpen: false }
+    limiter = createRateLimiterComponent(components, options)
+    middleware = limiter.withRateLimitMiddleware({ max: undefined, failOpen: undefined })
+  })
+
+  it('should keep the component-wide limit rather than falling back to the built-in default', async () => {
+    const responses = await callTimes(4)
+    expect(responses[2].status).not.toBe(429)
+    expect(responses[3].status).toBe(429)
+  })
+
+  it('should report the component-wide limit in the headers', async () => {
+    response = (await callTimes(4))[3]
+    expect(new Headers(response.headers).get('RateLimit-Limit')).toBe('3')
+  })
+
+  it('should keep a component-wide failOpen of false', async () => {
+    cache.increment.mockRejectedValue(new Error('redis down'))
+    expect((await middleware(context, next)).status).toBe(429)
+  })
+
+  it('should keep the component-wide value through consume as well', async () => {
+    result = await limiter.consume('address:0xabc', { max: undefined })
+    expect(result.limit).toBe(3)
+  })
+})
+
+describe('when the custom limit exceeded response builder fails', () => {
+  describe('and it throws', () => {
+    beforeEach(async () => {
+      middleware = createRateLimiterComponent(components, {
+        ...options,
+        buildLimitExceededResponse: () => {
+          throw new Error('boom')
+        }
+      }).withRateLimitMiddleware()
+      response = (await callTimes(4))[3]
+    })
+
+    it('should still reject with the default too many requests response', () => {
+      expect(response.status).toBe(429)
+      expect(response.body).toEqual({ ok: false, message: 'Too many requests' })
+    })
+
+    it('should still set Retry-After so the client does not retry immediately', () => {
+      expect(new Headers(response.headers).get('Retry-After')).toEqual(expect.any(String))
+    })
+
+    it('should log the failure', () => {
+      expect(errorMock).toHaveBeenCalledWith(
+        'The buildLimitExceededResponse hook threw; falling back to the default response',
+        expect.objectContaining({ error: 'boom' })
+      )
+    })
+  })
+
+  describe('and it returns nothing', () => {
+    beforeEach(async () => {
+      middleware = createRateLimiterComponent(components, {
+        ...options,
+        buildLimitExceededResponse: () => undefined as unknown as IHttpServerComponent.IResponse
+      }).withRateLimitMiddleware()
+      response = (await callTimes(4))[3]
+    })
+
+    it('should fall back to the default response instead of returning nothing', () => {
+      expect(response.status).toBe(429)
+    })
+  })
+})
+
+describe('when the downstream handler returns no response at all', () => {
+  beforeEach(async () => {
+    next = jest.fn().mockResolvedValue(undefined)
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      emitRateLimitHeaders: RateLimitHeaderMode.ALWAYS
+    }).withRateLimitMiddleware()
+    response = await middleware(context, next)
+  })
+
+  it('should pass it through untouched so the server can produce its own error', () => {
+    expect(response).toBeUndefined()
+  })
+})
+
+describe('when a trusted client IP header is configured but yields no address', () => {
+  beforeEach(() => {
+    options = { ...options, trustedClientIpHeader: 'cf-connecting-ip' }
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+  })
+
+  describe('and the header is absent while a socket address exists', () => {
+    beforeEach(async () => {
+      await middleware(createContext(), next)
+    })
+
+    it('should warn that requests are being keyed on the connecting address', () => {
+      expect(warnMock).toHaveBeenCalledWith(
+        expect.stringContaining('did not yield a client address'),
+        expect.objectContaining({ headerPresent: 'false' })
+      )
+    })
+  })
+
+  describe('and the header is present but unparseable', () => {
+    beforeEach(async () => {
+      await middleware(createContext({ headers: { 'cf-connecting-ip': 'garbage' } }), next)
+    })
+
+    it('should record that the header was present, distinguishing a rename from a bad value', () => {
+      expect(warnMock).toHaveBeenCalledWith(
+        expect.stringContaining('did not yield a client address'),
+        expect.objectContaining({ headerPresent: 'true' })
+      )
+    })
+  })
+
+  describe('and many requests arrive', () => {
+    beforeEach(async () => {
+      await callTimes(3, middleware, createContext())
+    })
+
+    it('should warn only once per instance', () => {
+      expect(warnMock.mock.calls.filter(call => String(call[0]).includes('did not yield')).length).toBe(1)
+    })
+  })
+})
+
+describe('when the store is unavailable and the headers mode is always', () => {
+  beforeEach(async () => {
+    cache.increment.mockRejectedValue(new Error('redis down'))
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      emitRateLimitHeaders: RateLimitHeaderMode.ALWAYS
+    }).withRateLimitMiddleware()
+    response = await middleware(context, next)
+  })
+
+  it('should serve the request', () => {
+    expect(response).toEqual(downstreamResponse)
+  })
+
+  it('should not advertise a zero remaining count, which would tell clients to stop sending', () => {
+    expect(new Headers(response.headers).get('RateLimit-Remaining')).toBeNull()
+  })
+})
+
+describe('when the store error is logged', () => {
+  beforeEach(async () => {
+    cache.increment.mockRejectedValue(new Error('redis down'))
+    middleware = createRateLimiterComponent(components, { ...options, failOpen: false }).withRateLimitMiddleware()
+    await middleware(context, next)
+  })
+
+  it('should record the failOpen policy so a shared log line cannot describe the wrong endpoint', () => {
+    expect(errorMock).toHaveBeenCalledWith(
+      expect.stringContaining('rejecting requests'),
+      expect.objectContaining({ bucket: '3p60', failOpen: 'false' })
+    )
+  })
+})
+
+describe('when consuming with an identity that is not usable', () => {
+  beforeEach(() => {
+    limiter = createRateLimiterComponent(components, { ...options, max: 30 })
+  })
+
+  describe('and it is an empty string', () => {
+    beforeEach(async () => {
+      result = await limiter.consume('')
+    })
+
+    it('should route it to the shared bucket at the tightened cap rather than the full limit', () => {
+      expect(result.keySource).toBe(RateLimitKeySource.FALLBACK)
+      expect(result.limit).toBe(3)
+      expect(result.identity).toBe(FALLBACK_IDENTITY)
+    })
+
+    it('should warn so the caller learns it is not getting per-caller limiting', () => {
+      expect(warnMock).toHaveBeenCalledWith(expect.stringContaining('empty identity'))
+    })
+  })
+
+  describe('and it is blank', () => {
+    beforeEach(async () => {
+      result = await limiter.consume('   ')
+    })
+
+    it('should treat it as empty', () => {
+      expect(result.keySource).toBe(RateLimitKeySource.FALLBACK)
+    })
+  })
+
+  describe('and it is not a string', () => {
+    it('should throw rather than build a key from it', async () => {
+      await expect(limiter.consume(null as unknown as string)).rejects.toThrow(InvalidRateLimitConfigurationError)
+    })
+  })
+})
+
+describe('when the identity carries an IPv6 zone identifier', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    await middleware(createContext({ remoteAddress: 'fe80::1%eth0' }), next)
+    await middleware(createContext({ remoteAddress: 'fe80::1%eth1' }), next)
+  })
+
+  it('should keep peers on different interfaces in separate buckets instead of the shared one', () => {
+    const keys = cache.increment.mock.calls.map(call => call[0] as string)
+    expect(new Set(keys).size).toBe(2)
+    expect(keys.every(key => !key.includes(FALLBACK_IDENTITY))).toBe(true)
+  })
+})
+
+describe('when canonicalizing a zoned address directly', () => {
+  it('should preserve the zone alongside the canonical address', () => {
+    expect(canonicalizeIpAddress('fe80::1%eth0')).toBe('fe80::1%eth0')
+  })
+
+  it('should still reject a zone attached to something that is not an address', () => {
+    expect(canonicalizeIpAddress('garbage%eth0')).toBeNull()
+  })
+})
+
+describe('when the component is configured with an unusable option value', () => {
+  describe.each([
+    ['emitRateLimitHeaders', { emitRateLimitHeaders: 'Never' as unknown as RateLimitHeaderMode }],
+    ['trustedClientIpHeader', { trustedClientIpHeader: '' }],
+    ['name', { name: 'has:colon' }],
+    ['windowSeconds', { windowSeconds: 3_600_000 }]
+  ])('and %s is invalid', (setting, override) => {
+    it('should throw at construction naming the setting', () => {
+      expect(() => createRateLimiterComponent(components, { ...options, ...override })).toThrow(
+        InvalidRateLimitConfigurationError
+      )
+      expect(() => createRateLimiterComponent(components, { ...options, ...override })).toThrow(setting)
     })
   })
 })
