@@ -1,6 +1,6 @@
 {
   "name": "@dcl/test-helpers",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Jest test helpers for component-based programs (lifecycle runner and local fetch).",
   "repository": {
     "type": "git",
