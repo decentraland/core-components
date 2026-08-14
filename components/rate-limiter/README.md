@@ -294,7 +294,10 @@ The limiter treats every part of a request as untrusted except what the deployme
 - **Header parsing is bounded by configuration, not by input length.** The forwarded header is read from
   the right and stops at the hop it needs, so a caller cannot make the parse expensive by sending a long
   one.
-- **`skip` is the one place caller input decides whether the limiter runs at all** — anchor any regex.
+- **`skip` is the one place caller input decides whether the limiter runs at all.** A `RegExp` there is
+  written by you but run against a path chosen by the caller, so it can both let them opt out (if
+  unanchored) and burn the event loop (if it backtracks). Neither is detectable from the pattern, so
+  this one cannot be closed in the component: prefer a list or a predicate.
 
 > **Security.** A forwarding header is only trustworthy because the network makes it so. If a caller can reach the origin without passing through the proxy, they control their own bucket — which grants them an unlimited allowance *and* lets them throttle a victim by claiming the victim's address. Set `trustedClientIpHeader` only when the origin is unreachable except through that proxy, and prefer a single-value header written by the edge (`cf-connecting-ip`) over `x-forwarded-for`. A header value that does not parse as an IP address is treated as absent, so garbage cannot mint buckets.
 
@@ -329,7 +332,7 @@ CI provides a redis service, so both halves run on every pull request.
 - **Case-sensitivity.** `@dcl/redis-component` lowercases the keys its counter operations touch, so on that backend identities differing only in case share a bucket while on the in-memory one they do not. If `getKey` returns case-significant material, set `hashKeys: true` — the digest is lowercase hex, so both backends then agree.
 - **Counting happens before the handler runs**, so a request the handler later rejects (401, 404) still consumes budget. That is intentional — it is what protects an auth endpoint — but it means "only count successful requests" is not supported.
 - **Hooks run on the critical path** and are awaited; keep them to a counter, not an HTTP call. A throw is caught and logged rather than turned into a `500`.
-- **`skip` has no default.** For health checks, pass `skip: ['/health/live', '/health/ready']`; for CORS preflight, `skip: (request) => request.method === 'OPTIONS'`.
+- **`skip` has no default, and its `RegExp` form is the one place a pattern you wrote meets input the caller chose.** Prefer the exact list, `skip: ['/health/live', '/health/ready']`, or a predicate, `skip: (request) => request.method === 'OPTIONS'` — neither can go wrong in the two ways a regex can. If you do use one: **anchor it**, because an unanchored `/health\//` also matches `/v1/notes/health/live` and lets anyone opt out of the limit (write `/^\/health\//`); and **keep it linear**, because nested quantifiers like `/^\/(a+)+$/` backtrack catastrophically on a crafted path — measured at 8.5ms for an 18-character path, 26ms at 22 and 416ms at 26, exponential in length, on a single-threaded runtime, so one request stalls every other. This mirrors `@dcl/http-requests-logger-component`'s `skip`, which has the same shape and the same two caveats.
 - **Disclosure does not change enforcement.** Every level counts, rejects and records metrics identically; only what the caller is told differs. Your own dashboards always see the full picture.
 - **Skipped requests are not counted and produce no metric** — they never reach the counter.
 - **`consume` with an empty identity** is routed to the shared fallback bucket at the tightened cap, not given its own bucket at the full limit — so `consume(session.address ?? '')` degrades safely. A non-string identity throws.
