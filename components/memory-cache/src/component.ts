@@ -97,18 +97,25 @@ export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): IC
       }
       const value = (current ?? 0) + amount
 
-      // `noUpdateTTL` gives us "apply the TTL on creation only": lru-cache forces the flag off when
-      // *adding* an entry, and with it on leaves the existing deadline untouched when *updating*
-      // one. Without it every increment would slide the window — including sliding the
-      // constructor's default TTL when no per-call TTL is given.
+      // Whether the entry already has a deadline decides between "leave it alone" and "apply the
+      // requested one", so it has to be read *before* the write. `Infinity` is lru-cache's "no
+      // expiry"; a missing key reports `0`, which is harmless here because lru-cache forces
+      // `noUpdateTTL` off when *adding* an entry, so a new counter always gets its TTL either way.
+      const hasExpiry = Number.isFinite(cache.getRemainingTTL(key))
+
+      // `noUpdateTTL` keeps an existing deadline intact, which is what stops every increment from
+      // sliding the window — including sliding the constructor's default TTL when no per-call TTL is
+      // given. It is deliberately dropped for a counter that has no deadline at all while a TTL was
+      // requested: that is the repair case, and leaving the flag on would keep an immortal counter
+      // immortal forever, diverging from the Redis backend (`PTTL < 0` there) and from the documented
+      // contract. Mirrors Redis in only repairing when a TTL was actually passed.
       cache.set(key, value, {
-        noUpdateTTL: true,
+        noUpdateTTL: hasExpiry || ttlInSeconds === undefined,
         ...(ttlInSeconds !== undefined ? { ttl: fromSecondsToMilliseconds(ttlInSeconds) } : {})
       })
 
-      // Read after the `set`: lru-cache installs the real `getRemainingTTL` lazily when TTL
-      // tracking is first initialized, so reading before the write can hit the stub.
-      // `Infinity` means the entry has no deadline.
+      // Read again after the write: lru-cache installs the real `getRemainingTTL` lazily when TTL
+      // tracking is first initialized, so the pre-write read can come from the stub.
       const remaining = cache.getRemainingTTL(key)
       return {
         value,

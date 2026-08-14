@@ -454,9 +454,11 @@ function withRateLimitHeaders(response: IHttpServerComponent.IResponse, result: 
     {
       'RateLimit-Limit': result.limit.toString(),
       'RateLimit-Remaining': result.remaining.toString(),
-      // Absolute Unix seconds. The other reading of `Reset` — seconds remaining — would just
-      // duplicate `Retry-After`, so the absolute one is what adds information.
-      'RateLimit-Reset': Math.ceil(result.resetAt / 1000).toString()
+      // Seconds until the window resets, NOT an absolute timestamp. The name is the standardized
+      // one, whose defined value is delta-seconds, so epoch seconds here would read as a backoff of
+      // tens of thousands of years to a compliant client. It duplicates `Retry-After`, which is what
+      // the spec intends; `result.resetAt` carries the absolute instant for hooks that want it.
+      'RateLimit-Reset': result.retryAfterSeconds.toString()
     },
     true
   )

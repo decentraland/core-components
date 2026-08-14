@@ -949,4 +949,40 @@ describe('when incrementing a counter', () => {
       await expect(component.increment(counterKey, { ttlInSeconds: 0 })).rejects.toThrow(TypeError)
     })
   })
+
+  describe('and the counter already exists with no expiry at all', () => {
+    let cache: ICacheStorageComponent
+    let result: { value: number; ttlRemainingInMilliseconds?: number }
+
+    beforeEach(async () => {
+      // A cache with TTL disabled makes every entry immortal, so this is the reachable shape of a
+      // counter that has no deadline to preserve.
+      cache = createInMemoryCacheComponent({ ttl: 0 })
+      await cache.set(counterKey, 5)
+      result = await cache.increment(counterKey, { ttlInSeconds: 60 })
+    })
+
+    it('should apply the requested TTL rather than leave it immortal, matching the Redis backend', () => {
+      expect(result.ttlRemainingInMilliseconds).toBeGreaterThan(0)
+    })
+
+    it('should still accumulate onto the existing count', () => {
+      expect(result.value).toBe(6)
+    })
+  })
+
+  describe('and the counter has no expiry and no TTL is requested', () => {
+    let cache: ICacheStorageComponent
+    let result: { ttlRemainingInMilliseconds?: number }
+
+    beforeEach(async () => {
+      cache = createInMemoryCacheComponent({ ttl: 0 })
+      await cache.set(counterKey, 5)
+      result = await cache.increment(counterKey)
+    })
+
+    it('should leave it immortal, since Redis only repairs when a TTL is passed', () => {
+      expect(result.ttlRemainingInMilliseconds).toBeUndefined()
+    })
+  })
 })

@@ -167,7 +167,11 @@ describe('when the request count exceeds the limit', () => {
     const headers = new Headers(response.headers)
     expect(headers.get('RateLimit-Limit')).toBe('3')
     expect(headers.get('RateLimit-Remaining')).toBe('0')
-    expect(headers.get('RateLimit-Reset')).toEqual(expect.any(String))
+    // Delta-seconds, matching the standardized meaning of the header name. An absolute epoch value
+    // here would read as a multi-millennium backoff to a compliant client.
+    expect(headers.get('RateLimit-Reset')).toBe(headers.get('Retry-After'))
+    expect(Number(headers.get('RateLimit-Reset'))).toBeGreaterThan(0)
+    expect(Number(headers.get('RateLimit-Reset'))).toBeLessThanOrEqual(60)
   })
 
   describe('and it is the first rejection in the window', () => {
