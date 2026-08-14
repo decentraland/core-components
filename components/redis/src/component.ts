@@ -50,6 +50,23 @@ function fingerprintKey(key: string): string {
   return createHash('sha256').update(key).digest('hex').slice(0, 12)
 }
 
+/**
+ * A Redis URL with any credentials removed, safe to log. `redis://user:secret@host:6379` carries the
+ * password in the userinfo, so logging the raw URL would write it to disk on every connect.
+ */
+function redactUrl(hostUrl: string): string {
+  try {
+    const url = new URL(hostUrl)
+    if (url.password) url.password = '***'
+    if (url.username) url.username = '***'
+    return url.toString()
+  } catch {
+    // Not parseable as a URL, so nothing can be reliably separated out — say nothing rather than
+    // risk emitting a credential.
+    return '<unparseable redis url>'
+  }
+}
+
 // Redis addresses a cached script by the SHA-1 of its body, so the digest can be computed locally —
 // no `SCRIPT LOAD` round trip is needed to learn it.
 function scriptSha(script: string): string {
@@ -99,7 +116,7 @@ export async function createRedisComponent(
 
   async function start() {
     try {
-      logger.debug('Connecting to Redis', { hostUrl })
+      logger.debug('Connecting to Redis', { hostUrl: redactUrl(hostUrl) })
       await client.connect()
       logger.debug('Successfully connected to Redis')
     } catch (err: any) {

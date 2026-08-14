@@ -2050,3 +2050,110 @@ describe('when the suite counts several requests inside one test', () => {
     expect(Date.now()).toBe(FROZEN_NOW.getTime())
   })
 })
+
+describe('when the matched route is not a literal path', () => {
+  let buckets: string[]
+
+  function withRouterPath(routerPath: string, method = 'GET') {
+    return {
+      ...createContext(),
+      routerPath,
+      request: new Request('http://rate-limiter.test/anything', { method })
+    } as any
+  }
+
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    // What `router.use(middleware)` with no path mounts at: a pattern matching everything, not a route.
+    await middleware(withRouterPath('([^/]*)', 'GET'), next)
+    await middleware(withRouterPath('([^/]*)', 'POST'), next)
+    buckets = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[2])
+  })
+
+  it('should fall back to one shared allowance rather than minting a bucket per method', () => {
+    expect(buckets).toEqual(['3p60', '3p60'])
+  })
+
+  it('should keep router pattern syntax out of the bucket, and so out of keys and metric labels', () => {
+    expect(buckets.every(bucket => !bucket.includes('['))).toBe(true)
+  })
+})
+
+describe('when the same endpoint is hit repeatedly', () => {
+  let buckets: string[]
+
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    const routed = {
+      ...createContext({ pathname: '/v1/notes/abc' }),
+      routerPath: '/v1/notes/:id',
+      request: new Request('http://rate-limiter.test/v1/notes/abc', { method: 'GET' })
+    } as any
+    await middleware(routed, next)
+    await middleware(routed, next)
+    buckets = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[2])
+  })
+
+  it('should derive the same bucket each time, memoized or not', () => {
+    expect(buckets).toEqual(['GET /v1/notes/{id}', 'GET /v1/notes/{id}'])
+  })
+})
+
+describe('when the metrics component rejects a metric', () => {
+  beforeEach(() => {
+    // What a consumer that forgot to register metricDeclarations actually gets: the metrics component
+    // throws `Unknown metric …`. Unguarded, that turned every allowed request into a 500.
+    metrics.increment.mockImplementation(() => {
+      throw new Error('Unknown metric rate_limiter_requests_total')
+    })
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+  })
+
+  it('should still serve an allowed request', async () => {
+    expect(await middleware(context, next)).toEqual(downstreamResponse)
+  })
+
+  it('should still reject once over the limit, so counting is unaffected', async () => {
+    expect((await callTimes(4))[3].status).toBe(429)
+  })
+
+  it('should warn that activity is not being reported, naming the remedy', async () => {
+    await middleware(context, next)
+    expect(warnMock).toHaveBeenCalledWith(
+      expect.stringContaining('Register the exported metricDeclarations'),
+      expect.anything()
+    )
+  })
+
+  describe('and the counter store is also failing', () => {
+    beforeEach(() => {
+      cache.increment.mockRejectedValue(new Error('redis down'))
+    })
+
+    it('should still fail open rather than let a metrics failure decide the request', async () => {
+      expect(await middleware(context, next)).toEqual(downstreamResponse)
+    })
+
+    it('should still fail closed when configured to, for the same reason', async () => {
+      const closed = createRateLimiterComponent(components, {
+        ...options,
+        failOpen: false
+      }).withRateLimitMiddleware()
+      expect((await closed(context, next)).status).toBe(429)
+    })
+  })
+})
+
+describe('when getKey returns a whitespace-only value', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      getKey: () => '   '
+    }).withRateLimitMiddleware()
+    await middleware(context, next)
+  })
+
+  it('should treat it as no identity and fall through, matching how consume handles blanks', () => {
+    expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('203.0.113.7'), expect.anything())
+  })
+})

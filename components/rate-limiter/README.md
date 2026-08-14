@@ -56,7 +56,7 @@ Component-wide only — these describe the process and its storage, not an endpo
 | Option                  | Type      | Default        | Description                                                                                       |
 | ----------------------- | --------- | -------------- | ------------------------------------------------------------------------------------------------- |
 | `keyPrefix`             | `string`  | `'rate-limit'` | Namespace for every counter key. **Set this per service.**                                         |
-| `trustedClientIpHeader` | `string`  | —              | Header carrying the client address. Only set it when the origin is unreachable except via a proxy. Warns once if configured but unusable. |
+| `trustedClientIpHeader` | `string`  | —              | Header carrying the client address. Only set it when the origin is unreachable except via a proxy. Reports an issue if configured but unusable. |
 | `trustedProxyCount`     | `number`  | `1`            | Proxies in front of this service that append to the forwarded header.                              |
 | `hashKeys`              | `boolean` | `false`        | Store a SHA-256 digest of the identity instead of the identity itself. Keys carry an `r:`/`h:` tag either way. |
 
@@ -66,7 +66,7 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 | ---------------------------- | ---------------------------------------- | -------------------- | ------------------------------------------------------------------------------ |
 | `name`                       | `string`                                 | route, else `` `${max}p${windowSeconds}` `` | Overrides the bucket. See **Buckets**. Non-empty, no `:`. |
 | `max`                        | `number`                                 | `100`                | Requests allowed per window, per identity.                                     |
-| `windowSeconds`              | `number`                                 | `60`                 | Window length, at most `86400`. Windows are aligned to the Unix epoch.          |
+| `windowSeconds`              | `number`                                 | `60`                 | Window length, at most `86400`. Phase is per identity, not epoch-aligned.       |
 | `getKey`                     | `(ctx) => string \| null \| undefined \| Promise<…>` | —        | Returns the identity to count against. Nullish or empty falls through to the address chain. |
 | `skip`                       | `fn \| string[] \| string \| RegExp`     | — (none)             | Requests exempt from counting.                                                 |
 | `failOpen`                   | `boolean`                                | `true`               | Allow (`true`) or reject (`false`) when the counter store is unreachable.       |
@@ -106,7 +106,9 @@ router.post('/v1/notes', rateLimiter.withRateLimitMiddleware({ name: 'writes', m
 router.patch('/v1/notes/:id', rateLimiter.withRateLimitMiddleware({ name: 'writes', max: 20 }), editNote)
 ```
 
-`consume()` has no request, so it always uses the fallback bucket unless you pass a `name`.
+`consume()` has no request, so it always uses the fallback bucket unless you pass a `name`. So does a
+`router.use(limiter)` mount with no path: it matches everything that router serves rather than one
+route, so it gets a single allowance for the whole mount.
 
 ## Disclosure
 
@@ -278,7 +280,7 @@ same signal, visible on a dashboard rather than in a log.
 - **`keyPrefix` must be unique per service** on a shared Redis, or one service's traffic throttles another's.
 - **`Retry-After`** is in seconds and never `0` (some clients read `0` as "retry immediately", which is the storm the header exists to prevent). `RateLimit-Reset` is **seconds until the window resets**, not an absolute timestamp — that is what the standardized header name is defined to mean, and epoch seconds there would read as a backoff of tens of thousands of years to a compliant client. It therefore duplicates `Retry-After`, which is what the spec intends; `result.resetAt` carries the absolute instant for hooks that want it. The delay travels in the headers only — the `429` body is a fixed `{ ok: false, message: 'Too many requests' }` and never restates it, so there is one authoritative place for it. `result.retryAfterSeconds` is still passed to `onLimitExceeded` and `buildLimitExceededResponse` if you want it in a custom payload.
 - **Failing open is silent.** During a store outage the limiter allows everything and looks exactly like low traffic. The built-in error log is throttled to one line per 10s; wire `onStoreError` to a metric so the state is observable.
-- **The fallback bucket is deliberately loud.** When no address can be established every caller shares one bucket at a tightened cap, and the component warns once. That is a misconfiguration signal, not a mode to run in.
+- **The fallback bucket is deliberately loud.** When no address can be established every caller shares one bucket at a tightened cap, counted as `no-client-address` and re-logged while it lasts. That is a misconfiguration signal, not a mode to run in.
 - **Case-sensitivity.** `@dcl/redis-component` lowercases every key, so identities differing only in case share a bucket. If `getKey` returns case-significant material, set `hashKeys: true`.
 - **Counting happens before the handler runs**, so a request the handler later rejects (401, 404) still consumes budget. That is intentional — it is what protects an auth endpoint — but it means "only count successful requests" is not supported.
 - **Hooks run on the critical path** and are awaited; keep them to a counter, not an HTTP call. A throw is caught and logged rather than turned into a `500`.

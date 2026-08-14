@@ -1,4 +1,4 @@
-import { ILoggerComponent } from '@well-known-components/interfaces'
+import { ILoggerComponent, START_COMPONENT } from '@well-known-components/interfaces'
 import { createLoggerMockedComponent, LockNotAcquiredError, LockNotReleasedError } from '@dcl/core-commons'
 import { createRedisComponent, INCREMENT_SCRIPT, RELEASE_LOCK_SCRIPT } from '../src/component'
 import { ICacheStorageComponent } from '@dcl/core-commons'
@@ -776,5 +776,27 @@ describe('when any Redis operation fails', () => {
   it('should report it at debug level only, leaving error level to the caller that receives the throw', () => {
     expect(debugLogMock).toHaveBeenCalled()
     expect(errorLogMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('when connecting to a Redis URL that carries credentials', () => {
+  beforeEach(async () => {
+    const withCredentials = await createRedisComponent('redis://someuser:s3cr3t@redis.internal:6379', { logs })
+    await withCredentials[START_COMPONENT]!({} as any)
+  })
+
+  it('should not write the password to the log', () => {
+    const logged = JSON.stringify(debugLogMock.mock.calls)
+    expect(logged).not.toContain('s3cr3t')
+  })
+
+  it('should not write the username either', () => {
+    expect(JSON.stringify(debugLogMock.mock.calls)).not.toContain('someuser')
+  })
+
+  it('should still say where it is connecting, so the line stays useful', () => {
+    expect(debugLogMock).toHaveBeenCalledWith('Connecting to Redis', {
+      hostUrl: expect.stringContaining('redis.internal')
+    })
   })
 })

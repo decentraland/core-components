@@ -2,7 +2,7 @@ import { isIP } from 'net'
 import { createHash } from 'crypto'
 import { isErrorWithMessage, type IHttpServerComponent } from '@dcl/core-commons'
 import { CacheIncrementUnsupportedError, InvalidRateLimitConfigurationError } from './errors'
-import { RateLimitAddressIssue, RateLimitOutcome } from './metrics'
+import { metricDeclarations, RateLimitAddressIssue, RateLimitOutcome } from './metrics'
 import {
   IRateLimiterComponent,
   RateLimiterComponents,
@@ -291,8 +291,12 @@ export function createRateLimiterComponent<Context extends object = object>(
 
   // Scoped to this instance rather than the module, so a service running several limiters with
   // different key configs hears about each one — and so tests need no reset hatch in production code.
+  // Derived bucket names, keyed by method and matched route, so the per-request string work happens
+  // once per endpoint. Bounded by routes times methods, and only written for paths the router matched.
+  const bucketByRoute = new Map<string, string>()
   const addressIssueLoggedAt = new Map<RateLimitAddressIssue, number>()
   let lastStoreErrorLoggedAt = 0
+  let lastMetricErrorLoggedAt = 0
 
   /**
    * Records a client-address misconfiguration: always as a metric, and as a log line at most once per
@@ -300,7 +304,7 @@ export function createRateLimiterComponent<Context extends object = object>(
    * without scaling with traffic.
    */
   function reportAddressIssue(issue: RateLimitAddressIssue, bucket: string, message: string): void {
-    metrics.increment('rate_limiter_client_address_issues_total', { bucket, issue })
+    recordMetric('rate_limiter_client_address_issues_total', { bucket, issue })
 
     const now = Date.now()
     const lastLoggedAt = addressIssueLoggedAt.get(issue)
@@ -325,13 +329,27 @@ export function createRateLimiterComponent<Context extends object = object>(
    */
   function bucketFor(policy: ResolvedPolicy<Context>, context?: IHttpServerComponent.DefaultContext<Context>): string {
     if (policy.name !== undefined) return policy.name
-    const routerPath = context && routeHandlerOf(context)
-    if (!routerPath) return policy.fallbackBucket
+    if (!context) return policy.fallbackBucket
+
+    const routerPath = routeHandlerOf(context)
+    // A router-level `use()` with no path mounts at the pattern `([^/]*)`, which is not a route — it
+    // matches everything that router serves. Requiring a leading `/` keeps that case on the fallback
+    // bucket, i.e. one allowance for the whole mount, which is what `router.use(limiter)` reads like.
+    // Otherwise it would mint a bucket per method out of a regex, and that regex would then surface
+    // in Redis keys and in the `bucket` metric label.
+    if (!routerPath.startsWith('/')) return policy.fallbackBucket
+
+    const method = context.request.method
+    const memoKey = `${method} ${routerPath}`
+    const memoized = bucketByRoute.get(memoKey)
+    if (memoized !== undefined) return memoized
+
     // `:` separates the key's segments and a route template is full of it (`/v1/notes/:id`), so
     // parameters become a brace form that also reads better as a metric label. The trailing strip is
     // belt-and-braces for any colon a pattern might carry that is not a parameter.
-    const template = routerPath.replace(/:([^/]+)/g, '{$1}').replace(/:/g, '')
-    return `${context!.request.method} ${template}`
+    const bucket = `${method} ${routerPath.replace(/:([^/]+)/g, '{$1}').replace(/:/g, '')}`
+    bucketByRoute.set(memoKey, bucket)
+    return bucket
   }
 
   function resolvePolicy(overrides?: RateLimitPolicyOptions<Context>): ResolvedPolicy<Context> {
@@ -392,6 +410,31 @@ export function createRateLimiterComponent<Context extends object = object>(
   }
 
   const defaultPolicy = resolvePolicy()
+
+  /**
+   * Emits a metric, swallowing any failure.
+   *
+   * The metrics component throws for a metric it does not know — `Unknown metric …` — so a consumer
+   * that forgot to register `metricDeclarations`, or a label that drifts from them, would otherwise
+   * turn every allowed request into a `500` and make the fail-open path throw instead of serving.
+   * Observability must never change a rate limit decision, which is the same rule the hooks follow.
+   * The failure is logged on the store-error throttle so the misconfiguration is still discoverable.
+   */
+  function recordMetric(metric: keyof typeof metricDeclarations, labels: Record<string, string>): void {
+    try {
+      metrics.increment(metric, labels)
+    } catch (error) {
+      const now = Date.now()
+      if (now - lastMetricErrorLoggedAt >= ADDRESS_ISSUE_LOG_INTERVAL_MS) {
+        lastMetricErrorLoggedAt = now
+        logger.warn(
+          `Could not record the "${metric}" metric, so rate limit activity is not being reported. ` +
+            'Register the exported metricDeclarations with your metrics component.',
+          { error: isErrorWithMessage(error) ? error.message : 'Unknown error' }
+        )
+      }
+    }
+  }
 
   // Hooks are observability, never control flow: a failing metric must not change the response.
   async function runHook(hook: (() => void | Promise<void>) | undefined, name: string): Promise<void> {
@@ -463,10 +506,7 @@ export function createRateLimiterComponent<Context extends object = object>(
           }
         )
       }
-      metrics.increment('rate_limiter_store_errors_total', {
-        bucket,
-        fail_open: String(policy.failOpen)
-      })
+      recordMetric('rate_limiter_store_errors_total', { bucket, fail_open: String(policy.failOpen) })
       await runHook(policy.onStoreError && (() => policy.onStoreError!(context, error)), 'onStoreError')
 
       return { ...base, allowed: policy.failOpen, remaining: 0, firstRejectionInWindow: false, storeUnavailable: true }
@@ -494,7 +534,10 @@ export function createRateLimiterComponent<Context extends object = object>(
     if (policy.getKey) {
       try {
         const custom = await policy.getKey(context)
-        if (typeof custom === 'string' && custom.length > 0) {
+        // `trim`, matching `consume`: a whitespace-only key is no more an identity than an empty one,
+        // and accepting it here would hand every such caller one shared bucket at the FULL limit while
+        // `consume` routes the same value to the tightened fallback.
+        if (typeof custom === 'string' && custom.trim().length > 0) {
           return { identity: custom, source: RateLimitKeySource.CUSTOM }
         }
       } catch (error) {
@@ -667,7 +710,7 @@ export function createRateLimiterComponent<Context extends object = object>(
         ? RateLimitOutcome.ALLOWED
         : RateLimitOutcome.LIMITED
 
-    metrics.increment('rate_limiter_requests_total', {
+    recordMetric('rate_limiter_requests_total', {
       bucket: result.bucket,
       handler,
       outcome,

@@ -147,8 +147,11 @@ export type RateLimitPolicyOptions<Context extends object = object> = {
   max?: number
   /**
    * Window length in seconds. Must be a positive integer no greater than `86400` (a day); anything
-   * larger is rejected as a probable seconds/milliseconds mix-up. Windows are aligned to the Unix
-   * epoch, not anchored to a caller's first request — see the README note on the 2x boundary burst.
+   * larger is rejected as a probable seconds/milliseconds mix-up.
+   *
+   * Windows are fixed length rather than anchored to a caller's first request, and their phase is
+   * derived per identity and bucket rather than aligned to the Unix epoch, so one caller's boundary
+   * says nothing about another's — see the README notes on window phase and the 2x boundary burst.
    * @defaultValue 60
    */
   windowSeconds?: number
@@ -275,7 +278,7 @@ export type RateLimiterOptions<Context extends object = object> = RateLimitPolic
    *
    * A value that does not parse as an IP address is treated as absent rather than used as a key, so
    * a caller cannot mint unlimited buckets (or oversized Redis keys) by sending garbage. When this is
-   * configured but yields no address, the component warns once — behind a proxy the socket fallback
+   * configured but yields no address, the component reports it — behind a proxy the socket fallback
    * always succeeds, so the failure would otherwise silently turn the per-client limit into a global
    * one. An empty, blank or non-string value throws at construction rather than quietly disabling the
    * feature.

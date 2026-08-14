@@ -6,7 +6,7 @@ Add `@dcl/rate-limiter-component`: a fixed-window rate limiter exposed as a midd
 
 ```ts
 const rateLimiter = createRateLimiterComponent(
-  { cache, logs },
+  { cache, logs, metrics },
   { keyPrefix: 'my-service:rl', trustedClientIpHeader: 'cf-connecting-ip' }
 )
 
