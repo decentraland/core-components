@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // The package build compiles only `src`, so the specs would otherwise be type-checked by ts-jest
+    // alone. This keeps them checked without emitting them into `dist`.
+    "composite": false,
+    "rootDir": "..",
+    "noEmit": true
+  },
+  "include": ["./**/*", "../src/**/*"]
+}

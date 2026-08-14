@@ -16,6 +16,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
+    "test": "jest",
     "lint": "echo \"No linting configured\""
   },
   "devDependencies": {
