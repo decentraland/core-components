@@ -224,14 +224,11 @@ export function shouldSkip(
   context: IHttpServerComponent.DefaultContext<object>,
   skipper: RateLimitSkipper
 ): boolean {
-  if (typeof skipper === 'string') return skipper === context.url.pathname
-  if (Array.isArray(skipper)) return skipper.some(path => path === context.url.pathname)
+  // No `RegExp` branch, deliberately — see `RateLimitSkipper`. Every form here is an exact comparison
+  // or the caller's own function, so nothing matches a pattern against a caller-chosen pathname.
   if (typeof skipper === 'function') return skipper(context.request)
-  // Strip the global/sticky flags: the same regex is reused across requests, and `.test()` on a
-  // global/sticky regex advances `lastIndex`, which would make matches alternate per call.
-  const statelessRegExp =
-    skipper.global || skipper.sticky ? new RegExp(skipper.source, skipper.flags.replace(/[gy]/g, '')) : skipper
-  return statelessRegExp.test(context.url.pathname)
+  if (Array.isArray(skipper)) return skipper.some(path => path === context.url.pathname)
+  return skipper === context.url.pathname
 }
 
 type ResolvedPolicy<Context extends object> = Required<

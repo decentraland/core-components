@@ -68,7 +68,7 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 | `max`                        | `number`                                 | `100`                | Requests allowed per window, per identity.                                     |
 | `windowSeconds`              | `number`                                 | `60`                 | Window length, at most `86400`. Phase is per identity, not epoch-aligned.       |
 | `getKey`                     | `(ctx) => string \| null \| undefined \| Promise<…>` | —        | Returns the identity to count against. Nullish, empty or blank falls through to the address chain. |
-| `skip`                       | `fn \| string[] \| string \| RegExp`     | — (none)             | Requests exempt from counting.                                                 |
+| `skip`                       | `fn \| string[] \| string`               | — (none)             | Requests exempt from counting. No `RegExp` form — see **Notes**.                |
 | `failOpen`                   | `boolean`                                | `true`               | Allow (`true`) or reject (`false`) when the counter store is unreachable.       |
 | `fallbackMaxDivisor`         | `number`                                 | `10`                 | Divides `max` for the shared bucket used when no address is available.          |
 | `disclosure`                 | `RateLimitDisclosure`                    | `RETRY_AFTER`        | How much a rejected caller is told. See **Disclosure** below.                    |
@@ -81,18 +81,26 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 A counter key is `keyPrefix:bucket:window:r|h:identity`, where `r:` marks a raw identity and `h:` a
 hashed one. The **identity** isolates callers — one IP gets its own count. The **bucket** decides which *endpoints* draw on the same allowance.
 
-You rarely set it. Inside a router, the bucket is the request's method and route template, so each
+You rarely set it. Inside a router, the bucket is the matched route template plus the policy, so each
 endpoint gets its own budget automatically:
 
 ```
-POST /v1/login      → my-service:rl:POST /v1/login:29778754:r:203.0.113.7
-POST /v1/signup     → my-service:rl:POST /v1/signup:29778754:r:203.0.113.7
-GET  /v1/notes/:id  → my-service:rl:GET /v1/notes/{id}:29778754:r:203.0.113.7
+POST /v1/login      → my-service:rl:/v1/login 5p60:29778754:r:203.0.113.7
+POST /v1/signup     → my-service:rl:/v1/signup 5p60:29778754:r:203.0.113.7
+GET  /v1/notes/:id  → my-service:rl:/v1/notes/{id} 100p60:29778754:r:203.0.113.7
 ```
 
 Path parameters are templated (`{id}`), never the request path, so the number of buckets is bounded by
-your routes rather than by ids. Methods are separate, since a `GET` and a `POST` on one path rarely
-cost the same.
+your routes rather than by ids. The policy (`5p60`) is folded in so two mounts on the same path with
+different limits keep their own counters — otherwise a busy endpoint with a large `max` would fill the
+counter a small limit reads from and throttle it on traffic that was never its own.
+
+The request **method is deliberately not part of the bucket**, even though a `GET` and a `POST` on one
+path can cost very different amounts. The method is chosen by the caller, so including it could only
+ever multiply an allowance: `HEAD` routes to a `GET` handler and executes it, which gave every `GET`
+endpoint twice its limit, and a route registered for all methods got one limit per method. The two
+directions are not symmetric — sharing a bucket is conservative, splitting one is a bypass. If two
+methods on one path genuinely need separate budgets, give them separate `name`s.
 
 A limiter mounted with `server.use()` runs before routing, so there is no route to attribute the
 request to — and bounding everything together is what "global" means there. It falls back to
@@ -294,10 +302,9 @@ The limiter treats every part of a request as untrusted except what the deployme
 - **Header parsing is bounded by configuration, not by input length.** The forwarded header is read from
   the right and stops at the hop it needs, so a caller cannot make the parse expensive by sending a long
   one.
-- **`skip` is the one place caller input decides whether the limiter runs at all.** A `RegExp` there is
-  written by you but run against a path chosen by the caller, so it can both let them opt out (if
-  unanchored) and burn the event loop (if it backtracks). Neither is detectable from the pattern, so
-  this one cannot be closed in the component: prefer a list or a predicate.
+- **`skip` compares exactly or calls your predicate — it never matches a pattern.** That is the one
+  place caller input could have decided whether the limiter runs at all, so the `RegExp` form was
+  removed rather than documented (see **Notes**).
 
 > **Security.** A forwarding header is only trustworthy because the network makes it so. If a caller can reach the origin without passing through the proxy, they control their own bucket — which grants them an unlimited allowance *and* lets them throttle a victim by claiming the victim's address. Set `trustedClientIpHeader` only when the origin is unreachable except through that proxy, and prefer a single-value header written by the edge (`cf-connecting-ip`) over `x-forwarded-for`. A header value that does not parse as an IP address is treated as absent, so garbage cannot mint buckets.
 
@@ -332,7 +339,14 @@ CI provides a redis service, so both halves run on every pull request.
 - **Case-sensitivity.** `@dcl/redis-component` lowercases the keys its counter operations touch, so on that backend identities differing only in case share a bucket while on the in-memory one they do not. If `getKey` returns case-significant material, set `hashKeys: true` — the digest is lowercase hex, so both backends then agree.
 - **Counting happens before the handler runs**, so a request the handler later rejects (401, 404) still consumes budget. That is intentional — it is what protects an auth endpoint — but it means "only count successful requests" is not supported.
 - **Hooks run on the critical path** and are awaited; keep them to a counter, not an HTTP call. A throw is caught and logged rather than turned into a `500`.
-- **`skip` has no default, and its `RegExp` form is the one place a pattern you wrote meets input the caller chose.** Prefer the exact list, `skip: ['/health/live', '/health/ready']`, or a predicate, `skip: (request) => request.method === 'OPTIONS'` — neither can go wrong in the two ways a regex can. If you do use one: **anchor it**, because an unanchored `/health\//` also matches `/v1/notes/health/live` and lets anyone opt out of the limit (write `/^\/health\//`); and **keep it linear**, because nested quantifiers like `/^\/(a+)+$/` backtrack catastrophically on a crafted path — measured at 8.5ms for an 18-character path, 26ms at 22 and 416ms at 26, exponential in length, on a single-threaded runtime, so one request stalls every other. This mirrors `@dcl/http-requests-logger-component`'s `skip`, which has the same shape and the same two caveats.
+- **`skip` has no default, and takes no `RegExp`.** Use the exact list, `skip: ['/health/live', '/health/ready']`, or a predicate, `skip: (request) => request.method === 'OPTIONS'`.
+
+  `@dcl/http-requests-logger-component`'s `skip` does accept a pattern, and this one deliberately does not. There, `skip` decides whether a log line is written; here it decides whether the limit applies at all, and a pattern matched against a caller-chosen pathname is the wrong shape for that switch. It fails in two ways nothing can detect from the pattern itself:
+
+  - **Unanchored**, `/health\//` also matches `/v1/notes/health/live`, so anyone can append a segment and opt out of the limit.
+  - **Ambiguous**, `/^\/health\/(.*)+$/` — a natural way to write "anything under `/health/`" — backtracks exponentially on a crafted path: 6.9ms at 18 characters, 26ms at 20, 105ms at 22, **421ms at 24**, roughly doubling per character. Node runs one thread and the blocking is synchronous, so it stalls every other request, and `requestTimeout` cannot fire to stop it. A rate limiter is the worst possible place for that, since the control meant to shed load becomes the load.
+
+  Nothing is lost: pass `request => /…/.test(new URL(request.url).pathname)` if you genuinely need a pattern. It is then plainly your code's decision, with the two caveats above yours to weigh, rather than something this component invites. The same applies to any regex inside `getKey` or the hooks — those also run on the request path against caller input.
 - **Disclosure does not change enforcement.** Every level counts, rejects and records metrics identically; only what the caller is told differs. Your own dashboards always see the full picture.
 - **Skipped requests are not counted and produce no metric** — they never reach the counter.
 - **`consume` with an empty identity** is routed to the shared fallback bucket at the tightened cap, not given its own bucket at the full limit — so `consume(session.address ?? '')` degrades safely. A non-string identity throws.

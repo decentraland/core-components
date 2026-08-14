@@ -56,27 +56,30 @@ export enum RateLimitDisclosure {
 }
 
 /**
- * A flexible way to exempt requests from being counted. Mirrors the `skip` option of
- * `@dcl/http-requests-logger-component`:
+ * A way to exempt requests from being counted:
  * - `string` — compared to `url.pathname` for equality.
  * - `string[]` — exempt when any entry equals `url.pathname`.
- * - `RegExp` — tested against `url.pathname`. Global/sticky flags are stripped, since the same
- *   regex is reused across requests and `lastIndex` would otherwise make matches alternate.
- *   Two cautions, both because the pathname is chosen by the caller. **Anchor it**: an unanchored
- *   `/health\//` also matches `/v1/notes/health/live`, handing anyone a way to opt out of the limit.
- *   And **keep it linear**: a pattern with nested quantifiers such as `/^\/(a+)+$/` backtracks
- *   catastrophically on a crafted path — measured at 416ms of CPU for a single 26-character request,
- *   growing exponentially with length — and Node is single-threaded, so that stalls every other
- *   request too. A `string[]` or a predicate cannot do either, so prefer them unless a pattern is
- *   genuinely needed.
  * - function — receives the request; return `true` to exempt it.
  *
  * A skipped request is neither counted nor rejected. There is **no default**: unlike the request
- * logger, whose default skip list is cosmetic, a limiter that silently stops counting something is
- * a security surprise.
+ * logger — whose default skip list is cosmetic — a limiter that silently stops counting something is
+ * a security surprise, so exemptions must be opted into.
+ *
+ * A `RegExp` is deliberately **not** accepted, though `@dcl/http-requests-logger-component`'s `skip`
+ * takes one. There, `skip` decides whether a log line is written; here it decides whether the limit
+ * applies at all, and a pattern matched against a caller-chosen pathname is the wrong shape for that
+ * switch. It fails in two ways nothing can detect from the pattern: unanchored, `/health\//` also
+ * matches `/v1/notes/health/live`, so anyone can opt out; and ambiguous, `/^\/health\/(.*)+$/`
+ * backtracks exponentially on a crafted path — 421ms of CPU for a 24-character request, on a runtime
+ * with one thread, so it stalls every other request too. Node has no regex timeout and the blocking is
+ * synchronous, so `requestTimeout` cannot save it either.
+ *
+ * The predicate form loses nothing: pass `request => /…/.test(new URL(request.url).pathname)` if you
+ * need a pattern. It is then plainly your code's decision rather than something this component invites.
+ *
  * @public
  */
-export type RateLimitSkipper = ((request: IHttpServerComponent.IRequest) => boolean) | string[] | string | RegExp
+export type RateLimitSkipper = ((request: IHttpServerComponent.IRequest) => boolean) | string[] | string
 
 /**
  * The outcome of counting one request (or one `consume` call) against a bucket.

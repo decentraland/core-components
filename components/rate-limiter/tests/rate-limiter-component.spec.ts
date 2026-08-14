@@ -668,7 +668,6 @@ describe('when a skip predicate is configured', () => {
   const skippers: [string, RateLimitSkipper][] = [
     ['a string', '/health/live'],
     ['an array of strings', ['/health/live']],
-    ['a regular expression', /^\/health\//],
     ['a function', (request: IHttpServerComponent.IRequest) => new URL(request.url).pathname.startsWith('/health/')]
   ]
 
@@ -1129,23 +1128,14 @@ describe('when deciding whether to skip a request', () => {
     })
   })
 
-  describe('and the skipper is a regular expression', () => {
-    it('should test it against the pathname', () => {
-      expect(shouldSkip(createContext({ pathname: '/health/live' }), /^\/health\//)).toBe(true)
-      expect(shouldSkip(createContext({ pathname: '/v1/notes' }), /^\/health\//)).toBe(false)
-    })
-  })
 
-  describe('and the regular expression carries the global flag', () => {
-    let skipper: RegExp
-
-    beforeEach(() => {
-      skipper = /^\/health\//g
-    })
-
-    it('should match consistently across repeated calls instead of alternating on lastIndex', () => {
-      expect(shouldSkip(createContext({ pathname: '/health/live' }), skipper)).toBe(true)
-      expect(shouldSkip(createContext({ pathname: '/health/live' }), skipper)).toBe(true)
+  describe('and a regular expression is passed anyway', () => {
+    it('should not be matched as a pattern, since only exact forms and predicates are accepted', () => {
+      // The type forbids it; this pins the runtime behaviour for a JS caller that ignores the type.
+      // Falling through to an equality comparison fails closed — the request is counted, not skipped —
+      // whereas matching it would reintroduce both the bypass and the backtracking hazard.
+      const asPattern = /^\/health\// as unknown as RateLimitSkipper
+      expect(shouldSkip(createContext({ pathname: '/health/live' }), asPattern)).toBe(false)
     })
   })
 })
