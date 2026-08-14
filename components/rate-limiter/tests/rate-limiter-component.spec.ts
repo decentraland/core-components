@@ -99,7 +99,17 @@ async function callTimes(times: number, mw: Middleware = middleware, ctx = conte
   return responses
 }
 
+// Any instant will do; it only has to be fixed.
+const FROZEN_NOW = new Date('2026-08-13T10:00:00.000Z')
+
 beforeEach(() => {
+  // Freeze the clock. Window boundaries are real instants derived from `Date.now()`, so on a live
+  // clock one can fall between two requests of the same test — the next request then starts a fresh
+  // window and is allowed where the test expects a `429`. It is rare per run but reachable, and
+  // frozen time removes the whole class rather than narrowing it: every request in a test lands in
+  // the same window by construction. Tests that need a rollover move the clock deliberately.
+  jest.useFakeTimers({ now: FROZEN_NOW })
+
   cache = createFakeCache()
   metrics = createFakeMetrics()
   warnMock = jest.fn()
@@ -118,6 +128,10 @@ beforeEach(() => {
   context = createContext()
   downstreamResponse = { status: 200, body: { ok: true } }
   next = jest.fn().mockResolvedValue(downstreamResponse)
+})
+
+afterEach(() => {
+  jest.useRealTimers()
 })
 
 describe('when the request count is under the limit', () => {
@@ -2012,5 +2026,27 @@ describe('when consuming outside the HTTP path', () => {
 
   it('should use the fallback bucket, since there is no route to attribute it to', () => {
     expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining(':3p60:'), expect.anything())
+  })
+})
+
+describe('when the suite counts several requests inside one test', () => {
+  let windowIds: string[]
+
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+    await callTimes(4)
+    windowIds = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[3])
+  })
+
+  it('should place them all in one window, which is what makes the limit assertions deterministic', () => {
+    expect(new Set(windowIds).size).toBe(1)
+  })
+
+  it('should be running on a frozen clock, so a boundary cannot fall between two requests', () => {
+    // Compares against the pinned instant rather than asking jest whether timers are faked, which
+    // does not throw when they are not. Without the freeze this reads the real clock and fails, so
+    // removing it cannot pass unnoticed — the straddle it prevents is otherwise rare enough to look
+    // like an unrelated flake.
+    expect(Date.now()).toBe(FROZEN_NOW.getTime())
   })
 })
