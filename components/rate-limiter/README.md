@@ -194,6 +194,16 @@ tenant, an API key, anything with bounded cardinality:
 getKey: ctx => ctx.verification?.auth ?? null
 ```
 
+The context is typed as whatever the component was created with, so parameterizing it removes the need
+for casts in `getKey` and in every hook:
+
+```typescript
+const rateLimiter = createRateLimiterComponent<GlobalContext>(
+  { cache, logs, metrics },
+  { getKey: ctx => ctx.verification?.auth ?? null }   // ctx is GlobalContext, no cast
+)
+```
+
 Returning `null`, `undefined` or `''` **falls through** to the address chain below, which is what makes
 that mixed pattern work. Throwing does too, with a log line — a broken key function must not turn a
 request into a `500`. It may be async. Whatever it returns selects a bucket, so it must not be raw

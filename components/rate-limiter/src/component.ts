@@ -227,9 +227,11 @@ export function shouldSkip(
   return statelessRegExp.test(context.url.pathname)
 }
 
-type ResolvedPolicy = Required<Pick<RateLimitPolicyOptions, 'max' | 'failOpen' | 'disclosure'>> &
+type ResolvedPolicy<Context extends object> = Required<
+  Pick<RateLimitPolicyOptions<Context>, 'max' | 'failOpen' | 'disclosure'>
+> &
   Pick<
-    RateLimitPolicyOptions,
+    RateLimitPolicyOptions<Context>,
     'skip' | 'getKey' | 'onLimitExceeded' | 'onStoreError' | 'buildLimitExceededResponse'
   > & {
     bucket: string
@@ -251,10 +253,10 @@ type ResolvedPolicy = Required<Pick<RateLimitPolicyOptions, 'max' | 'failOpen' |
  * @throws {CacheIncrementUnsupportedError} When the cache predates the `increment` primitive.
  * @public
  */
-export function createRateLimiterComponent(
+export function createRateLimiterComponent<Context extends object = object>(
   components: RateLimiterComponents,
-  options: RateLimiterOptions = {}
-): IRateLimiterComponent {
+  options: RateLimiterOptions<Context> = {}
+): IRateLimiterComponent<Context> {
   const { cache, logs, metrics } = components
   const logger = logs.getLogger('rate-limiter')
 
@@ -303,13 +305,13 @@ export function createRateLimiterComponent(
     }
   }
 
-  function resolvePolicy(overrides?: RateLimitPolicyOptions): ResolvedPolicy {
+  function resolvePolicy(overrides?: RateLimitPolicyOptions<Context>): ResolvedPolicy<Context> {
     // Key-by-key rather than `{ ...options, ...overrides }`: a spread copies keys whose value is
     // `undefined`, so `withRateLimitMiddleware({ max: config.loginMax })` with an unset config field
     // would erase a component-wide `max` and silently fall through to the built-in default — a
     // loosening, not a tightening. The same spread would flip an operator's `failOpen: false` back
     // to `true`. Only a key that carries a real value overrides.
-    const merged: RateLimitPolicyOptions = { ...options }
+    const merged: RateLimitPolicyOptions<Context> = { ...options }
     if (overrides) {
       for (const [key, value] of Object.entries(overrides)) {
         if (value !== undefined) {
@@ -375,10 +377,10 @@ export function createRateLimiterComponent(
 
   async function count(
     identity: string,
-    policy: ResolvedPolicy,
+    policy: ResolvedPolicy<Context>,
     max: number,
     keySource: RateLimitKeySource,
-    context?: IHttpServerComponent.DefaultContext<object>
+    context?: IHttpServerComponent.DefaultContext<Context>
   ): Promise<RateLimitResult> {
     const now = Date.now()
     // Phase the window per identity, so this caller's boundary is not every caller's boundary. The
@@ -454,8 +456,8 @@ export function createRateLimiterComponent(
    * socket the request arrived on, then a shared bucket.
    */
   async function resolveIdentity(
-    context: IHttpServerComponent.DefaultContext<object>,
-    policy: ResolvedPolicy
+    context: IHttpServerComponent.DefaultContext<Context>,
+    policy: ResolvedPolicy<Context>
   ): Promise<{ identity: string; source: RateLimitKeySource }> {
     if (policy.getKey) {
       try {
@@ -528,8 +530,8 @@ export function createRateLimiterComponent(
     return { identity: FALLBACK_IDENTITY, source: RateLimitKeySource.FALLBACK }
   }
 
-  function withRateLimitMiddleware<Context extends object = {}>(
-    overrides?: RateLimitPolicyOptions
+  function withRateLimitMiddleware(
+    overrides?: RateLimitPolicyOptions<Context>
   ): IHttpServerComponent.IRequestHandler<Context> {
     // Resolved here rather than per request, so a bad limit fails when the middleware is built.
     const policy = overrides ? resolvePolicy(overrides) : defaultPolicy
@@ -589,7 +591,7 @@ export function createRateLimiterComponent(
     }
   }
 
-  async function consume(identity: string, overrides?: RateLimitPolicyOptions): Promise<RateLimitResult> {
+  async function consume(identity: string, overrides?: RateLimitPolicyOptions<Context>): Promise<RateLimitResult> {
     if (typeof identity !== 'string') {
       throw new InvalidRateLimitConfigurationError('identity', identity)
     }

@@ -121,7 +121,7 @@ export type RateLimitResult = {
  * component-wide value.
  * @public
  */
-export type RateLimitPolicyOptions = {
+export type RateLimitPolicyOptions<Context extends object = object> = {
   /**
    * Bucket the counter lives under, appended to `keyPrefix`. Two limiters share a counter if and
    * only if they resolve to the same `keyPrefix` **and** the same bucket.
@@ -153,6 +153,10 @@ export type RateLimitPolicyOptions = {
   windowSeconds?: number
   /**
    * Derives the identity to count against, taking precedence over every address-based source.
+   *
+   * The context is typed as the `Context` the component was created with, so
+   * `createRateLimiterComponent<GlobalContext>(...)` lets this read service-specific fields — a
+   * verified wallet, an injected component — with no cast.
    * Return a non-empty string to use it, or `null`/`undefined` to fall through to the client
    * address — which is how you key authenticated traffic on a user id while still bounding
    * anonymous traffic per IP.
@@ -167,7 +171,7 @@ export type RateLimitPolicyOptions = {
    * client's bucket to get that client throttled.
    */
   getKey?: (
-    context: IHttpServerComponent.DefaultContext<object>
+    context: IHttpServerComponent.DefaultContext<Context>
   ) => string | null | undefined | Promise<string | null | undefined>
   /** Requests exempt from counting. See {@link RateLimitSkipper}. No default. */
   skip?: RateLimitSkipper
@@ -208,7 +212,7 @@ export type RateLimitPolicyOptions = {
    * call. Throwing is caught and logged, since a metrics failure must not turn a `429` into a `500`.
    */
   onLimitExceeded?: (
-    context: IHttpServerComponent.DefaultContext<object>,
+    context: IHttpServerComponent.DefaultContext<Context>,
     result: RateLimitResult
   ) => void | Promise<void>
   /**
@@ -218,7 +222,7 @@ export type RateLimitPolicyOptions = {
    * error log is throttled to avoid flooding during an outage; this hook is not.
    */
   onStoreError?: (
-    context: IHttpServerComponent.DefaultContext<object> | undefined,
+    context: IHttpServerComponent.DefaultContext<Context> | undefined,
     error: unknown
   ) => void | Promise<void>
   /**
@@ -236,7 +240,7 @@ export type RateLimitPolicyOptions = {
    * the caller chose to write.
    */
   buildLimitExceededResponse?: (
-    context: IHttpServerComponent.DefaultContext<object>,
+    context: IHttpServerComponent.DefaultContext<Context>,
     result: RateLimitResult
   ) => IHttpServerComponent.IResponse | Promise<IHttpServerComponent.IResponse>
 }
@@ -247,7 +251,7 @@ export type RateLimitPolicyOptions = {
  * endpoint's policy.
  * @public
  */
-export type RateLimiterOptions = RateLimitPolicyOptions & {
+export type RateLimiterOptions<Context extends object = object> = RateLimitPolicyOptions<Context> & {
   /**
    * Namespace every counter key is written under. **Set this per service.** Several services
    * pointing at one Redis and leaving the default would share counters, so one service's traffic
@@ -335,7 +339,7 @@ export type RateLimiterComponents = {
 /**
  * @public
  */
-export type IRateLimiterComponent = {
+export type IRateLimiterComponent<Context extends object = object> = {
   /**
    * Counts one call against `identity` and reports whether it is allowed. Use this outside the HTTP
    * path — a websocket message handler, a queue consumer, or a domain action that needs its own
@@ -348,14 +352,14 @@ export type IRateLimiterComponent = {
    * bucket at the tightened cap rather than given a bucket of its own at the full limit, matching how
    * the middleware handles a request with no resolvable client address.
    */
-  consume: (identity: string, overrides?: RateLimitPolicyOptions) => Promise<RateLimitResult>
+  consume: (identity: string, overrides?: RateLimitPolicyOptions<Context>) => Promise<RateLimitResult>
   /**
    * Builds a middleware enforcing the component-wide policy, optionally overridden per endpoint.
    * The same handler type works at `server.use()`, `router.use()` and in a route's variadic
    * middleware list. Overrides are validated when this is called, so a bad limit fails at startup
    * rather than on the first request.
    */
-  withRateLimitMiddleware: <Context extends object = {}>(
-    overrides?: RateLimitPolicyOptions
+  withRateLimitMiddleware: (
+    overrides?: RateLimitPolicyOptions<Context>
   ) => IHttpServerComponent.IRequestHandler<Context>
 }
