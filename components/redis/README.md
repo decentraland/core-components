@@ -45,10 +45,14 @@ terminates. A non-positive `ttlInSeconds` throws, because `PEXPIRE key 0` would 
 
 Two things to know:
 
-- **Keys are lowercased.** Every operation in this component calls `toLowerCase()` on the key, so
-  identities differing only in case share a counter. Normalize or hash case-significant keys yourself.
-- A counter written by `increment` is readable with `get<number>()` (Redis stores the bare integer),
-  but the reverse does not hold: a value written with `set` is JSON-encoded, and `INCRBY` rejects it.
+- **Keys are lowercased** by `increment` and by the string operations (`get`, `set`, `remove`,
+  `exists`), so identities differing only in case share a counter — normalize or hash
+  case-significant keys yourself. Note the hash operations (`setInHash` and friends) do **not**
+  lowercase, and `keys(pattern)` does not lowercase its pattern, so a mixed-case pattern will not
+  match a stored key.
+- A counter written by `increment` is readable with `get<number>()`, since Redis stores the bare
+  integer. The reverse works only for numbers: `set(key, 5)` stores `"5"` and can be incremented,
+  while a non-numeric value is JSON-encoded and `INCRBY` rejects it.
 
 ## License
 

@@ -4,6 +4,7 @@ import {
   ICacheStorageComponent,
   IncrementOptions,
   IncrementResult,
+  assertIntegerCounter,
   assertValidIncrementOptions,
   sleep,
   fromSecondsToMilliseconds,
@@ -92,10 +93,13 @@ export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): IC
       // between the `get` and the `set` — that reopens the lost-update race this method exists to
       // close. `async` only defers the returned promise; the body runs to completion first.
       const current = cache.get(key)
-      if (current !== undefined && typeof current !== 'number') {
-        throw new TypeError(`increment: the value stored at "${key}" is not a numeric counter`)
+      // Not `typeof current === 'number'`: `NaN`, `±Infinity` and fractional values are all numbers,
+      // and incrementing them produces a counter that never crosses a threshold again. `NaN + 1` is
+      // `NaN`, so a single poisoned key would make a limiter fail open forever — silently.
+      if (current !== undefined) {
+        assertIntegerCounter(current)
       }
-      const value = (current ?? 0) + amount
+      const value = current === undefined ? amount : current + amount
 
       // Whether the entry already has a deadline decides between "leave it alone" and "apply the
       // requested one", so it has to be read *before* the write. `Infinity` is lru-cache's "no
@@ -119,7 +123,12 @@ export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): IC
       const remaining = cache.getRemainingTTL(key)
       return {
         value,
-        ttlRemainingInMilliseconds: Number.isFinite(remaining) ? Math.max(0, remaining) : undefined
+        // Rounded up to whole milliseconds: lru-cache derives this from `performance.now()` and hands
+        // back a sub-millisecond float (`59999.964333`), where Redis reports an integer. Without this
+        // the two backends disagree on the type of a documented public field, and a consumer piping it
+        // into a header emits an invalid `Retry-After`. Ceiling matches the direction Redis rounds on
+        // the way in, and keeps a counter with <1ms left from reporting `0`.
+        ttlRemainingInMilliseconds: Number.isFinite(remaining) ? Math.max(0, Math.ceil(remaining)) : undefined
       }
     },
 

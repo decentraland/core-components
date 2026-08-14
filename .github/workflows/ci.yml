@@ -9,6 +9,21 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    # The Redis component's `increment` runs a Lua script, which a mocked client cannot exercise —
+    # mutations to it (millisecond vs second expiry, a dropped "only set the expiry when absent"
+    # guard) otherwise pass every unit test while breaking the primitive in production. Specs that
+    # need a real server key off `REDIS_URL` and skip without it, so local runs stay dependency-free.
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout repository
         # Pinned by commit SHA (tags are mutable). Bump deliberately when reviewing a new release.
@@ -49,3 +64,5 @@ jobs:
       # Run tests only for packages that changed (and their dependents)
       - name: Run tests for changed packages
         run: pnpm --filter "...[origin/main]" run --if-present test
+        env:
+          REDIS_URL: redis://localhost:6379

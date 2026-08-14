@@ -608,12 +608,35 @@ describe('when incrementing a counter', () => {
       expect(result).toEqual({ value: 5, ttlRemainingInMilliseconds: 30_000 })
     })
 
-    it('should run a single script that increments, reads the expiry and only sets it when absent', () => {
+    // These pin the script's behaviour, not its prose. The suite mocks `client.eval`, so the script
+    // never actually executes here — without these assertions each of the following mutations passes
+    // every test while being catastrophically wrong in production: `PEXPIRE` -> `EXPIRE` (a 1000x
+    // longer window), swapping the return order (instant permanent 429), dropping the `ttl < 0` guard
+    // (the window slides on every hit, defeating the whole point of the primitive), and dropping
+    // `and ARGV[2]` (the no-TTL path errors). Real execution is covered by the integration spec that
+    // runs when REDIS_URL is set.
+    it('should increment by the requested amount', () => {
       expect(evalMock).toHaveBeenCalledWith(
         expect.stringContaining("redis.call('INCRBY', KEYS[1], ARGV[1])"),
         expect.anything()
       )
-      expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if ttl < 0'), expect.anything())
+    })
+
+    it('should expire in milliseconds, not seconds, so the window is not 1000x too long', () => {
+      const script = evalMock.mock.calls[0][0] as string
+      expect(script).toContain("redis.call('PEXPIRE', KEYS[1], ARGV[2])")
+      expect(script).not.toMatch(/redis\.call\('EXPIRE'/)
+    })
+
+    it('should set the expiry only when the counter has none, so repeated hits cannot slide it', () => {
+      expect(evalMock).toHaveBeenCalledWith(
+        expect.stringContaining('if ttl < 0 and ARGV[2] then'),
+        expect.anything()
+      )
+    })
+
+    it('should return the value before the ttl, in that order', () => {
+      expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('return { value, ttl }'), expect.anything())
     })
 
     it('should lowercase the key to stay consistent with the other operations', () => {
@@ -684,9 +707,14 @@ describe('when incrementing a counter', () => {
       evalMock.mockRejectedValue(error)
     })
 
-    it('should log the failure and propagate it', async () => {
+    it('should propagate it and log a fingerprint instead of the raw key', async () => {
       await expect(component.increment(counterKey)).rejects.toThrow(error)
-      expect(errorLogMock).toHaveBeenCalledWith(`Error incrementing key "${counterKey}"`, error)
+      expect(errorLogMock).toHaveBeenCalledWith(expect.stringMatching(/^Error incrementing key \(fingerprint [0-9a-f]{12}\)$/), error)
+    })
+
+    it('should keep the key itself out of the log, since it can hold an IP or a wallet address', async () => {
+      await expect(component.increment(counterKey)).rejects.toThrow(error)
+      expect(errorLogMock).not.toHaveBeenCalledWith(expect.stringContaining(counterKey), expect.anything())
     })
   })
 })

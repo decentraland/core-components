@@ -934,13 +934,53 @@ describe('when incrementing a counter', () => {
     })
   })
 
-  describe('and the stored value is not a number', () => {
-    beforeEach(async () => {
-      await component.set(counterKey, { not: 'a counter' })
+  describe('and the stored value is not an integer counter', () => {
+    // `NaN` is the dangerous one: `typeof NaN === 'number'`, and `NaN + 1` is `NaN`, so a counter
+    // poisoned with it never crosses a threshold again and a limiter built on it fails open forever
+    // for that key — silently. Redis rejects all of these, so accepting them here would also be a
+    // backend divergence.
+    describe.each([
+      ['an object', { not: 'a counter' }],
+      ['NaN', NaN],
+      ['Infinity', Infinity],
+      ['-Infinity', -Infinity],
+      ['a fractional number', 1.5],
+      ['a numeric string', '5'],
+      ['a boolean', true]
+    ])('and it is %s', (_label, poison) => {
+      beforeEach(async () => {
+        await component.set(counterKey, poison)
+      })
+
+      it('should throw rather than produce a nonsense count', async () => {
+        await expect(component.increment(counterKey)).rejects.toThrow(TypeError)
+      })
     })
 
-    it('should throw rather than produce a nonsense count', async () => {
-      await expect(component.increment(counterKey)).rejects.toThrow(TypeError)
+    describe('and the error is surfaced', () => {
+      beforeEach(async () => {
+        await component.set(counterKey, NaN)
+      })
+
+      it('should keep the key out of the message, since it can hold an IP or a wallet address', async () => {
+        await expect(component.increment(counterKey)).rejects.toThrow(
+          expect.objectContaining({ message: expect.not.stringContaining(counterKey) })
+        )
+      })
+    })
+  })
+
+  describe('and the remaining lifetime is reported', () => {
+    let result: { ttlRemainingInMilliseconds?: number }
+
+    beforeEach(async () => {
+      result = await component.increment(counterKey, { ttlInSeconds: 60 })
+    })
+
+    it('should be a whole number of milliseconds, matching what Redis reports', () => {
+      // lru-cache derives this from `performance.now()` and hands back a sub-millisecond float;
+      // an un-rounded value piped into a header yields an invalid `Retry-After`.
+      expect(Number.isInteger(result.ttlRemainingInMilliseconds)).toBe(true)
     })
   })
 

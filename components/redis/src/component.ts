@@ -1,6 +1,6 @@
 import { ILoggerComponent, START_COMPONENT, STOP_COMPONENT } from '@well-known-components/interfaces'
 import { createClient, RedisClientType } from 'redis'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import {
   ICacheStorageComponent,
   IncrementOptions,
@@ -29,6 +29,14 @@ if ttl < 0 and ARGV[2] then
   ttl = tonumber(ARGV[2])
 end
 return { value, ttl }`
+
+// A short, stable digest standing in for a key in logs, so an operator can correlate repeated
+// failures without the key's contents (often an IP or a wallet address) being written down.
+// NOTE: the other methods in this component still log raw keys — a pre-existing pattern worth
+// sweeping separately, since their keys carry identifiers too.
+function fingerprintKey(key: string): string {
+  return createHash('sha256').update(key).digest('hex').slice(0, 12)
+}
 
 export async function createRedisComponent(
   hostUrl: string,
@@ -237,7 +245,11 @@ export async function createRedisComponent(
         ttlRemainingInMilliseconds: ttlRemaining < 0 ? undefined : ttlRemaining
       }
     } catch (err: any) {
-      logger.error(`Error incrementing key "${key}"`, err)
+      // Fingerprint rather than the raw key. Counter keys routinely embed a client IP, a wallet
+      // address or another caller-supplied identifier, and an outage logs one line per request — so
+      // the raw key would push personal data into logs at volume. The digest is stable, so repeated
+      // failures on one key still correlate.
+      logger.error(`Error incrementing key (fingerprint ${fingerprintKey(key)})`, err)
       throw err
     }
   }

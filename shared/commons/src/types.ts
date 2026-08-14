@@ -166,9 +166,11 @@ export type IncrementResult = {
   /** The counter value **after** the increment was applied. */
   value: number
   /**
-   * Milliseconds remaining before the counter expires, or `undefined` when it has no expiry at
-   * all. Reported by the storage engine in the same round trip as the increment, so it reflects
-   * the engine's own expiry clock rather than the caller's.
+   * Whole milliseconds remaining before the counter expires, or `undefined` when it has no expiry at
+   * all. Read in the same round trip as the increment, so it costs nothing extra.
+   *
+   * It reflects the storage engine's own expiry clock, except on the path where the counter had no
+   * expiry and one was just installed — there it echoes back the requested `ttlInSeconds`.
    */
   ttlRemainingInMilliseconds?: number
 }
@@ -238,7 +240,9 @@ export interface ICacheStorageComponent extends IBaseComponent {
    *   ttlInSeconds: 60
    * })
    * if (value > 100) {
-   *   const retryAfter = Math.ceil((ttlRemainingInMilliseconds ?? 60_000) / 1000)
+   *   // `Math.max(1, …)`: the remaining TTL is legitimately `0` in a counter's final millisecond,
+   *   // which `??` does not catch, and `Retry-After: 0` invites an immediate retry storm.
+   *   const retryAfter = Math.max(1, Math.ceil((ttlRemainingInMilliseconds ?? 60_000) / 1000))
    *   return { status: 429, headers: { 'Retry-After': String(retryAfter) } }
    * }
    * ```
