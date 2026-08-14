@@ -60,6 +60,11 @@ function redactUrl(hostUrl: string): string {
     const url = new URL(hostUrl)
     if (url.password) url.password = '***'
     if (url.username) url.username = '***'
+    // The query string can carry credentials too (`?password=…`), and nothing in it is worth having in
+    // a "connecting to" line, so it goes wholesale rather than being enumerated. The path stays: it is
+    // the database index.
+    url.search = ''
+    url.hash = ''
     return url.toString()
   } catch {
     // Not parseable as a URL, so nothing can be reliably separated out — say nothing rather than

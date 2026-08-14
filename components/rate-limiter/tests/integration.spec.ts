@@ -203,7 +203,7 @@ describe.each(backends)('when rate limiting a real server backed by $label', ({ 
       const buckets = metricIncrements
         .filter(([name]) => name === 'rate_limiter_requests_total')
         .map(([, labels]) => labels.bucket)
-      expect(new Set(buckets)).toEqual(new Set(['GET /v1/notes', 'GET /v1/other']))
+      expect(new Set(buckets)).toEqual(new Set(['/v1/notes 2p60', '/v1/other 2p60']))
     })
   })
 
@@ -220,7 +220,7 @@ describe.each(backends)('when rate limiting a real server backed by $label', ({ 
       const buckets = metricIncrements
         .filter(([name]) => name === 'rate_limiter_requests_total')
         .map(([, labels]) => labels.bucket)
-      expect(buckets).toEqual(['GET /v1/notes/{id}', 'GET /v1/notes/{id}'])
+      expect(buckets).toEqual(['/v1/notes/{id} 5p60', '/v1/notes/{id} 5p60'])
     })
   })
 
@@ -386,6 +386,35 @@ describe.each(backends)('when rate limiting a real server backed by $label', ({ 
 
     it('should never count it', () => {
       expect(metricIncrements).toHaveLength(0)
+    })
+  })
+
+  describe('when a caller varies the request method to get a second allowance', () => {
+    let statuses: string[]
+
+    beforeEach(async () => {
+      // HEAD routes to a GET handler and executes it, so a per-method bucket handed every GET endpoint
+      // twice its limit — and a route serving all methods one limit each. The method is the caller's
+      // choice, so it must not be part of the bucket.
+      await startServer({ max: 2, windowSeconds: 60 }, (router, limiter) => {
+        router.get('/v1/notes', limiter.withRateLimitMiddleware(), async () => ({ status: 200 }))
+      })
+      statuses = []
+      for (const method of ['GET', 'GET', 'HEAD', 'GET']) {
+        const response = await fetch(`${origin}/v1/notes`, { method })
+        statuses.push(`${method}:${response.status}`)
+      }
+    })
+
+    it('should count HEAD against the same allowance as GET', () => {
+      expect(statuses).toEqual(['GET:200', 'GET:200', 'HEAD:429', 'GET:429'])
+    })
+
+    it('should keep them in one bucket', () => {
+      const buckets = metricIncrements
+        .filter(([name]) => name === 'rate_limiter_requests_total')
+        .map(([, labels]) => labels.bucket)
+      expect(new Set(buckets).size).toBe(1)
     })
   })
 })

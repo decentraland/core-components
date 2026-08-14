@@ -134,15 +134,27 @@ export function canonicalizeIpAddress(value: string | null | undefined): string 
 export function clientIpFromForwardedHeader(value: string | null, trustedProxyCount: number): string | null {
   if (!value) return null
 
-  const hops = value
-    .split(',')
-    .map(hop => hop.trim())
-    .filter(hop => hop.length > 0)
-
-  const index = hops.length - trustedProxyCount
-  if (index < 0) return null
-
-  return canonicalizeIpAddress(hops[index])
+  // Walks backwards and stops at the hop it wants, rather than splitting the whole header first.
+  // Splitting made the work proportional to the header's length, which the caller chooses: at Node's
+  // default 16KB header cap that measured ~0.5ms of parsing on every request, for a request that costs
+  // the caller nothing. Reading from the right needs only the last `trustedProxyCount` entries, so the
+  // work is bounded by configuration instead. Empty entries are skipped rather than counted, matching
+  // the `filter` this replaced.
+  let end = value.length
+  let seen = 0
+  for (;;) {
+    // `lastIndexOf(',', -1)` clamps its start to 0 and so keeps finding a *leading* comma, which would
+    // never advance. Once the whole value is consumed there is no separator left to find.
+    const comma = end === 0 ? -1 : value.lastIndexOf(',', end - 1)
+    const hop = value.slice(comma + 1, end).trim()
+    if (hop.length > 0) {
+      seen += 1
+      if (seen === trustedProxyCount) return canonicalizeIpAddress(hop)
+    }
+    // Ran out of entries before reaching the trusted chain's depth, so this did not come through it.
+    if (comma < 0) return null
+    end = comma
+  }
 }
 
 /**
@@ -337,15 +349,25 @@ export function createRateLimiterComponent<Context extends object = object>(
     // in Redis keys and in the `bucket` metric label.
     if (!routerPath.startsWith('/')) return policy.fallbackBucket
 
-    const method = context.request.method
-    const memoKey = `${method} ${routerPath}`
+    // The request method is deliberately NOT part of the bucket, even though a GET and a POST on one
+    // path can cost very different amounts. The method is chosen by the caller, so including it can
+    // only ever multiply an allowance: `HEAD` routes to a `GET` handler and executes it, which gave
+    // every GET endpoint twice its limit, and a route registered for all methods gave it one limit per
+    // method. A limiter must never loosen on caller input, and the two directions are not
+    // symmetric — sharing a bucket is conservative, splitting one is a bypass.
+    //
+    // The policy is folded in instead, so two mounts on the same path with different limits still get
+    // their own counters. Without that, a busy `GET /x` with a large `max` would fill the counter a
+    // small `POST /x` limit reads from and throttle it on traffic that was never its own.
+    const memoKey = `${routerPath} ${policy.fallbackBucket}`
     const memoized = bucketByRoute.get(memoKey)
     if (memoized !== undefined) return memoized
 
     // `:` separates the key's segments and a route template is full of it (`/v1/notes/:id`), so
     // parameters become a brace form that also reads better as a metric label. The trailing strip is
     // belt-and-braces for any colon a pattern might carry that is not a parameter.
-    const bucket = `${method} ${routerPath.replace(/:([^/]+)/g, '{$1}').replace(/:/g, '')}`
+    const template = routerPath.replace(/:([^/]+)/g, '{$1}').replace(/:/g, '')
+    const bucket = `${template} ${policy.fallbackBucket}`
     bucketByRoute.set(memoKey, bucket)
     return bucket
   }

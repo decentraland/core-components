@@ -62,6 +62,8 @@ export enum RateLimitDisclosure {
  * - `string[]` — exempt when any entry equals `url.pathname`.
  * - `RegExp` — tested against `url.pathname`. Global/sticky flags are stripped, since the same
  *   regex is reused across requests and `lastIndex` would otherwise make matches alternate.
+ *   **Anchor it.** The pathname is caller-controlled, so an unanchored `/health\//` also matches
+ *   `/v1/notes/health/live`, handing anyone a way to opt out of the limit.
  * - function — receives the request; return `true` to exempt it.
  *
  * A skipped request is neither counted nor rejected. There is **no default**: unlike the request

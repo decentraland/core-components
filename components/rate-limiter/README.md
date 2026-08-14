@@ -280,6 +280,22 @@ Both collapse cases keep the full `max` deliberately: the tightened cap exists f
 *known* to be shared, and applying it to a socket address would quietly divide every limit by ten in
 local development, where all traffic arrives from `127.0.0.1`.
 
+### What a caller cannot influence
+
+The limiter treats every part of a request as untrusted except what the deployment vouches for:
+
+- **The bucket** comes from the matched route and the policy — never the request path and never the
+  method, both of which the caller picks. Including the method would multiply an allowance rather than
+  divide it, since `HEAD` reaches a `GET` handler.
+- **No metric label** is caller-derived. `bucket` and `handler` come from the router, `outcome`,
+  `key_source` and `issue` are closed sets. So no request can create a series or inflate a label.
+- **Nothing is reported on the mere presence of a header**, because a caller can send any header. The
+  reported issues are all "our configuration said X would happen and it did not".
+- **Header parsing is bounded by configuration, not by input length.** The forwarded header is read from
+  the right and stops at the hop it needs, so a caller cannot make the parse expensive by sending a long
+  one.
+- **`skip` is the one place caller input decides whether the limiter runs at all** — anchor any regex.
+
 > **Security.** A forwarding header is only trustworthy because the network makes it so. If a caller can reach the origin without passing through the proxy, they control their own bucket — which grants them an unlimited allowance *and* lets them throttle a victim by claiming the victim's address. Set `trustedClientIpHeader` only when the origin is unreachable except through that proxy, and prefer a single-value header written by the edge (`cf-connecting-ip`) over `x-forwarded-for`. A header value that does not parse as an IP address is treated as absent, so garbage cannot mint buckets.
 
 ## Testing against a real server

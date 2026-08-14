@@ -1942,19 +1942,32 @@ describe('when the middleware runs inside a router layer', () => {
     expect(new Set(buckets).size).toBe(3)
   })
 
-  it('should bucket by method and route so the endpoint is legible in the key', () => {
-    expect(buckets[0]).toBe('POST /v1/login')
-    expect(buckets[1]).toBe('POST /v1/signup')
+  it('should bucket by route and policy so the endpoint is legible in the key', () => {
+    expect(buckets[0]).toBe('/v1/login 3p60')
+    expect(buckets[1]).toBe('/v1/signup 3p60')
   })
 
   it('should template path parameters, so the bucket count is bounded by routes not by ids', () => {
-    expect(buckets[2]).toBe('GET /v1/notes/{id}')
+    expect(buckets[2]).toBe('/v1/notes/{id} 3p60')
   })
 
-  it('should separate methods on the same path, which usually cost different amounts', async () => {
+  it('should share one bucket across methods, since the caller picks the method', async () => {
+    // Including the method would let a caller multiply its allowance: HEAD reaches a GET handler, and a
+    // route registered for all methods would get one allowance each.
     cache.increment.mockClear()
     await middleware(routed('GET', '/v1/notes', '/v1/notes'), next)
+    await middleware(routed('HEAD', '/v1/notes', '/v1/notes'), next)
     await middleware(routed('POST', '/v1/notes', '/v1/notes'), next)
+    const all = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[2])
+    expect(new Set(all).size).toBe(1)
+  })
+
+  it('should keep two policies on one path apart, so a big limit cannot fill a small one', async () => {
+    cache.increment.mockClear()
+    const generous = limiter.withRateLimitMiddleware({ max: 1000 })
+    const strict = limiter.withRateLimitMiddleware({ max: 2 })
+    await generous(routed('GET', '/v1/thing', '/v1/thing'), next)
+    await strict(routed('POST', '/v1/thing', '/v1/thing'), next)
     const both = cache.increment.mock.calls.map(call => (call[0] as string).split(':')[2])
     expect(new Set(both).size).toBe(2)
   })
@@ -2085,7 +2098,7 @@ describe('when the same endpoint is hit repeatedly', () => {
   })
 
   it('should derive the same bucket each time, memoized or not', () => {
-    expect(buckets).toEqual(['GET /v1/notes/{id}', 'GET /v1/notes/{id}'])
+    expect(buckets).toEqual(['/v1/notes/{id} 3p60', '/v1/notes/{id} 3p60'])
   })
 })
 
