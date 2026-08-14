@@ -1,6 +1,7 @@
 import type { IFetchComponent, IHttpServerComponent } from '@dcl/core-commons'
 import { createServerHandler } from './server-handler'
 import { NormalizedResponse } from './logic'
+import { getRemoteAddress, setRemoteAddress } from './remote-address'
 import { PassThrough, pipeline, Readable } from 'stream'
 
 /**
@@ -55,10 +56,27 @@ export type TestServerWithWs<W = any> = {
 }
 
 /**
+ * @public
+ */
+export type TestServerOptions = {
+  /**
+   * Peer address reported as `context.remoteAddress` for every request this test server processes,
+   * unless the request already carries one of its own (set with `setRemoteAddress`), which wins.
+   *
+   * Defaults to `undefined`, matching a request that did not arrive over a socket — a
+   * non-`undefined` default would silently drop every existing test's requests into a single bucket
+   * for middleware that key on the client address.
+   */
+  remoteAddress?: string
+}
+
+/**
  * Creates a http-server component for tests
  * @public
  */
-export function createTestServerComponent<Context extends object = {}>(): ITestHttpServerComponent<Context> {
+export function createTestServerComponent<Context extends object = {}>(
+  options?: TestServerOptions
+): ITestHttpServerComponent<Context> {
   let currentContext: Context = {} as any
 
   const serverHandler = createServerHandler<Context>()
@@ -87,6 +105,12 @@ export function createTestServerComponent<Context extends object = {}>(): ITestH
           init = { ...initRequest, body: maybeForm.getBuffer(), headers: { ...maybeForm.getHeaders(), ...initRequest.headers } }
         }
         req = new Request(newUrl.toString(), init)
+      }
+
+      // Applies to both branches above. A per-request address set by the caller wins, so a single
+      // test server can stand in for several distinct clients.
+      if (options?.remoteAddress && !getRemoteAddress(req)) {
+        setRemoteAddress(req, options.remoteAddress)
       }
 
       try {

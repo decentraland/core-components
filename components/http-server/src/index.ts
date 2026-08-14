@@ -1,5 +1,6 @@
 export * from './server'
 export * from './body-size-limiter'
+export * from './remote-address'
 export * from './injectors'
 export * from './test-component'
 export * from './types'
