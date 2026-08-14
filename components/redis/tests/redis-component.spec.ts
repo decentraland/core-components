@@ -592,3 +592,101 @@ describe('when trying to release locks', () => {
     })
   })
 })
+
+describe('when incrementing a counter', () => {
+  const counterKey = 'Rate-Limit:Bucket'
+
+  describe('and the counter already has an expiry', () => {
+    let result: { value: number; ttlRemainingInMilliseconds?: number }
+
+    beforeEach(async () => {
+      evalMock.mockResolvedValue([5, 30_000])
+      result = await component.increment(counterKey, { ttlInSeconds: 60 })
+    })
+
+    it('should return the post-increment value and the remaining lifetime', () => {
+      expect(result).toEqual({ value: 5, ttlRemainingInMilliseconds: 30_000 })
+    })
+
+    it('should run a single script that increments, reads the expiry and only sets it when absent', () => {
+      expect(evalMock).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call('INCRBY', KEYS[1], ARGV[1])"),
+        expect.anything()
+      )
+      expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('if ttl < 0'), expect.anything())
+    })
+
+    it('should lowercase the key to stay consistent with the other operations', () => {
+      expect(evalMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ keys: ['rate-limit:bucket'] }))
+    })
+
+    it('should pass the amount and the TTL as strings in milliseconds', () => {
+      expect(evalMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ arguments: ['1', '60000'] })
+      )
+    })
+  })
+
+  describe('and no TTL is given', () => {
+    beforeEach(async () => {
+      evalMock.mockResolvedValue([2, -1])
+      await component.increment(counterKey)
+    })
+
+    it('should send only the amount so the script leaves the counter without an expiry', () => {
+      expect(evalMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ arguments: ['1'] }))
+    })
+  })
+
+  describe('and the counter has no expiry at all', () => {
+    let result: { value: number; ttlRemainingInMilliseconds?: number }
+
+    beforeEach(async () => {
+      evalMock.mockResolvedValue([3, -1])
+      result = await component.increment(counterKey)
+    })
+
+    it('should report the remaining lifetime as undefined rather than a negative number', () => {
+      expect(result).toEqual({ value: 3, ttlRemainingInMilliseconds: undefined })
+    })
+  })
+
+  describe('and a custom amount is given', () => {
+    beforeEach(async () => {
+      evalMock.mockResolvedValue([10, 1000])
+      await component.increment(counterKey, { amount: 5 })
+    })
+
+    it('should pass it to the script', () => {
+      expect(evalMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ arguments: ['5'] }))
+    })
+  })
+
+  describe('and the TTL is not greater than zero', () => {
+    it('should throw rather than let PEXPIRE 0 delete the counter on every hit', async () => {
+      await expect(component.increment(counterKey, { ttlInSeconds: 0 })).rejects.toThrow(TypeError)
+      expect(evalMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('and the amount is not a safe integer', () => {
+    it('should throw', async () => {
+      await expect(component.increment(counterKey, { amount: 1.5 })).rejects.toThrow(TypeError)
+    })
+  })
+
+  describe('and Redis fails', () => {
+    let error: Error
+
+    beforeEach(() => {
+      error = new Error('Redis connection failed')
+      evalMock.mockRejectedValue(error)
+    })
+
+    it('should log the failure and propagate it', async () => {
+      await expect(component.increment(counterKey)).rejects.toThrow(error)
+      expect(errorLogMock).toHaveBeenCalledWith(`Error incrementing key "${counterKey}"`, error)
+    })
+  })
+})

@@ -2,6 +2,9 @@ import { LRUCache } from 'lru-cache'
 import { randomUUID } from 'crypto'
 import {
   ICacheStorageComponent,
+  IncrementOptions,
+  IncrementResult,
+  assertValidIncrementOptions,
   sleep,
   fromSecondsToMilliseconds,
   DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS,
@@ -78,6 +81,39 @@ export function createInMemoryCacheComponent(options?: InMemoryCacheOptions): IC
       const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const regex = new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`)
       return allKeys.filter((key: string) => regex.test(key))
+    },
+
+    async increment(key: string, options?: IncrementOptions): Promise<IncrementResult> {
+      const { amount, ttlInSeconds } = assertValidIncrementOptions(options)
+
+      // Read-modify-write with no `await` between the read and the write. JavaScript cannot
+      // interleave another task inside a synchronous block, so this is atomic by construction for
+      // every caller in this process. DO NOT introduce an `await` (or any other suspension point)
+      // between the `get` and the `set` — that reopens the lost-update race this method exists to
+      // close. `async` only defers the returned promise; the body runs to completion first.
+      const current = cache.get(key)
+      if (current !== undefined && typeof current !== 'number') {
+        throw new TypeError(`increment: the value stored at "${key}" is not a numeric counter`)
+      }
+      const value = (current ?? 0) + amount
+
+      // `noUpdateTTL` gives us "apply the TTL on creation only": lru-cache forces the flag off when
+      // *adding* an entry, and with it on leaves the existing deadline untouched when *updating*
+      // one. Without it every increment would slide the window — including sliding the
+      // constructor's default TTL when no per-call TTL is given.
+      cache.set(key, value, {
+        noUpdateTTL: true,
+        ...(ttlInSeconds !== undefined ? { ttl: fromSecondsToMilliseconds(ttlInSeconds) } : {})
+      })
+
+      // Read after the `set`: lru-cache installs the real `getRemainingTTL` lazily when TTL
+      // tracking is first initialized, so reading before the write can hit the stub.
+      // `Infinity` means the entry has no deadline.
+      const remaining = cache.getRemainingTTL(key)
+      return {
+        value,
+        ttlRemainingInMilliseconds: Number.isFinite(remaining) ? Math.max(0, remaining) : undefined
+      }
     },
 
     async setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {

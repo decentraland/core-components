@@ -39,6 +39,20 @@ export namespace IHttpServerComponent {
   export type DefaultContext<Context = {}> = Context & {
     request: IRequest
     url: URL
+    /**
+     * Address of the peer that opened the connection, as reported by the transport, normalized so
+     * an IPv4 client is always `127.0.0.1` rather than sometimes `::ffff:127.0.0.1`.
+     *
+     * This is the *socket* address, not a client address derived from `X-Forwarded-For` or any
+     * other header: behind a proxy or load balancer it is the proxy's address and is identical for
+     * every client. Consumers that need the originating client (rate limiters, audit logs) must
+     * read a trusted forwarding header first and fall back to this only when the server is
+     * directly exposed.
+     *
+     * `undefined` when the transport cannot report one — a request built directly rather than
+     * received over a socket, or a socket already destroyed.
+     */
+    remoteAddress?: string
   }
 
   export type PathAwareContext<Context = {}, Path extends string = string> = Context & {
@@ -124,11 +138,50 @@ export type IFetchComponent = {
   fetch(url: string | URL | Request, init?: RequestOptions): Promise<Response>
 }
 
+/**
+ * Options for {@link ICacheStorageComponent.increment}.
+ * @public
+ */
+export type IncrementOptions = {
+  /**
+   * How much to add to the counter. Must be a safe integer; may be negative to decrement.
+   * @defaultValue 1
+   */
+  amount?: number
+  /**
+   * Time-to-live in **seconds**, applied **only when the counter is created** (or when an existing
+   * counter has no expiry yet). Incrementing an already-expiring counter never extends its expiry,
+   * so a fixed window stays anchored to its first hit instead of sliding forever. Must be greater
+   * than zero when provided. Omit it to leave expiry management to the caller; in-memory
+   * implementations may still apply their configured default TTL on creation.
+   */
+  ttlInSeconds?: number
+}
+
+/**
+ * The outcome of an atomic {@link ICacheStorageComponent.increment}.
+ * @public
+ */
+export type IncrementResult = {
+  /** The counter value **after** the increment was applied. */
+  value: number
+  /**
+   * Milliseconds remaining before the counter expires, or `undefined` when it has no expiry at
+   * all. Reported by the storage engine in the same round trip as the increment, so it reflects
+   * the engine's own expiry clock rather than the caller's.
+   */
+  ttlRemainingInMilliseconds?: number
+}
+
 export interface ICacheStorageComponent extends IBaseComponent {
   /**
    * Retrieves a value from cache by key.
    * @param key - The key to look up.
    * @returns Promise resolving to the cached value or null if not found.
+   *
+   * @remarks
+   * Key case sensitivity differs by implementation: the Redis backend lowercases every key, the
+   * in-memory backend does not. Normalize keys yourself when case-stability matters.
    */
   get<T>(key: string): Promise<T | null>
   /**
@@ -157,6 +210,40 @@ export interface ICacheStorageComponent extends IBaseComponent {
    * @returns Promise resolving to an array of all keys.
    */
   keys(pattern?: string): Promise<string[]>
+  /**
+   * Atomically adds `amount` to the integer counter stored at `key`, creating it at `0` first if it
+   * does not exist, and returns the resulting value together with the counter's remaining lifetime.
+   *
+   * The whole read-modify-write happens as a single indivisible operation in the storage engine, so
+   * concurrent callers — across processes, and across service instances when backed by Redis — can
+   * never lose an update. This is the primitive to use for fixed-window rate limiting, quota
+   * accounting and any other "count events without a lock" workload; reaching for
+   * {@link ICacheStorageComponent.get} + {@link ICacheStorageComponent.set}, or for
+   * {@link ICacheStorageComponent.acquireLock}, is both racy and dramatically slower.
+   *
+   * `options.ttlInSeconds` is applied **only on creation** (and to a pre-existing counter that has
+   * no expiry). Repeated increments therefore leave the expiry where it is, which is what makes a
+   * fixed window terminate.
+   *
+   * @param key - The key holding the counter.
+   * @param options - Increment amount and creation-time TTL. See {@link IncrementOptions}.
+   * @returns The post-increment value and the counter's remaining TTL in milliseconds
+   *          (`undefined` when it has no expiry). See {@link IncrementResult}.
+   * @throws {TypeError} When `amount` is not a safe integer, `ttlInSeconds` is not greater than
+   *         zero, or the value stored at `key` is not an integer counter.
+   *
+   * @example Fixed-window rate limit with a correct `Retry-After`
+   * ```ts
+   * const { value, ttlRemainingInMilliseconds } = await cache.increment(`rl:${clientKey}`, {
+   *   ttlInSeconds: 60
+   * })
+   * if (value > 100) {
+   *   const retryAfter = Math.ceil((ttlRemainingInMilliseconds ?? 60_000) / 1000)
+   *   return { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+   * }
+   * ```
+   */
+  increment(key: string, options?: IncrementOptions): Promise<IncrementResult>
   /**
    * Stores a value in a hash by key and field.
    * @param key - The key where the hash is stored.

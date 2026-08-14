@@ -838,3 +838,115 @@ describe('when trying to release locks', () => {
     })
   })
 })
+
+describe('when incrementing a counter', () => {
+  const counterKey = 'rate-limit:bucket'
+
+  describe('and the counter does not exist yet', () => {
+    let result: { value: number; ttlRemainingInMilliseconds?: number }
+
+    beforeEach(async () => {
+      result = await component.increment(counterKey, { ttlInSeconds: 60 })
+    })
+
+    it('should create it at the increment amount', () => {
+      expect(result.value).toBe(1)
+    })
+
+    it('should apply the given TTL', () => {
+      expect(result.ttlRemainingInMilliseconds).toBeGreaterThan(0)
+      expect(result.ttlRemainingInMilliseconds).toBeLessThanOrEqual(60_000)
+    })
+  })
+
+  describe('and the counter already exists', () => {
+    let first: { ttlRemainingInMilliseconds?: number }
+    let second: { value: number; ttlRemainingInMilliseconds?: number }
+
+    beforeEach(async () => {
+      // Real time with a short TTL: lru-cache expiry is not driven by Jest fake timers.
+      first = await component.increment(counterKey, { ttlInSeconds: 60 })
+      await sleep(20)
+      second = await component.increment(counterKey, { ttlInSeconds: 60 })
+    })
+
+    it('should accumulate the count', () => {
+      expect(second.value).toBe(2)
+    })
+
+    it('should leave the original expiry in place so the window cannot slide', () => {
+      expect(second.ttlRemainingInMilliseconds!).toBeLessThan(first.ttlRemainingInMilliseconds!)
+    })
+  })
+
+  describe('and concurrent increments race on the same key', () => {
+    let values: number[]
+
+    beforeEach(async () => {
+      const results = await Promise.all(
+        Array.from({ length: 50 }, () => component.increment(counterKey, { ttlInSeconds: 60 }))
+      )
+      values = results.map(result => result.value)
+    })
+
+    it('should lose no updates', () => {
+      expect(new Set(values).size).toBe(50)
+      expect(Math.max(...values)).toBe(50)
+    })
+  })
+
+  describe('and the counter expires', () => {
+    let result: { value: number }
+
+    beforeEach(async () => {
+      await component.increment(counterKey, { ttlInSeconds: 1 })
+      await sleep(1100)
+      result = await component.increment(counterKey, { ttlInSeconds: 1 })
+    })
+
+    it('should restart the count', () => {
+      expect(result.value).toBe(1)
+    })
+  })
+
+  describe('and a custom amount is given', () => {
+    let result: { value: number }
+
+    beforeEach(async () => {
+      await component.increment(counterKey, { amount: 5, ttlInSeconds: 60 })
+      result = await component.increment(counterKey, { amount: -2, ttlInSeconds: 60 })
+    })
+
+    it('should add it, including a negative amount', () => {
+      expect(result.value).toBe(3)
+    })
+  })
+
+  describe('and no TTL is given', () => {
+    let result: { ttlRemainingInMilliseconds?: number }
+
+    beforeEach(async () => {
+      result = await component.increment(counterKey)
+    })
+
+    it("should fall back to the cache's default TTL", () => {
+      expect(result.ttlRemainingInMilliseconds).toBeGreaterThan(0)
+    })
+  })
+
+  describe('and the stored value is not a number', () => {
+    beforeEach(async () => {
+      await component.set(counterKey, { not: 'a counter' })
+    })
+
+    it('should throw rather than produce a nonsense count', async () => {
+      await expect(component.increment(counterKey)).rejects.toThrow(TypeError)
+    })
+  })
+
+  describe('and the TTL is not greater than zero', () => {
+    it('should throw so the units mismatch with Redis cannot silently disable a limiter', async () => {
+      await expect(component.increment(counterKey, { ttlInSeconds: 0 })).rejects.toThrow(TypeError)
+    })
+  })
+})

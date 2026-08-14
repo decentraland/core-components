@@ -3,6 +3,10 @@ import { createClient, RedisClientType } from 'redis'
 import { randomUUID } from 'crypto'
 import {
   ICacheStorageComponent,
+  IncrementOptions,
+  IncrementResult,
+  assertValidIncrementOptions,
+  fromSecondsToMilliseconds,
   isErrorWithMessage,
   sleep,
   DEFAULT_ACQUIRE_LOCK_TTL_IN_MILLISECONDS,
@@ -11,6 +15,20 @@ import {
   LockNotAcquiredError,
   LockNotReleasedError
 } from '@dcl/core-commons'
+
+// Increments and reads the counter's expiry in a single round trip. `INCRBY` creates the counter at
+// 0 when absent, so the value is always correct; `PTTL` then reports whether it has an expiry at all
+// (a negative reply means it does not). Setting the expiry only when there isn't one already is what
+// keeps a fixed window from sliding on every hit — and it also repairs a counter that was created
+// without a TTL, which the common `if current == 1` form leaves immortal.
+const INCREMENT_SCRIPT = `
+local value = redis.call('INCRBY', KEYS[1], ARGV[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 and ARGV[2] then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  ttl = tonumber(ARGV[2])
+end
+return { value, ttl }`
 
 export async function createRedisComponent(
   hostUrl: string,
@@ -197,6 +215,33 @@ export async function createRedisComponent(
     }
   }
 
+  async function increment(key: string, options?: IncrementOptions): Promise<IncrementResult> {
+    const { amount, ttlInSeconds } = assertValidIncrementOptions(options)
+
+    try {
+      // `EvalOptions.arguments` is typed as `RedisArgument` (string | Buffer): a raw number throws
+      // before the call ever reaches the server, so both args are stringified.
+      const args = [String(amount)]
+      if (ttlInSeconds !== undefined) {
+        // `PEXPIRE` rather than `EXPIRE` so sub-second windows and fractional TTLs survive.
+        args.push(String(Math.ceil(fromSecondsToMilliseconds(ttlInSeconds))))
+      }
+
+      const [value, ttlRemaining] = (await client.eval(INCREMENT_SCRIPT, {
+        keys: [key.toLowerCase()],
+        arguments: args
+      })) as [number, number]
+
+      return {
+        value,
+        ttlRemainingInMilliseconds: ttlRemaining < 0 ? undefined : ttlRemaining
+      }
+    } catch (err: any) {
+      logger.error(`Error incrementing key "${key}"`, err)
+      throw err
+    }
+  }
+
   async function setInHash<T>(key: string, field: string, value: T, ttlInSecondsForHash?: number): Promise<void> {
     const multi = await client.multi()
     multi.hSet(key, field, JSON.stringify(value))
@@ -231,6 +276,7 @@ export async function createRedisComponent(
     remove,
     exists,
     keys,
+    increment,
     setInHash,
     getFromHash,
     removeFromHash,
