@@ -140,9 +140,42 @@ export function clientIpFromForwardedHeader(value: string | null, trustedProxyCo
 }
 
 /** Deterministic, epoch-aligned window boundaries. See the README note on the 2x boundary burst. */
-export function currentWindow(now: number, windowMs: number): { windowId: number; resetAt: number } {
-  const windowId = Math.floor(now / windowMs)
-  return { windowId, resetAt: (windowId + 1) * windowMs }
+/**
+ * A stable per-identity offset, in `[0, windowMs)`, that shifts where this identity's windows fall.
+ *
+ * Derived from the identity so it is deterministic — every replica computes the same phase without
+ * coordinating, which is what keeps a shared counter correct.
+ */
+export function windowOffsetFor(identity: string, windowMs: number): number {
+  // 32 bits of the digest is ample for a phase and keeps the arithmetic inside a safe integer.
+  const digest = createHash('sha256').update(identity).digest()
+  return digest.readUInt32BE(0) % windowMs
+}
+
+/**
+ * The window an identity is currently in, and the instant it resets.
+ *
+ * Windows are fixed-length and their phase is **per identity** rather than aligned to the Unix epoch.
+ * Alignment would make every boundary global and permanent: a single `Retry-After` would reveal the
+ * phase, a second would reveal the period, and from then on a caller could compute every future
+ * boundary for every client — and deliberately spend a full allowance on each side of one, which is
+ * the 2x burst a fixed window inherently permits. Offsetting per identity means a caller learns only
+ * its own boundary, which it could have measured anyway, so disclosing the delay gives away nothing
+ * systemic. It also removes the synchronised reset edge where every counter in the fleet expires at
+ * the same instant.
+ *
+ * The offset is folded into the window id, so the id stays a plain integer and the key format is
+ * unchanged.
+ */
+export function currentWindow(
+  now: number,
+  windowMs: number,
+  offsetMs: number = 0
+): { windowId: number; resetAt: number } {
+  const shifted = now + offsetMs
+  const windowId = Math.floor(shifted / windowMs)
+  // Shift back, so `resetAt` is a real instant on the caller's clock rather than in offset space.
+  return { windowId, resetAt: (windowId + 1) * windowMs - offsetMs }
 }
 
 /**
@@ -323,7 +356,14 @@ export function createRateLimiterComponent(
     context?: IHttpServerComponent.DefaultContext<object>
   ): Promise<RateLimitResult> {
     const now = Date.now()
-    const { windowId, resetAt } = currentWindow(now, policy.windowMs)
+    // Phase the window per identity, so this caller's boundary is not every caller's boundary. The
+    // bucket is folded in as well, so the same caller does not hit all of its endpoints' boundaries
+    // at the same instant either.
+    const { windowId, resetAt } = currentWindow(
+      now,
+      policy.windowMs,
+      windowOffsetFor(`${policy.bucket}:${identity}`, policy.windowMs)
+    )
     const secondsLeftInWindow = Math.ceil((resetAt - now) / 1000)
     const base = {
       limit: max,

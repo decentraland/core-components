@@ -104,7 +104,11 @@ result is served as-is, so at `NONE` keep it empty or generic.
 
 Note the cost of `NONE`: with no `Retry-After`, even a cooperative client has nothing to back off on
 and will typically retry immediately. You shed each request but receive more of them. `RETRY_AFTER` is
-the default because it says *when* to come back without saying what the limit is.
+the default because it says *when* to come back without saying what the limit is — and because window
+phase is per identity, the delay it reveals is about that caller alone (see the note on window phase
+below). For an unauthenticated, abuse-prone endpoint — login, signup, anything that costs money per
+call — `NONE` is still the right choice: it makes a rate limit indistinguishable from any other
+rejection with that status.
 
 ## Metrics
 
@@ -168,7 +172,8 @@ Each proxy appends the address it saw, so the rightmost entries come from infras
 
 ## Notes
 
-- **The 2x boundary burst.** Windows are aligned to the Unix epoch, so a caller can spend the full `max` in the last millisecond of one window and `max` again in the first millisecond of the next — up to `2 × max` requests in an arbitrarily short interval. The sustained rate is still `max` per window. Pick `max` so that `2 × max` is survivable, or shorten the window: `10s/20` has the same sustained rate as `60s/120` with a 6× smaller burst.
+- **The 2x boundary burst.** A caller can spend the full `max` just before its window turns over and `max` again just after — up to `2 × max` requests in a short interval. The sustained rate is still `max` per window. Pick `max` so that `2 × max` is survivable, or shorten the window: `10s/20` has the same sustained rate as `60s/120` with a 6× smaller burst.
+- **Window phase is per identity, not aligned to the epoch.** Each identity's boundary is derived from a hash of it, so learning one caller's boundary says nothing about anyone else's. That matters when disclosure is enabled: with epoch-aligned windows a single `Retry-After` would reveal the phase and a second the period, after which a bot could compute every future boundary for every client and deliberately straddle one to take the 2x burst. Per-identity phases reduce that to what a caller could already measure about itself. It also removes the synchronised edge where every counter in the fleet expires at the same instant. The trade-off is that a given client's boundary is no longer a round number, which is one more thing to reason about during an incident.
 - **Buckets.** Two limiters share a counter only when both `keyPrefix` and bucket match. The bucket defaults to `` `${max}p${windowSeconds}` ``, so two routes configured with the same limit share one pool — pass `name` to separate them. The mirror image is a footgun: a global `server.use()` limiter and a per-route limiter that resolve to the same bucket count each request **twice**, halving the effective limit. Name the per-route one.
 - **`keyPrefix` must be unique per service** on a shared Redis, or one service's traffic throttles another's.
 - **`Retry-After`** is in seconds and never `0` (some clients read `0` as "retry immediately", which is the storm the header exists to prevent). `RateLimit-Reset` is **seconds until the window resets**, not an absolute timestamp — that is what the standardized header name is defined to mean, and epoch seconds there would read as a backoff of tens of thousands of years to a compliant client. It therefore duplicates `Retry-After`, which is what the spec intends; `result.resetAt` carries the absolute instant for hooks that want it. The delay travels in the headers only — the `429` body is a fixed `{ ok: false, message: 'Too many requests' }` and never restates it, so there is one authoritative place for it. `result.retryAfterSeconds` is still passed to `onLimitExceeded` and `buildLimitExceededResponse` if you want it in a custom payload.

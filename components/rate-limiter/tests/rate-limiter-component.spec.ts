@@ -9,6 +9,7 @@ import {
   currentWindow,
   encodeIdentity,
   FALLBACK_IDENTITY,
+  windowOffsetFor,
   MAX_RAW_IDENTITY_LENGTH,
   shouldSkip
 } from '../src/component'
@@ -319,21 +320,77 @@ describe('when the window rolls over', () => {
 })
 
 describe('when the counter is created', () => {
+  let requestedTtl: number
+  let millisecondsLeftInWindow: number
+
   beforeEach(async () => {
-    // Deliberately off a whole second: at `.000` a floor and a ceil agree, so the rounding
-    // direction would be unpinned.
-    jest.useFakeTimers().setSystemTime(new Date('2026-08-13T10:00:30.400Z'))
+    const now = new Date('2026-08-13T10:00:30.400Z')
+    jest.useFakeTimers().setSystemTime(now)
     middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
     await middleware(context, next)
+    requestedTtl = (cache.increment.mock.calls[0][1] as { ttlInSeconds: number }).ttlInSeconds
+    // Windows are phased per identity, so the remaining time is derived rather than assumed. The
+    // helpers doing the deriving are unit-tested separately, just below.
+    // The component phases on `bucket:identity`, with the identity raw rather than key-encoded.
+    const { resetAt } = currentWindow(now.getTime(), 60_000, windowOffsetFor('3p60:203.0.113.7', 60_000))
+    millisecondsLeftInWindow = resetAt - now.getTime()
   })
 
   afterEach(() => {
     jest.useRealTimers()
   })
 
-  it('should round the remaining window up and add a grace second', () => {
-    // 29.6s left -> ceil to 30, plus the grace second. A floor would ask for 30.
-    expect(cache.increment).toHaveBeenCalledWith(expect.any(String), { ttlInSeconds: 31 })
+  it('should never ask for less than the window has left, which would hand out a free reset', () => {
+    expect(requestedTtl * 1000).toBeGreaterThanOrEqual(millisecondsLeftInWindow)
+  })
+
+  it('should never ask for much more than a window, so a counter cannot outlive its successor', () => {
+    expect(requestedTtl).toBeLessThanOrEqual(61)
+  })
+
+  it('should round the remaining window up rather than down, plus a grace second', () => {
+    expect(requestedTtl).toBe(Math.ceil(millisecondsLeftInWindow / 1000) + 1)
+  })
+})
+
+describe('when deriving a window offset for an identity', () => {
+  it('should stay inside the window', () => {
+    for (const identity of ['203.0.113.7', 'address:0xabc', 'unidentified-client']) {
+      const offset = windowOffsetFor(identity, 60_000)
+      expect(offset).toBeGreaterThanOrEqual(0)
+      expect(offset).toBeLessThan(60_000)
+    }
+  })
+
+  it('should be stable for the same identity, so replicas agree without coordinating', () => {
+    expect(windowOffsetFor('203.0.113.7', 60_000)).toBe(windowOffsetFor('203.0.113.7', 60_000))
+  })
+
+  it('should differ between identities, so one caller cannot infer another boundary', () => {
+    expect(windowOffsetFor('203.0.113.7', 60_000)).not.toBe(windowOffsetFor('198.51.100.4', 60_000))
+  })
+})
+
+describe('when two identities are limited over the same window length', () => {
+  let resetInstants: number[]
+
+  beforeEach(() => {
+    const now = new Date('2026-08-13T10:00:00.000Z').getTime()
+    resetInstants = ['203.0.113.7', '198.51.100.4', 'address:0xabc'].map(
+      identity => currentWindow(now, 60_000, windowOffsetFor(identity, 60_000)).resetAt
+    )
+  })
+
+  it('should not share a reset instant, removing the fleet-wide synchronised edge', () => {
+    expect(new Set(resetInstants).size).toBe(resetInstants.length)
+  })
+
+  it('should still reset within one window of now, so the phase only shifts the boundary', () => {
+    const now = new Date('2026-08-13T10:00:00.000Z').getTime()
+    for (const resetAt of resetInstants) {
+      expect(resetAt).toBeGreaterThan(now)
+      expect(resetAt).toBeLessThanOrEqual(now + 60_000)
+    }
   })
 })
 
