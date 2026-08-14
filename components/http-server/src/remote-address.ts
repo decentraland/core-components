@@ -22,7 +22,9 @@ const IPV4_MAPPED_IPV6_PREFIX = '::ffff:'
  * @public
  */
 export function normalizeRemoteAddress(address: string | undefined): string | undefined {
-  if (!address) return undefined
+  // Guards JS callers too, not just the empty case: this is exported, so a non-string reaching
+  // `toLowerCase` below would throw rather than simply report "no address".
+  if (!address || typeof address !== 'string') return undefined
 
   if (address.toLowerCase().startsWith(IPV4_MAPPED_IPV6_PREFIX)) {
     const candidate = address.slice(IPV4_MAPPED_IPV6_PREFIX.length)
@@ -40,6 +42,14 @@ export function normalizeRemoteAddress(address: string | undefined): string | un
  * The server does this automatically for every incoming connection. Call it directly to give a
  * request built by hand — in a test, or in front of `createTestServerComponent` — a fake peer
  * address.
+ *
+ * Only effective **before** the request enters the middleware chain: the context copies the address
+ * once, when it is built, so a later call updates what `getRemoteAddress` returns but not what
+ * handlers see on `context.remoteAddress`. To override the address mid-chain (for example to trust a
+ * forwarding header), assign `context.remoteAddress` directly instead.
+ *
+ * The address is stored as given apart from IPv4-mapped normalization — it is not validated, and an
+ * empty value is ignored rather than clearing a previously stored one.
  *
  * @public
  */

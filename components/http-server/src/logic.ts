@@ -264,8 +264,12 @@ export const getRequestFromNodeMessage = <T extends http.IncomingMessage & { ori
   // socket is destroyed, and the Node message is dropped the moment this function returns.
   // `request.socket` is typed non-optional but is genuinely absent on the hand-rolled message
   // objects used in tests, so the optional chain is load-bearing — do not "clean it up".
+  // `typeof`, not truthiness: `getRequestFromNodeMessage` is public and is called directly with
+  // hand-rolled message objects, so a `socket.remoteAddress` that is not a string (a number, a
+  // Buffer) must not reach the normalizer and throw — that would surface as a blanket 500 for a
+  // request shape this function previously accepted without touching the socket at all.
   const remoteAddress = request.socket?.remoteAddress
-  if (remoteAddress) setRemoteAddress(ret, remoteAddress)
+  if (typeof remoteAddress === 'string') setRemoteAddress(ret, remoteAddress)
 
   return ret
 }
@@ -429,7 +433,15 @@ export function contextFromRequest<Ctx extends object>(baseCtx: Ctx, request: IH
   // The context is created once per request and is never swapped out, whereas `context.request` is
   // replaced wholesale by middleware such as `createBodySizeLimitMiddleware`, which would orphan a
   // lookup keyed on the original request object.
-  newContext.remoteAddress = getRemoteAddress(request)
+  //
+  // Assigned only when there is one: an unconditional write installs an *own* `undefined` that
+  // shadows any value inherited from the configured base context, and leaves every context carrying
+  // a permanent `remoteAddress: undefined` through `Object.keys` and object spread. Absence still
+  // reads as `undefined`, so nothing downstream changes.
+  const remoteAddress = getRemoteAddress(request)
+  if (remoteAddress !== undefined) {
+    newContext.remoteAddress = remoteAddress
+  }
 
   return newContext
 }
