@@ -123,8 +123,13 @@ export type RateLimitResult = {
  */
 export type RateLimitPolicyOptions<Context extends object = object> = {
   /**
-   * Bucket the counter lives under, appended to `keyPrefix`. Two limiters share a counter if and
-   * only if they resolve to the same `keyPrefix` **and** the same bucket.
+   * Bucket the counter lives under, appended to `keyPrefix`. This is a **budget boundary, not a
+   * label**: it decides which endpoints draw from the same counter. Two limiters share a counter if
+   * and only if they resolve to the same `keyPrefix` **and** the same bucket.
+   *
+   * It is reported as the `bucket` metric label as a side effect, but the route a request hit is
+   * reported separately as `handler`, taken from the router's matched template (`/v1/notes/:id`), so
+   * naming buckets after routes is not needed for observability.
    *
    * Defaults to `` `${max}p${windowSeconds}` `` — deterministic, so every replica agrees on it and
    * it survives restarts. That means two routes configured with the same limit share one pool; pass
