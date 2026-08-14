@@ -19,20 +19,38 @@ export enum RateLimitKeySource {
 }
 
 /**
- * When the `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` headers are emitted.
- * `Retry-After` is always set on a `429`, independently of this setting.
+ * How much a rejected caller is told about the limit. The levels are ordered: each one discloses
+ * everything the level below it does, plus more.
+ *
+ * Disclosure is a real trade-off rather than a cosmetic one. Telling a client its limit, window and
+ * remaining budget is what lets a well-behaved integration pace itself; it also tells someone probing
+ * the endpoint exactly how much traffic slips under the threshold and when the window turns over.
+ *
  * @public
  */
-export enum RateLimitHeaderMode {
-  /** Never emit them. */
-  NEVER = 'never',
-  /** Emit them only on the `429`. The default. */
+export enum RateLimitDisclosure {
+  /**
+   * The status code and nothing else — no `Retry-After`, no `RateLimit-*`, and no response body,
+   * since a body naming the limit is itself disclosure. A caller cannot tell a rate limit apart from
+   * any other rejection carrying the same status.
+   *
+   * Note the cost: with no `Retry-After` even a cooperative client has nothing to back off on and
+   * will typically retry at once, so you shed each request but receive more of them.
+   */
+  NONE = 'none',
+  /**
+   * Adds `Retry-After` and a generic body. Says *when* to come back without saying what the limit,
+   * window or remaining budget is. The default, and the convention the rest of the fleet follows.
+   */
+  RETRY_AFTER = 'retry-after',
+  /** Adds the `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` triplet to the rejection. */
   ON_LIMIT = 'on-limit',
   /**
-   * Emit them on every response, so a client can back off before it is throttled. They are still
-   * suppressed on a request served while the counter store is unavailable: the counts are not real
-   * then, and advertising `RateLimit-Remaining: 0` would tell a well-behaved client to stop sending
-   * for the rest of the window — the opposite of what failing open is for.
+   * Also sends the triplet on successful responses, so a client can watch its budget drain and slow
+   * down before being rejected. They are still suppressed on a request served while the counter store
+   * is unavailable: the counts are not real then, and advertising `RateLimit-Remaining: 0` would tell
+   * a well-behaved client to stop sending for the rest of the window — the opposite of what failing
+   * open is for.
    */
   ALWAYS = 'always'
 }
@@ -178,11 +196,12 @@ export type RateLimitPolicyOptions = {
    */
   fallbackMaxDivisor?: number
   /**
-   * When the `RateLimit-*` headers are emitted. A value outside the enum throws rather than being
-   * silently treated as the default, so a misspelled `'Never'` cannot leave headers switched on.
-   * @defaultValue RateLimitHeaderMode.ON_LIMIT
+   * How much a rejected caller is told about the limit. See {@link RateLimitDisclosure}. A value
+   * outside the enum throws rather than being silently treated as the default, so a misspelled
+   * `'None'` cannot leave the limit exposed.
+   * @defaultValue RateLimitDisclosure.RETRY_AFTER
    */
-  emitRateLimitHeaders?: RateLimitHeaderMode
+  disclosure?: RateLimitDisclosure
   /**
    * Called for every rejection, before the response is built — the place to increment a metric. It
    * runs on the request's critical path and is awaited, so keep it cheap: a counter, not an HTTP
@@ -211,6 +230,10 @@ export type RateLimitPolicyOptions = {
    *
    * If it throws or returns nothing, the failure is logged and the built-in `429` is served instead —
    * a broken response builder must not turn a rejection into a `500` with no `Retry-After`.
+   *
+   * A custom response overrides the body, so at `RateLimitDisclosure.NONE` whatever it returns is
+   * served as-is: the level suppresses the headers the component would add, but cannot redact a body
+   * the caller chose to write.
    */
   buildLimitExceededResponse?: (
     context: IHttpServerComponent.DefaultContext<object>,

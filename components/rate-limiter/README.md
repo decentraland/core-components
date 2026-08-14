@@ -9,7 +9,7 @@ A component that exposes a fixed-window rate limiter as a middleware, applicable
 - Global and per-route limits sharing one store, with per-endpoint overrides.
 - Configurable key derivation with a safe, tightened fallback when no client address is available.
 - Fails open by default on a store outage, with a switch to fail closed.
-- `429` + `Retry-After`, plus standard `RateLimit-*` headers.
+- Configurable disclosure, from a bare status code up to standard `RateLimit-*` headers on every response.
 - Prometheus metrics instead of log lines, labelled by bucket, route and outcome.
 - A `consume` API for non-HTTP call sites (websocket handlers, queue consumers, domain actions).
 
@@ -71,10 +71,40 @@ Policy — accepted component-wide and overridable per middleware or per `consum
 | `skip`                       | `fn \| string[] \| string \| RegExp`     | — (none)             | Requests exempt from counting.                                                 |
 | `failOpen`                   | `boolean`                                | `true`               | Allow (`true`) or reject (`false`) when the counter store is unreachable.       |
 | `fallbackMaxDivisor`         | `number`                                 | `10`                 | Divides `max` for the shared bucket used when no address is available.          |
-| `emitRateLimitHeaders`       | `RateLimitHeaderMode`                    | `ON_LIMIT`           | When to emit `RateLimit-*`: `NEVER`, `ON_LIMIT`, or `ALWAYS`.                   |
+| `disclosure`                 | `RateLimitDisclosure`                    | `RETRY_AFTER`        | How much a rejected caller is told. See **Disclosure** below.                    |
 | `onLimitExceeded`            | `(ctx, result) => void`                  | —                    | Called on every rejection — the place to increment a metric.                    |
 | `onStoreError`               | `(ctx, error) => void`                   | —                    | Called on every counter failure, so a silent fail-open stays visible.           |
 | `buildLimitExceededResponse` | `(ctx, result) => IResponse`             | —                    | Replaces the built-in `429`; a throw or nullish return falls back to it.         |
+
+## Disclosure
+
+How much a rejected caller learns is configurable, because it is a genuine trade-off: telling a
+client its limit, window and remaining budget is what lets a well-behaved integration pace itself, and
+it also tells someone probing the endpoint exactly how much traffic slips under the threshold and when
+the window turns over.
+
+The levels are ordered — each discloses everything the level below does, plus more:
+
+| `disclosure` | Status | `Retry-After` + body | `RateLimit-*` on the 429 | `RateLimit-*` on success |
+| --- | :-: | :-: | :-: | :-: |
+| `NONE` | ✓ | | | |
+| `RETRY_AFTER` *(default)* | ✓ | ✓ | | |
+| `ON_LIMIT` | ✓ | ✓ | ✓ | |
+| `ALWAYS` | ✓ | ✓ | ✓ | ✓ |
+
+```typescript
+// Reveal nothing at all: a bare 429, indistinguishable from any other rejection with that status.
+router.post('/v1/login', rateLimiter.withRateLimitMiddleware({ name: 'login', disclosure: RateLimitDisclosure.NONE }), loginHandler)
+```
+
+`NONE` withholds the **response body** as well as the headers — `Too many requests` tells a caller its
+rejection was a rate limit rather than anything else, which is precisely what that level exists to
+hide. The one thing it cannot redact is a body you write yourself: a `buildLimitExceededResponse`
+result is served as-is, so at `NONE` keep it empty or generic.
+
+Note the cost of `NONE`: with no `Retry-After`, even a cooperative client has nothing to back off on
+and will typically retry immediately. You shed each request but receive more of them. `RETRY_AFTER` is
+the default because it says *when* to come back without saying what the limit is.
 
 ## Metrics
 
@@ -141,13 +171,14 @@ Each proxy appends the address it saw, so the rightmost entries come from infras
 - **The 2x boundary burst.** Windows are aligned to the Unix epoch, so a caller can spend the full `max` in the last millisecond of one window and `max` again in the first millisecond of the next — up to `2 × max` requests in an arbitrarily short interval. The sustained rate is still `max` per window. Pick `max` so that `2 × max` is survivable, or shorten the window: `10s/20` has the same sustained rate as `60s/120` with a 6× smaller burst.
 - **Buckets.** Two limiters share a counter only when both `keyPrefix` and bucket match. The bucket defaults to `` `${max}p${windowSeconds}` ``, so two routes configured with the same limit share one pool — pass `name` to separate them. The mirror image is a footgun: a global `server.use()` limiter and a per-route limiter that resolve to the same bucket count each request **twice**, halving the effective limit. Name the per-route one.
 - **`keyPrefix` must be unique per service** on a shared Redis, or one service's traffic throttles another's.
-- **`Retry-After`** is always in seconds and never `0` (some clients read `0` as "retry immediately", which is the storm the header exists to prevent). `RateLimit-Reset` is **seconds until the window resets**, not an absolute timestamp — that is what the standardized header name is defined to mean, and epoch seconds there would read as a backoff of tens of thousands of years to a compliant client. It therefore duplicates `Retry-After`, which is what the spec intends; `result.resetAt` carries the absolute instant for hooks that want it. The delay travels in the headers only — the `429` body is a fixed `{ ok: false, message: 'Too many requests' }` and never restates it, so there is one authoritative place for it. `result.retryAfterSeconds` is still passed to `onLimitExceeded` and `buildLimitExceededResponse` if you want it in a custom payload.
+- **`Retry-After`** is in seconds and never `0` (some clients read `0` as "retry immediately", which is the storm the header exists to prevent). `RateLimit-Reset` is **seconds until the window resets**, not an absolute timestamp — that is what the standardized header name is defined to mean, and epoch seconds there would read as a backoff of tens of thousands of years to a compliant client. It therefore duplicates `Retry-After`, which is what the spec intends; `result.resetAt` carries the absolute instant for hooks that want it. The delay travels in the headers only — the `429` body is a fixed `{ ok: false, message: 'Too many requests' }` and never restates it, so there is one authoritative place for it. `result.retryAfterSeconds` is still passed to `onLimitExceeded` and `buildLimitExceededResponse` if you want it in a custom payload.
 - **Failing open is silent.** During a store outage the limiter allows everything and looks exactly like low traffic. The built-in error log is throttled to one line per 10s; wire `onStoreError` to a metric so the state is observable.
 - **The fallback bucket is deliberately loud.** When no address can be established every caller shares one bucket at a tightened cap, and the component warns once. That is a misconfiguration signal, not a mode to run in.
 - **Case-sensitivity.** `@dcl/redis-component` lowercases every key, so identities differing only in case share a bucket. If `getKey` returns case-significant material, set `hashKeys: true`.
 - **Counting happens before the handler runs**, so a request the handler later rejects (401, 404) still consumes budget. That is intentional — it is what protects an auth endpoint — but it means "only count successful requests" is not supported.
 - **Hooks run on the critical path** and are awaited; keep them to a counter, not an HTTP call. A throw is caught and logged rather than turned into a `500`.
 - **`skip` has no default.** For health checks, pass `skip: ['/health/live', '/health/ready']`; for CORS preflight, `skip: (request) => request.method === 'OPTIONS'`.
+- **Disclosure does not change enforcement.** Every level counts, rejects and records metrics identically; only what the caller is told differs. Your own dashboards always see the full picture.
 - **Skipped requests are not counted and produce no metric** — they never reach the counter.
 - **`consume` with an empty identity** is routed to the shared fallback bucket at the tightened cap, not given its own bucket at the full limit — so `consume(session.address ?? '')` degrades safely. A non-string identity throws.
 - **Only `@dcl/http-server` populates `context.remoteAddress` today.** `@dcl/uws-http-server` returns the raw uWS app and does not, so a uWS-based service must supply `getKey` or a trusted header, or every caller lands in the shared fallback bucket.

@@ -17,7 +17,7 @@ import {
   IRateLimiterComponent,
   RateLimiterComponents,
   RateLimiterOptions,
-  RateLimitHeaderMode,
+  RateLimitDisclosure,
   RateLimitKeySource,
   RateLimitPolicyOptions,
   RateLimitResult,
@@ -180,14 +180,10 @@ describe('when the request count exceeds the limit', () => {
     expect(response.body).toEqual({ ok: false, message: 'Too many requests' })
   })
 
-  it('should emit the rate limit headers by default', () => {
-    expect(headers.get('RateLimit-Limit')).toBe('3')
-    expect(headers.get('RateLimit-Remaining')).toBe('0')
-    // Delta-seconds, matching the standardized meaning of the header name. An absolute epoch value
-    // here would read as a multi-millennium backoff to a compliant client.
-    expect(headers.get('RateLimit-Reset')).toBe(headers.get('Retry-After'))
-    expect(Number(headers.get('RateLimit-Reset'))).toBeGreaterThan(0)
-    expect(Number(headers.get('RateLimit-Reset'))).toBeLessThanOrEqual(60)
+  it('should not disclose the limit or the remaining budget by default', () => {
+    expect(headers.get('RateLimit-Limit')).toBeNull()
+    expect(headers.get('RateLimit-Remaining')).toBeNull()
+    expect(headers.get('RateLimit-Reset')).toBeNull()
   })
 
   it('should count the rejection as a metric rather than writing a log line', () => {
@@ -681,12 +677,12 @@ describe('when two limiters share a store under different key prefixes', () => {
   })
 })
 
-describe('when the rate limit headers mode is set', () => {
+describe('when the disclosure level is set', () => {
   describe('and it is always', () => {
     beforeEach(async () => {
       middleware = createRateLimiterComponent(components, {
         ...options,
-        emitRateLimitHeaders: RateLimitHeaderMode.ALWAYS
+        disclosure: RateLimitDisclosure.ALWAYS
       }).withRateLimitMiddleware()
       response = await middleware(context, next)
     })
@@ -701,7 +697,7 @@ describe('when the rate limit headers mode is set', () => {
     beforeEach(async () => {
       middleware = createRateLimiterComponent(components, {
         ...options,
-        emitRateLimitHeaders: RateLimitHeaderMode.ON_LIMIT
+        disclosure: RateLimitDisclosure.ON_LIMIT
       }).withRateLimitMiddleware()
       response = await middleware(context, next)
     })
@@ -709,20 +705,44 @@ describe('when the rate limit headers mode is set', () => {
     it('should not emit them on a successful response', () => {
       expect(new Headers(response.headers).get('RateLimit-Limit')).toBeNull()
     })
+
+    describe('and the request is rejected', () => {
+      beforeEach(async () => {
+        response = (await callTimes(3))[2]
+      })
+
+      it('should emit the triplet with the reset as delta seconds', () => {
+        const rejected = new Headers(response.headers)
+        expect(rejected.get('RateLimit-Limit')).toBe('3')
+        expect(rejected.get('RateLimit-Remaining')).toBe('0')
+        // Delta-seconds, matching the standardized meaning of the name. An absolute epoch value here
+        // would read as a multi-millennium backoff to a compliant client.
+        expect(rejected.get('RateLimit-Reset')).toBe(rejected.get('Retry-After'))
+        expect(Number(rejected.get('RateLimit-Reset'))).toBeLessThanOrEqual(60)
+      })
+    })
   })
 
   describe('and it is never', () => {
     beforeEach(async () => {
       middleware = createRateLimiterComponent(components, {
         ...options,
-        emitRateLimitHeaders: RateLimitHeaderMode.NEVER
+        disclosure: RateLimitDisclosure.NONE
       }).withRateLimitMiddleware()
       response = (await callTimes(4))[3]
     })
 
-    it('should emit only Retry-After on the rejection', () => {
-      expect(Number(new Headers(response.headers).get('Retry-After'))).toBeGreaterThan(0)
-      expect(new Headers(response.headers).get('RateLimit-Limit')).toBeNull()
+    it('should emit nothing but the status', () => {
+      const rejected = new Headers(response.headers)
+      expect(rejected.get('Retry-After')).toBeNull()
+      expect(rejected.get('RateLimit-Limit')).toBeNull()
+      expect(rejected.get('RateLimit-Remaining')).toBeNull()
+      expect(rejected.get('RateLimit-Reset')).toBeNull()
+    })
+
+    it('should withhold the body too, since naming the limit is disclosure', () => {
+      expect(response.status).toBe(429)
+      expect(response.body).toBeUndefined()
     })
   })
 
@@ -744,7 +764,7 @@ describe('when the rate limit headers mode is set', () => {
       next = jest.fn().mockResolvedValue(downstreamResponse)
       middleware = createRateLimiterComponent(components, {
         ...options,
-        emitRateLimitHeaders: RateLimitHeaderMode.ALWAYS
+        disclosure: RateLimitDisclosure.ALWAYS
       }).withRateLimitMiddleware()
       response = await middleware(context, next)
     })
@@ -1085,7 +1105,8 @@ describe('when an override carries a key whose value is undefined', () => {
 
   beforeEach(async () => {
     // The shape an optional config field produces: `{ max: config.loginMax }` with nothing set.
-    options = { ...options, max: 3, failOpen: false }
+    // ON_LIMIT so the resolved limit is observable in the response headers.
+    options = { ...options, max: 3, failOpen: false, disclosure: RateLimitDisclosure.ON_LIMIT }
     limiter = createRateLimiterComponent(components, options)
     middleware = limiter.withRateLimitMiddleware({ max: undefined, failOpen: undefined })
     responses = await callTimes(4)
@@ -1171,7 +1192,7 @@ describe('when the downstream handler returns no response at all', () => {
     next = jest.fn().mockResolvedValue(undefined)
     middleware = createRateLimiterComponent(components, {
       ...options,
-      emitRateLimitHeaders: RateLimitHeaderMode.ALWAYS
+      disclosure: RateLimitDisclosure.ALWAYS
     }).withRateLimitMiddleware()
     response = await middleware(context, next)
   })
@@ -1229,7 +1250,7 @@ describe('when the store is unavailable and the headers mode is always', () => {
     cache.increment.mockRejectedValue(new Error('redis down'))
     middleware = createRateLimiterComponent(components, {
       ...options,
-      emitRateLimitHeaders: RateLimitHeaderMode.ALWAYS
+      disclosure: RateLimitDisclosure.ALWAYS
     }).withRateLimitMiddleware()
     response = await middleware(context, next)
   })
@@ -1324,7 +1345,7 @@ describe('when canonicalizing a zoned address directly', () => {
 
 describe('when the component is configured with an unusable option value', () => {
   describe.each([
-    ['emitRateLimitHeaders', { emitRateLimitHeaders: 'Never' as unknown as RateLimitHeaderMode }],
+    ['disclosure', { disclosure: 'None' as unknown as RateLimitDisclosure }],
     ['trustedClientIpHeader', { trustedClientIpHeader: '' }],
     ['name', { name: 'has:colon' }],
     ['windowSeconds', { windowSeconds: 3_600_000 }]
@@ -1475,7 +1496,7 @@ describe('when the downstream handler returns a Response from another implementa
     next = jest.fn().mockResolvedValue(downstreamResponse)
     middleware = createRateLimiterComponent(components, {
       ...options,
-      emitRateLimitHeaders: RateLimitHeaderMode.ALWAYS
+      disclosure: RateLimitDisclosure.ALWAYS
     }).withRateLimitMiddleware()
     response = await middleware(context, next)
   })
@@ -1494,6 +1515,7 @@ describe('when a custom limit exceeded response sets its own rate limit headers'
   beforeEach(async () => {
     middleware = createRateLimiterComponent(components, {
       ...options,
+      disclosure: RateLimitDisclosure.ON_LIMIT,
       buildLimitExceededResponse: () => ({ status: 429, headers: { 'RateLimit-Limit': '999' } })
     }).withRateLimitMiddleware()
     response = (await callTimes(4))[3]
@@ -1576,5 +1598,125 @@ describe('when a request is skipped', () => {
 
   it('should not record a metric for it, since it was never counted', () => {
     expect(metrics.increment).not.toHaveBeenCalled()
+  })
+})
+
+describe('when comparing what each disclosure level reveals on a rejection', () => {
+  let revealed: Record<string, { status?: number; body: unknown; headers: Record<string, string | null> }>
+
+  beforeEach(async () => {
+    revealed = {}
+    for (const disclosure of [
+      RateLimitDisclosure.NONE,
+      RateLimitDisclosure.RETRY_AFTER,
+      RateLimitDisclosure.ON_LIMIT,
+      RateLimitDisclosure.ALWAYS
+    ]) {
+      cache = createFakeCache()
+      metrics = createFakeMetrics()
+      const rejected = await callTimes(
+        4,
+        createRateLimiterComponent(
+          { cache, logs, metrics: metrics as unknown as RateLimiterComponents['metrics'] },
+          { ...options, disclosure }
+        ).withRateLimitMiddleware()
+      )
+      const headers = new Headers(rejected[3].headers)
+      revealed[disclosure] = {
+        status: rejected[3].status,
+        body: rejected[3].body,
+        headers: {
+          retryAfter: headers.get('Retry-After'),
+          limit: headers.get('RateLimit-Limit'),
+          remaining: headers.get('RateLimit-Remaining'),
+          reset: headers.get('RateLimit-Reset')
+        }
+      }
+    }
+  })
+
+  it('should reject with the same status at every level', () => {
+    expect(Object.values(revealed).every(entry => entry.status === 429)).toBe(true)
+  })
+
+  it('should reveal nothing but the status at the lowest level', () => {
+    expect(revealed[RateLimitDisclosure.NONE]).toEqual({
+      status: 429,
+      body: undefined,
+      headers: { retryAfter: null, limit: null, remaining: null, reset: null }
+    })
+  })
+
+  it('should add only the delay and a generic body at the retry-after level', () => {
+    const entry = revealed[RateLimitDisclosure.RETRY_AFTER]
+    expect(entry.body).toEqual({ ok: false, message: 'Too many requests' })
+    expect(Number(entry.headers.retryAfter)).toBeGreaterThan(0)
+    expect(entry.headers.limit).toBeNull()
+  })
+
+  it('should add the limit triplet on top of that at the on-limit level', () => {
+    const entry = revealed[RateLimitDisclosure.ON_LIMIT]
+    expect(Number(entry.headers.retryAfter)).toBeGreaterThan(0)
+    expect(entry.headers.limit).toBe('3')
+    expect(entry.headers.remaining).toBe('0')
+    expect(entry.headers.reset).toBe(entry.headers.retryAfter)
+  })
+
+  it('should reveal the same as on-limit when rejecting at the always level', () => {
+    expect(revealed[RateLimitDisclosure.ALWAYS]).toEqual(revealed[RateLimitDisclosure.ON_LIMIT])
+  })
+
+  it('should form a strict escalation, each level a superset of the one below', () => {
+    const disclosed = (entry: (typeof revealed)[string]) =>
+      Object.entries(entry.headers)
+        .filter(([, value]) => value !== null)
+        .map(([name]) => name)
+        .concat(entry.body === undefined ? [] : ['body'])
+
+    const none = disclosed(revealed[RateLimitDisclosure.NONE])
+    const retryAfter = disclosed(revealed[RateLimitDisclosure.RETRY_AFTER])
+    const onLimit = disclosed(revealed[RateLimitDisclosure.ON_LIMIT])
+
+    expect(none).toHaveLength(0)
+    expect(retryAfter).toEqual(expect.arrayContaining(none))
+    expect(onLimit).toEqual(expect.arrayContaining(retryAfter))
+    expect(onLimit.length).toBeGreaterThan(retryAfter.length)
+  })
+})
+
+describe('when the disclosure level is none and a custom response is configured', () => {
+  beforeEach(async () => {
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      disclosure: RateLimitDisclosure.NONE,
+      buildLimitExceededResponse: () => ({ status: 429, body: { error: 'slow down' } })
+    }).withRateLimitMiddleware()
+    response = (await callTimes(4))[3]
+  })
+
+  it('should serve the caller body as-is, since the level suppresses what the component adds', () => {
+    expect(response.body).toEqual({ error: 'slow down' })
+  })
+
+  it('should still add no headers of its own', () => {
+    expect(new Headers(response.headers).get('Retry-After')).toBeNull()
+  })
+})
+
+describe('when the disclosure level is none and the store is unavailable', () => {
+  beforeEach(async () => {
+    cache.increment.mockRejectedValue(new Error('redis down'))
+    middleware = createRateLimiterComponent(components, {
+      ...options,
+      disclosure: RateLimitDisclosure.NONE,
+      failOpen: false
+    }).withRateLimitMiddleware()
+    response = await middleware(context, next)
+  })
+
+  it('should reject without revealing that a rate limit was involved', () => {
+    expect(response.status).toBe(429)
+    expect(response.body).toBeUndefined()
+    expect(new Headers(response.headers).get('Retry-After')).toBeNull()
   })
 })

@@ -7,7 +7,7 @@ import {
   IRateLimiterComponent,
   RateLimiterComponents,
   RateLimiterOptions,
-  RateLimitHeaderMode,
+  RateLimitDisclosure,
   RateLimitKeySource,
   RateLimitPolicyOptions,
   RateLimitResult,
@@ -41,7 +41,7 @@ const STORE_ERROR_LOG_INTERVAL_MS = 10_000
 // a genuine window.
 const MAX_WINDOW_SECONDS = 86_400
 
-const HEADER_MODES = new Set<string>(Object.values(RateLimitHeaderMode))
+const DISCLOSURE_LEVELS = new Set<string>(Object.values(RateLimitDisclosure))
 
 // Anything but `:`, which is the key's segment separator, and non-empty.
 const VALID_BUCKET_NAME = /^[^:\s][^:]*$/
@@ -184,7 +184,7 @@ export function shouldSkip(
   return statelessRegExp.test(context.url.pathname)
 }
 
-type ResolvedPolicy = Required<Pick<RateLimitPolicyOptions, 'max' | 'failOpen' | 'emitRateLimitHeaders'>> &
+type ResolvedPolicy = Required<Pick<RateLimitPolicyOptions, 'max' | 'failOpen' | 'disclosure'>> &
   Pick<
     RateLimitPolicyOptions,
     'skip' | 'getKey' | 'onLimitExceeded' | 'onStoreError' | 'buildLimitExceededResponse'
@@ -275,8 +275,8 @@ export function createRateLimiterComponent(
     if (windowSeconds > MAX_WINDOW_SECONDS) {
       throw new InvalidRateLimitConfigurationError('windowSeconds', windowSeconds)
     }
-    if (merged.emitRateLimitHeaders !== undefined && !HEADER_MODES.has(merged.emitRateLimitHeaders)) {
-      throw new InvalidRateLimitConfigurationError('emitRateLimitHeaders', merged.emitRateLimitHeaders)
+    if (merged.disclosure !== undefined && !DISCLOSURE_LEVELS.has(merged.disclosure)) {
+      throw new InvalidRateLimitConfigurationError('disclosure', merged.disclosure)
     }
     // The bucket sits between the prefix and the window id in the key, so a `:` inside it could
     // straddle those segments and make two different policies share one counter. The identity is
@@ -292,7 +292,7 @@ export function createRateLimiterComponent(
       windowMs: windowSeconds * 1000,
       fallbackMax: Math.max(1, Math.floor(max / fallbackMaxDivisor)),
       failOpen: merged.failOpen ?? true,
-      emitRateLimitHeaders: merged.emitRateLimitHeaders ?? RateLimitHeaderMode.ON_LIMIT,
+      disclosure: merged.disclosure ?? RateLimitDisclosure.RETRY_AFTER,
       skip: merged.skip,
       getKey: merged.getKey,
       onLimitExceeded: merged.onLimitExceeded,
@@ -462,7 +462,7 @@ export function createRateLimiterComponent(
         // Not while the store is down: the counts are not real, and advertising `Remaining: 0` to a
         // client that honours the standard headers tells it to stop sending for the rest of the
         // window — the opposite of what failing open is for.
-        return policy.emitRateLimitHeaders === RateLimitHeaderMode.ALWAYS && !result.storeUnavailable
+        return policy.disclosure === RateLimitDisclosure.ALWAYS && !result.storeUnavailable
           ? withRateLimitHeaders(response, result)
           : response
       }
@@ -484,11 +484,19 @@ export function createRateLimiterComponent(
           })
         }
       }
-      response ??= tooManyRequestsResponse()
+      // At `NONE` even the body is withheld: a message naming the limit is disclosure too. A custom
+      // builder still wins, since the component can suppress what it would add but not redact a body
+      // the caller chose to write.
+      response ??= tooManyRequestsResponse(policy.disclosure)
 
-      return policy.emitRateLimitHeaders === RateLimitHeaderMode.NEVER
-        ? withRetryAfter(response, result)
-        : withRateLimitHeaders(withRetryAfter(response, result), result)
+      if (policy.disclosure === RateLimitDisclosure.NONE) {
+        return response
+      }
+
+      const withDelay = withRetryAfter(response, result)
+      return policy.disclosure === RateLimitDisclosure.RETRY_AFTER
+        ? withDelay
+        : withRateLimitHeaders(withDelay, result)
     }
   }
 
@@ -555,7 +563,13 @@ function routeHandlerOf(context: IHttpServerComponent.DefaultContext<object>): s
 
 // The retry delay travels in `Retry-After` only, never in the body: one authoritative place for it
 // means a client cannot read a stale or contradicting value out of the payload.
-function tooManyRequestsResponse(): IHttpServerComponent.IResponse {
+//
+// At `NONE` the body is omitted entirely. `Too many requests` tells a caller its rejection was a rate
+// limit rather than anything else, which is exactly what that level exists to withhold.
+function tooManyRequestsResponse(disclosure: RateLimitDisclosure): IHttpServerComponent.IResponse {
+  if (disclosure === RateLimitDisclosure.NONE) {
+    return { status: 429 }
+  }
   return {
     status: 429,
     body: { ok: false, message: 'Too many requests' }
