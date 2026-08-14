@@ -274,6 +274,12 @@ export type RateLimiterOptions = RateLimitPolicyOptions & {
    * always succeeds, so the failure would otherwise silently turn the per-client limit into a global
    * one. An empty, blank or non-string value throws at construction rather than quietly disabling the
    * feature.
+   *
+   * Leaving it unset is correct for a directly exposed service, where the socket address is the
+   * client. Behind a proxy it is a misconfiguration: the socket address is the proxy's, so every
+   * caller shares one bucket at the full `max`. Because both are legitimate configurations, the
+   * component warns only when a request actually carries a forwarding header while none is configured
+   * to be read.
    */
   trustedClientIpHeader?: string
   /**

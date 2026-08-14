@@ -46,6 +46,11 @@ const DISCLOSURE_LEVELS = new Set<string>(Object.values(RateLimitDisclosure))
 // Anything but `:`, which is the key's segment separator, and non-empty.
 const VALID_BUCKET_NAME = /^[^:\s][^:]*$/
 
+// Headers a proxy, CDN or load balancer sets to report the original client. Their presence is only
+// used as a hint that something is in front of this service — never as a key, since none of them is
+// trustworthy unless the deployment guarantees the origin is unreachable except through that proxy.
+const FORWARDING_HEADERS = ['cf-connecting-ip', 'x-forwarded-for', 'x-real-ip', 'true-client-ip', 'forwarded'] as const
+
 export function assertPositiveInteger(setting: string, value: unknown): void {
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
     throw new InvalidRateLimitConfigurationError(setting, value)
@@ -139,7 +144,6 @@ export function clientIpFromForwardedHeader(value: string | null, trustedProxyCo
   return canonicalizeIpAddress(hops[index])
 }
 
-/** Deterministic, epoch-aligned window boundaries. See the README note on the 2x boundary burst. */
 /**
  * A stable per-identity offset, in `[0, windowMs)`, that shifts where this identity's windows fall.
  *
@@ -276,6 +280,7 @@ export function createRateLimiterComponent(
   // different key configs hears about each one — and so tests need no reset hatch in production code.
   let warnedAboutMissingClientAddress = false
   let warnedAboutUnusableTrustedHeader = false
+  let warnedAboutIgnoredForwardingHeader = false
   let lastStoreErrorLoggedAt = 0
 
   function resolvePolicy(overrides?: RateLimitPolicyOptions): ResolvedPolicy {
@@ -467,7 +472,27 @@ export function createRateLimiterComponent(
     }
 
     const socketAddress = canonicalizeIpAddress(context.remoteAddress)
-    if (socketAddress) return { identity: socketAddress, source: RateLimitKeySource.SOCKET }
+    if (socketAddress) {
+      // Keying on the socket address is correct for a directly exposed service and wrong behind a
+      // proxy, where it is the proxy's address and buckets every caller together at the full limit —
+      // and unlike a *broken* trusted header, simply never configuring one used to say nothing at all.
+      // "No header configured" cannot be a warning on its own, since a directly exposed service is a
+      // legitimate deployment. A forwarding header arriving while we read none of them is the
+      // discriminator: it means something in front is telling us the real client and we are ignoring it.
+      if (!trustedClientIpHeader && !warnedAboutIgnoredForwardingHeader) {
+        const ignored = FORWARDING_HEADERS.find(header => context.request.headers.get(header) !== null)
+        if (ignored) {
+          warnedAboutIgnoredForwardingHeader = true
+          logger.warn(
+            `Requests carry a "${ignored}" header but no trustedClientIpHeader is configured, so they are being keyed on the connecting address. ` +
+              'Behind a proxy that is the proxy itself, which buckets every caller into one limit. ' +
+              'Configure trustedClientIpHeader (with trustedProxyCount matching the hops that append to it) if this service is behind a proxy, ' +
+              'and ignore this if the header is untrusted client input and the socket address is genuinely the client.'
+          )
+        }
+      }
+      return { identity: socketAddress, source: RateLimitKeySource.SOCKET }
+    }
 
     if (!warnedAboutMissingClientAddress) {
       warnedAboutMissingClientAddress = true

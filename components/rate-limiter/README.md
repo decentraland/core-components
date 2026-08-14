@@ -168,6 +168,33 @@ X-Forwarded-For: <client-supplied>, <written by proxy 2>, <written by proxy 1>
 
 Each proxy appends the address it saw, so the rightmost entries come from infrastructure you control and the leftmost is whatever the client sent. A header holding fewer entries than the trusted chain would produce is discarded rather than trusted.
 
+### When no trusted header is configured
+
+Leaving `trustedClientIpHeader` unset is correct for a **directly exposed** service: the socket
+address really is the client, and nothing is logged. Behind a proxy it is a misconfiguration with a
+sharp edge — the socket address is the *proxy's*, so every caller in the world shares one bucket, and
+at the **full** `max` rather than the tightened fallback cap, because a socket address was found.
+
+Since a directly exposed service is legitimate, the component cannot warn merely because the option is
+unset. It warns when a request carries a forwarding header (`cf-connecting-ip`, `x-forwarded-for`,
+`x-real-ip`, `true-client-ip`, `forwarded`) while none is configured to be read — something in front is
+reporting the client and being ignored. The header is never *used* on that path, only noticed.
+
+The four cases, for reference:
+
+| Deployment | Keyed on | Cap | Logged |
+| --- | --- | --- | --- |
+| No header configured, directly exposed | client IP | `max` | nothing |
+| No header configured, behind a proxy | the proxy's IP — one bucket for all | `max` | warns once |
+| Header configured but yields nothing | the proxy's IP — one bucket for all | `max` | warns once |
+| No client address at all (e.g. uWS) | shared fallback bucket | `max / fallbackMaxDivisor` | warns once |
+
+Both collapse cases keep the full `max` deliberately: the tightened cap exists for the bucket that is
+*known* to be shared, and applying it to a socket address would quietly divide every limit by ten in
+local development, where all traffic arrives from `127.0.0.1`. The `key_source` metric label is the
+other half of this — `key_source="socket"` dominating on a service you believe sits behind a CDN is the
+same signal, visible on a dashboard rather than in a log.
+
 > **Security.** A forwarding header is only trustworthy because the network makes it so. If a caller can reach the origin without passing through the proxy, they control their own bucket — which grants them an unlimited allowance *and* lets them throttle a victim by claiming the victim's address. Set `trustedClientIpHeader` only when the origin is unreachable except through that proxy, and prefer a single-value header written by the edge (`cf-connecting-ip`) over `x-forwarded-for`. A header value that does not parse as an IP address is treated as absent, so garbage cannot mint buckets.
 
 ## Notes

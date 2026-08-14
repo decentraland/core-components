@@ -1777,3 +1777,87 @@ describe('when the disclosure level is none and the store is unavailable', () =>
     expect(new Headers(response.headers).get('Retry-After')).toBeNull()
   })
 })
+
+describe('when no trusted client IP header is configured', () => {
+  beforeEach(() => {
+    options = { ...options, trustedClientIpHeader: undefined }
+  })
+
+  describe('and the request carries no forwarding header', () => {
+    beforeEach(async () => {
+      // A directly exposed service: the socket address really is the client, so this is correct and
+      // must stay silent.
+      middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+      await middleware(createContext(), next)
+    })
+
+    it('should key on the socket address', () => {
+      expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('203.0.113.7'), expect.anything())
+    })
+
+    it('should not warn, since a directly exposed service is a legitimate deployment', () => {
+      expect(warnMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe.each([['cf-connecting-ip'], ['x-forwarded-for'], ['x-real-ip'], ['true-client-ip'], ['forwarded']])(
+    'and the request carries a %s header that nothing reads',
+    header => {
+      beforeEach(async () => {
+        middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+        await middleware(createContext({ headers: { [header]: '198.51.100.4' } }), next)
+      })
+
+      it('should warn that a proxy is reporting the client and being ignored', () => {
+        expect(warnMock).toHaveBeenCalledWith(expect.stringContaining('no trustedClientIpHeader is configured'))
+      })
+
+      it('should name the header it saw', () => {
+        expect(warnMock).toHaveBeenCalledWith(expect.stringContaining(header))
+      })
+
+      it('should still key on the socket address rather than trusting the header', () => {
+        expect(cache.increment).toHaveBeenCalledWith(expect.stringContaining('203.0.113.7'), expect.anything())
+      })
+    }
+  )
+
+  describe('and many such requests arrive', () => {
+    beforeEach(async () => {
+      middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+      await callTimes(3, middleware, createContext({ headers: { 'x-forwarded-for': '198.51.100.4' } }))
+    })
+
+    it('should warn only once per instance', () => {
+      const ignored = warnMock.mock.calls.filter(call =>
+        String(call[0]).includes('no trustedClientIpHeader is configured')
+      )
+      expect(ignored).toHaveLength(1)
+    })
+  })
+
+  describe('and a getKey already resolved the identity', () => {
+    beforeEach(async () => {
+      middleware = createRateLimiterComponent(components, {
+        ...options,
+        getKey: () => 'address:0xabc'
+      }).withRateLimitMiddleware()
+      await middleware(createContext({ headers: { 'x-forwarded-for': '198.51.100.4' } }), next)
+    })
+
+    it('should not warn, since nothing is being keyed on the connecting address', () => {
+      expect(warnMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('and there is no socket address either', () => {
+    beforeEach(async () => {
+      middleware = createRateLimiterComponent(components, options).withRateLimitMiddleware()
+      await middleware(createContext({ remoteAddress: undefined }), next)
+    })
+
+    it('should report the shared bucket rather than the ignored-header case', () => {
+      expect(warnMock).toHaveBeenCalledWith(expect.stringContaining('every caller shares one rate limit bucket'))
+    })
+  })
+})
