@@ -298,8 +298,8 @@ export function createRateLimiterComponent<Context extends object = object>(
 
   // Scoped to this instance rather than the module, so a service running several limiters with
   // different key configs hears about each one — and so tests need no reset hatch in production code.
-  // Derived bucket names, keyed by method and matched route, so the per-request string work happens
-  // once per endpoint. Bounded by routes times methods, and only written for paths the router matched.
+  // Derived bucket names, keyed by matched route and policy, so the per-request string work happens
+  // once per endpoint. Bounded by routes times distinct policies, and only written for matched paths.
   const bucketByRoute = new Map<string, string>()
   const addressIssueLoggedAt = new Map<RateLimitAddressIssue, number>()
   let lastStoreErrorLoggedAt = 0
@@ -324,12 +324,17 @@ export function createRateLimiterComponent<Context extends object = object>(
   /**
    * Which counter this request draws from.
    *
-   * An explicit `name` always wins. Otherwise, a request inside a router layer buckets by its method
-   * and matched route, so `POST /v1/login` and `POST /v1/signup` get separate budgets even when their
-   * limits are identical — the alternative silently merged them, because the fallback bucket is
-   * derived from the limit values. Outside a router layer there is no route to attribute the request
-   * to, and a limiter mounted with `server.use()` is meant to bound everything together anyway, so the
-   * fallback applies.
+   * An explicit `name` always wins. Otherwise, a request inside a router layer buckets by its matched
+   * route and policy, so `/v1/login` and `/v1/signup` get separate budgets even when their limits are
+   * identical — the alternative silently merged them, because the fallback bucket is derived from the
+   * limit values. Outside a router layer there is no route to attribute the request to, and a limiter
+   * mounted with `server.use()` is meant to bound everything together anyway, so the fallback applies.
+   *
+   * The request method is deliberately **not** part of the bucket. It is chosen by the caller, so
+   * including it could only ever multiply an allowance: `HEAD` routes to a `GET` handler and executes
+   * it, which gave every `GET` endpoint twice its limit, and a route registered for all methods got
+   * one limit per method. Sharing a bucket is conservative; splitting one is a bypass. Two methods on
+   * one path that genuinely need separate budgets need explicit, distinct `name`s.
    *
    * The matched route is a template (`/v1/notes/:id`), never the request path, so the bucket count
    * stays bounded by the number of routes.

@@ -136,11 +136,16 @@ export type RateLimitPolicyOptions<Context extends object = object> = {
    * Overrides which counter this policy draws from. A **budget boundary, not a label**: two limiters
    * share a counter if and only if they resolve to the same `keyPrefix` **and** the same bucket.
    *
-   * Usually you do not need it. Left unset, a request matched by a router buckets by its method and
-   * route template — `POST /v1/login` and `POST /v1/signup` get separate budgets automatically, even
-   * with identical limits. A limiter mounted with `server.use()` has no route to attribute a request
-   * to and is meant to bound everything together, so it falls back to `` `${max}p${windowSeconds}` ``,
-   * one shared budget across every route.
+   * Usually you do not need it. Left unset, a request matched by a router buckets by its route
+   * template and policy — `/v1/login` and `/v1/signup` get separate budgets automatically, even with
+   * identical limits. A limiter mounted with `server.use()` has no route to attribute a request to and
+   * is meant to bound everything together, so it falls back to `` `${max}p${windowSeconds}` ``, one
+   * shared budget across every route.
+   *
+   * The request **method is not part of the bucket**, so a `GET` and a `POST` on one path draw on the
+   * same allowance. That is deliberate: the caller picks the method, so including it could only
+   * multiply an allowance — `HEAD` reaches a `GET` handler, which gave every `GET` endpoint twice its
+   * limit. If two methods on one path need separate budgets, give each an explicit, distinct `name`.
    *
    * Set it to make endpoints deliberately **share** one allowance — several write endpoints drawing on
    * a single budget — or to keep a bucket stable across a route rename.
@@ -295,9 +300,12 @@ export type RateLimiterOptions<Context extends object = object> = RateLimitPolic
    *
    * Leaving it unset is correct for a directly exposed service, where the socket address is the
    * client. Behind a proxy it is a misconfiguration: the socket address is the proxy's, so every
-   * caller shares one bucket at the full `max`. Because both are legitimate configurations, the
-   * component warns only when a request actually carries a forwarding header while none is configured
-   * to be read. Surrounding whitespace is trimmed, since a padded header name is not merely unmatched —
+   * caller shares one bucket at the full `max`. That case is deliberately **not** reported. The only
+   * way to detect it from a request is to notice a forwarding header arriving while none is configured
+   * to be read, and any caller can send `x-forwarded-for` at will — so the signal would let an outsider
+   * raise a warning and inflate a counter against a service that is configured correctly. Watch
+   * `key_source="socket"` dominating instead: it says the same thing and cannot be forged.
+   * Surrounding whitespace is trimmed, since a padded header name is not merely unmatched —
    * `Headers.get` rejects it outright.
    */
   trustedClientIpHeader?: string
