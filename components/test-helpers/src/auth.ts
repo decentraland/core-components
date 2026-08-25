@@ -36,6 +36,10 @@ export async function getIdentity(ephemeralKeyTTLInMinutes = 10): Promise<Identi
  * Builds the signed-fetch headers (ADR-44) for a request. The payload
  * `method:path:timestamp:metadata` is signed by `chainProvider`, and the
  * resulting auth chain, timestamp and metadata are returned as headers.
+ *
+ * Only the method and the path are lowercased. The metadata is joined verbatim,
+ * exactly as the `x-identity-metadata` header will deliver it, because that is
+ * what @dcl/crypto-middleware 6 reconstructs and verifies against.
  * @public
  */
 export function getAuthHeaders(
@@ -48,7 +52,7 @@ export function getAuthHeaders(
   const timestamp = Date.now()
   const metadataJSON = JSON.stringify(metadata)
   const payloadParts = [method.toLowerCase(), path.toLowerCase(), timestamp.toString(), metadataJSON]
-  const payloadToSign = payloadParts.join(':').toLowerCase()
+  const payloadToSign = payloadParts.join(':')
 
   const chain = chainProvider(payloadToSign)
 
