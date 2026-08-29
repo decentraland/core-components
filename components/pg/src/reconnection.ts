@@ -174,11 +174,14 @@ export type RunOptions = {
   /** Overrides the configured attempt budget for this operation. */
   maxRetries?: number
   /**
-   * Whether an error proving the statement never reached the server may be retried after
-   * `markStatementSent()`. Disabled for operations that run caller-provided code, since a retry
-   * would repeat its side effects.
+   * Whether the operation may be retried at all once `markStatementSent()` has been called.
+   * Defaults to `true`, which still requires the error to prove the statement never left the client
+   * unless `retrySentStatements` is enabled.
+   *
+   * Operations that run caller-provided code set it to `false`, which overrides
+   * `retrySentStatements` too: no error can prove that someone else's callback is safe to run twice.
    */
-  retryOnNotSentErrors?: boolean
+  retryAfterStatementSent?: boolean
 }
 
 /**
@@ -330,11 +333,14 @@ export function createReconnectionManager(
   }
 
   function scheduleProbe(error?: unknown): void {
-    if (stopped) {
-      return
-    }
     if (error !== undefined) {
       lastError = getErrorMessage(error)
+    }
+
+    // `enabled: false` means fail fast: keep the record of what happened, but never touch the
+    // database off the back of someone else's failure. An explicit `probe()` (`ping()`) still runs.
+    if (stopped || !options.enabled) {
+      return
     }
 
     // Fire-and-forget: a health probe must not delay the caller that reported the error. `probe()`
@@ -387,7 +393,7 @@ export function createReconnectionManager(
     runOptions: RunOptions = {}
   ): Promise<T> {
     const maxRetries = options.enabled ? (runOptions.maxRetries ?? options.maxRetries) : 0
-    const retryOnNotSentErrors = runOptions.retryOnNotSentErrors ?? true
+    const retryAfterStatementSent = runOptions.retryAfterStatementSent ?? true
     let attempt = 0
 
     for (;;) {
@@ -413,7 +419,8 @@ export function createReconnectionManager(
 
         const canRetry =
           isConnectionError(error) &&
-          (!statementSent || options.retrySentStatements || (retryOnNotSentErrors && isNotSentError(error)))
+          (!statementSent ||
+            (retryAfterStatementSent && (options.retrySentStatements || isNotSentError(error))))
 
         if (stopped || !canRetry || attempt >= maxRetries) {
           throw error

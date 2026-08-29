@@ -3,6 +3,7 @@ import { IConfigComponent, ILoggerComponent } from '@well-known-components/inter
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import SQL from 'sql-template-strings'
 import { createPgComponent } from '../src/component'
+import { PoolClient } from 'pg'
 import { IMetricsComponent, IPgComponent, Options } from '../src/types'
 
 /**
@@ -586,6 +587,36 @@ describe('PgComponent reconnection', () => {
 
       it('should replay the statement on a new connection and return its rows', () => {
         expect(result.rows).toHaveLength(1)
+      })
+    })
+
+    describe('and the connection is dropped after a transaction has begun', () => {
+      let callback: jest.Mock<Promise<void>, [PoolClient]>
+      let transactionError: Error | undefined
+
+      beforeEach(async () => {
+        callback = jest.fn().mockImplementation(async (client: PoolClient) => {
+          await client.query('SELECT pg_sleep(1)')
+        })
+
+        const transactionPromise = pg.withTransaction(callback)
+        await sleep(100)
+        proxy.dropLiveConnections()
+
+        transactionError = undefined
+        try {
+          await transactionPromise
+        } catch (error) {
+          transactionError = error as Error
+        }
+      })
+
+      it('should fail the transaction rather than replay it', () => {
+        expect(transactionError?.message).toMatch(/Connection terminated/)
+      })
+
+      it('should not run the callback a second time, whatever the statement-level setting says', () => {
+        expect(callback).toHaveBeenCalledTimes(1)
       })
     })
   })

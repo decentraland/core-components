@@ -1,5 +1,5 @@
 ---
-'@dcl/pg-component': minor
+'@dcl/pg-component': major
 ---
 
 Recover from database disconnections instead of failing the request. A failover, a restart, or a
@@ -31,5 +31,9 @@ New `getConnectionStatus()` (cached, cheap enough for a readiness probe) and `pi
 `SELECT 1`), plus `onDisconnection` / `onReconnection` hooks, a `dcl_db_connection_status` gauge and
 a `dcl_db_reconnection_attempts_total` counter. Everything is tunable through `PG_COMPONENT_RECONNECTION_*`
 env vars or the new `reconnection` factory option, and `PG_COMPONENT_RECONNECTION_ENABLED=false`
-restores the previous fail-fast behaviour. `IPgComponent` gains two methods, so hand-written mocks
-of the interface need updating.
+restores the previous fail-fast behaviour.
+
+Released as a major because `IPgComponent` gains two required methods: real component instances are
+unaffected, but anything that implements or mocks the interface structurally — a hand-built
+`Mock<IPgComponent>` in a consumer's tests, for instance — stops type-checking until it adds
+`getConnectionStatus()` and `ping()`.

@@ -62,7 +62,12 @@ export type ConnectionStatus = {
   connected: boolean
   /** Epoch milliseconds at which the component entered the current state. */
   since: number
-  /** Message of the last connection error observed, if any. */
+  /**
+   * Message of the last connection error observed, if any.
+   *
+   * @warning This is the driver's raw message and can name hosts, ports, users or databases. Log it,
+   * but do not return it verbatim from a public health endpoint.
+   */
   lastError?: string
   /** Failed reconnection attempts within the current outage. Reset once the database answers again. */
   reconnectionAttempts: number
@@ -98,7 +103,7 @@ export interface IPgComponent extends IDatabase {
    * Each call acquires a new connection from the pool.
    *
    * @warning A connection failure is only retried before the transaction starts, so the callback is
-   * not re-run. With `retrySentStatements` enabled it can be, and must then be idempotent.
+   * never re-run. `retrySentStatements` does not change this.
    */
   withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>
   /**

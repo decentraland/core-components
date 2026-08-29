@@ -386,7 +386,7 @@ describe('when running an operation through the reconnection manager', () => {
     })
   })
 
-  describe('and the operation opts out of retrying never-sent errors', () => {
+  describe('and the operation opts out of retrying once the statement was sent', () => {
     let operation: jest.Mock<Promise<string>, [{ markStatementSent(): void }]>
 
     beforeEach(() => {
@@ -399,8 +399,29 @@ describe('when running an operation through the reconnection manager', () => {
       manager = createReconnectionManager({ logs }, FAST_OPTIONS, probeConnection)
     })
 
-    it('should reject without retrying, since a retry would repeat the caller callback', async () => {
-      await expect(manager.run('test', operation, { retryOnNotSentErrors: false })).rejects.toThrow('not queryable')
+    it('should reject without retrying, even though the error proves the statement never left', async () => {
+      await expect(manager.run('test', operation, { retryAfterStatementSent: false })).rejects.toThrow('not queryable')
+      expect(operation).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and the operation opts out of retrying while sent statements are configured to be retried', () => {
+    let operation: jest.Mock<Promise<string>, [{ markStatementSent(): void }]>
+
+    beforeEach(() => {
+      logs = createMockLogs()
+      probeConnection = jest.fn().mockResolvedValue(undefined)
+      operation = jest.fn().mockImplementation(async (context: { markStatementSent(): void }) => {
+        context.markStatementSent()
+        throw new Error('Connection terminated unexpectedly')
+      })
+      manager = createReconnectionManager({ logs }, { ...FAST_OPTIONS, retrySentStatements: true }, probeConnection)
+    })
+
+    it('should reject without retrying, since the opt-out overrides the global setting', async () => {
+      await expect(manager.run('test', operation, { retryAfterStatementSent: false })).rejects.toThrow(
+        'Connection terminated unexpectedly'
+      )
       expect(operation).toHaveBeenCalledTimes(1)
     })
   })
@@ -679,6 +700,31 @@ describe('when a connection status listener throws', () => {
 
   it('should still record the disconnection', () => {
     expect(manager.getStatus().connected).toBe(false)
+  })
+})
+
+describe('when a probe is scheduled while reconnection is disabled', () => {
+  let logs: ILoggerComponent
+  let manager: ReconnectionManager
+  let probeConnection: jest.Mock<Promise<void>, []>
+
+  beforeEach(() => {
+    logs = createMockLogs()
+    probeConnection = jest.fn().mockResolvedValue(undefined)
+    manager = createReconnectionManager({ logs }, { ...FAST_OPTIONS, enabled: false }, probeConnection)
+    manager.scheduleProbe(new Error('Connection terminated unexpectedly'))
+  })
+
+  afterEach(() => {
+    manager.stop()
+  })
+
+  it('should not touch the database, since a disabled reconnection does no background work', () => {
+    expect(probeConnection).not.toHaveBeenCalled()
+  })
+
+  it('should still record what broke the connection', () => {
+    expect(manager.getStatus().lastError).toBe('Connection terminated unexpectedly')
   })
 })
 

@@ -319,7 +319,9 @@ export async function createPgComponent(
 
   async function executeInTransaction<T>(runCallback: (client: PoolClient) => Promise<T>): Promise<T> {
     // A retry re-runs the caller's callback, so it is only allowed while the transaction has not
-    // started yet: after `BEGIN` succeeds the callback may already have caused side effects.
+    // started yet: after `BEGIN` succeeds the callback may already have applied writes or caused
+    // side effects outside the database. `retrySentStatements` does not lift this — it speaks for
+    // single statements, which the component can reason about, not for arbitrary callbacks.
     return reconnection.run(
       'transaction',
       async ({ markStatementSent }) => {
@@ -353,7 +355,7 @@ export async function createPgComponent(
           }
         }
       },
-      { retryOnNotSentErrors: false }
+      { retryAfterStatementSent: false }
     )
   }
 

@@ -188,7 +188,8 @@ Three cases behave differently by design:
 
 - **Transactions** are retried only while the transaction has not started yet — that is, when the
   connection could not be acquired or `BEGIN` failed. Once the callback has run, a retry would
-  repeat whatever else it did, so the error is surfaced instead.
+  repeat whatever else it did, so the error is surfaced instead. `retrySentStatements` does not
+  change this: it speaks for single statements, not for arbitrary callbacks.
 - **Queries inside `withAsyncContextTransaction`** are never retried: they must run on the
   transaction's own client, and retrying them on a fresh connection would silently execute them
   outside the transaction. The transaction fails as a whole and rolls back.
@@ -200,7 +201,7 @@ Three cases behave differently by design:
 
 ```typescript
 // Cached state, cheap enough for a readiness probe on every request
-const { connected, since, lastError, reconnectionAttempts, disconnections } = pg.getConnectionStatus()
+const { connected, since, reconnectionAttempts, disconnections } = pg.getConnectionStatus()
 
 // Actively opens a connection and runs `SELECT 1`; returns false instead of throwing
 const reachable = await pg.ping()
@@ -208,6 +209,10 @@ const reachable = await pg.ping()
 
 `getConnectionStatus()` reports `connected: false` until the first successful interaction, so a
 readiness probe built on it will not report the service as ready before the database answers.
+
+The status also carries `lastError`, the driver's raw message, which can name hosts, ports, users or
+databases (`connect ECONNREFUSED 10.0.1.5:5432`). Log it, but keep it out of the body of a public
+health endpoint.
 
 ## Query Streaming
 
