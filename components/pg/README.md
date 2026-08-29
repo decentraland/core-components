@@ -34,6 +34,8 @@ await pg.stop()
 - **Transaction support**: Two transaction APIs for different use cases
 - **Query streaming**: Memory-efficient streaming for large result sets
 - **Migration support**: Built-in support for `node-pg-migrate`
+- **Automatic reconnection**: Retries operations with backoff and keeps probing the database until it is reachable again
+- **Health reporting**: `getConnectionStatus()` and `ping()` for readiness probes
 - **Metrics integration**: Optional query duration metrics
 - **Graceful shutdown**: Drains connections before closing the pool
 
@@ -123,6 +125,90 @@ await pg.withAsyncContextTransaction(async () => {
 
 If the inner transaction fails and rolls back, the outer transaction is **not** affected and will still commit. This is because PostgreSQL does not support true nested transactions, and each transaction method acquires its own connection.
 
+## Reconnection
+
+Databases go away: a failover, a restart, a network blip, or simply a service booting before its
+database does. The component handles all of those without the process having to restart.
+
+Three things happen when the connection drops:
+
+1. **The broken connection is evicted.** A client that failed with a connection error is released
+   back with an error, so `pg` destroys it instead of handing the same dead socket to the next
+   caller.
+2. **The operation is retried** with exponential backoff and jitter, as long as the retry is safe
+   (see below).
+3. **A background loop keeps probing** the database with the same backoff until it answers, so the
+   pool is warm again before the next request arrives — the component does not wait for a user
+   request to discover the database is back.
+
+The pool object itself is never replaced, so a reference obtained from `getPool()` stays valid
+across an outage.
+
+```typescript
+const pg = await createPgComponent(
+  { config, logs, metrics },
+  {
+    reconnection: {
+      maxRetries: 5,
+      initialDelayInMilliseconds: 300,
+      maxDelayInMilliseconds: 5000,
+      onDisconnection: (error) => logger.error('Database unreachable', { error: error.message }),
+      onReconnection: (downtimeInMilliseconds) => logger.info('Database back', { downtimeInMilliseconds })
+    }
+  }
+)
+```
+
+### What gets retried
+
+Retrying a statement that may already have been applied would turn a write into an at-least-once
+operation, so the component only retries when it can tell that is safe:
+
+| Failure                                                            | Retried by default |
+| ------------------------------------------------------------------ | ------------------ |
+| The connection could not be acquired (`ECONNREFUSED`, timeouts, ...) | Yes                |
+| `pg` refused to send the statement because the client was dead      | Yes                |
+| The connection dropped while the statement was in flight            | No                 |
+| The statement failed for any non-connection reason                  | No                 |
+
+The second row is the common case behind a warm pool: when the database restarts, the pool still
+holds sockets that are already dead, and `pg` rejects the statement before writing anything to the
+wire. That error proves the statement never reached the server, which makes the retry safe.
+
+A statement that is not retried still leaves the component healthy: the broken connection is
+destroyed rather than returned to the pool, the background loop brings the pool back, and the
+following query runs on a fresh connection. Only the statement that was in flight fails.
+
+Set `retrySentStatements: true` (or `PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS=true`) to also
+retry statements that may have reached the server. Only do this if every statement the service
+issues is idempotent: a connection can drop between a write being applied and its acknowledgement
+coming back, so the retry may apply it twice.
+
+Three cases behave differently by design:
+
+- **Transactions** are retried only while the transaction has not started yet — that is, when the
+  connection could not be acquired or `BEGIN` failed. Once the callback has run, a retry would
+  repeat whatever else it did, so the error is surfaced instead.
+- **Queries inside `withAsyncContextTransaction`** are never retried: they must run on the
+  transaction's own client, and retrying them on a fresh connection would silently execute them
+  outside the transaction. The transaction fails as a whole and rolls back.
+- **`streamQuery`** retries the connection, not the iteration. Rows already yielded cannot be
+  un-yielded, so a stream that breaks mid-iteration surfaces the error to the caller — promptly,
+  rather than hanging on a cursor teardown the dead connection can never acknowledge.
+
+### Health checks
+
+```typescript
+// Cached state, cheap enough for a readiness probe on every request
+const { connected, since, lastError, reconnectionAttempts, disconnections } = pg.getConnectionStatus()
+
+// Actively opens a connection and runs `SELECT 1`; returns false instead of throwing
+const reachable = await pg.ping()
+```
+
+`getConnectionStatus()` reports `connected: false` until the first successful interaction, so a
+readiness probe built on it will not report the service as ready before the database answers.
+
 ## Query Streaming
 
 For large result sets, use `streamQuery` to avoid loading all rows into memory:
@@ -170,6 +256,19 @@ Environment variables read by the component:
 | `PG_COMPONENT_GRACE_PERIODS`          | `number` | Grace periods for shutdown (default: 10)                                             |
 | `PG_COMPONENT_STOP_TIMEOUT`           | `number` | Upper bound (ms) for `stop()` to drain the pool before abandoning it (default: 30000) |
 
+Reconnection settings, all overridable through the `reconnection` option passed to the factory,
+which takes precedence over the environment:
+
+| Variable                                            | Type      | Description                                                                                  |
+| --------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| `PG_COMPONENT_RECONNECTION_ENABLED`                 | `boolean` | Whether disconnections are retried at all (default: `true`)                                    |
+| `PG_COMPONENT_RECONNECTION_MAX_RETRIES`             | `number`  | Retries per operation (default: 5)                                                             |
+| `PG_COMPONENT_RECONNECTION_START_MAX_RETRIES`       | `number`  | Retries for the initial connection in `start()` (default: 10)                                  |
+| `PG_COMPONENT_RECONNECTION_INITIAL_DELAY`           | `number`  | Delay before the first retry, in ms (default: 300)                                             |
+| `PG_COMPONENT_RECONNECTION_MAX_DELAY`               | `number`  | Upper bound for the backoff delay, in ms (default: 5000)                                       |
+| `PG_COMPONENT_RECONNECTION_BACKOFF_FACTOR`          | `number`  | Multiplier applied to the delay after every failed attempt (default: 2)                        |
+| `PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS`   | `boolean` | Also retry statements that may already have reached the server (default: `false`)              |
+
 ## Metrics
 
 When a metrics component is provided, query durations are tracked:
@@ -179,7 +278,17 @@ When a metrics component is provided, query durations are tracked:
 const result = await pg.query(SQL`SELECT * FROM users`, 'get_users')
 ```
 
-Metric: `dcl_db_query_duration_seconds` with labels `query` and `status` (success/error)
+Metrics:
+
+| Metric                               | Type      | Labels             | Description                                                                 |
+| ------------------------------------ | --------- | ------------------ | --------------------------------------------------------------------------- |
+| `dcl_db_query_duration_seconds`      | histogram | `query`, `status`  | Query duration, `status` being `success` or `error`                           |
+| `dcl_db_connection_status`           | gauge     | —                  | `1` while the database is reachable, `0` while it is not                      |
+| `dcl_db_reconnection_attempts_total` | counter   | `source`, `status` | Recovery attempts, by `operation`/`probe` and `success`/`failure`             |
+
+Services that build their metrics declarations by spreading `metricDeclarations` get the new metrics
+automatically. Ones that declare metrics by hand will not: the component logs a warning once and
+keeps serving queries rather than failing on an undeclared metric.
 
 ## Testing
 

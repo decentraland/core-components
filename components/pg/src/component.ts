@@ -6,10 +6,25 @@ import QueryStream from 'pg-query-stream'
 import runner, { RunnerOption } from 'node-pg-migrate'
 import { SQLStatement } from 'sql-template-strings'
 import { setTimeout } from 'timers/promises'
-import { Options, IPgComponent, IMetricsComponent, QueryStreamWithCallback, QueryResult } from './types'
+import {
+  ConnectionStatus,
+  Options,
+  IPgComponent,
+  IMetricsComponent,
+  QueryStreamWithCallback,
+  QueryResult,
+  ReconnectionOptions
+} from './types'
+import {
+  createReconnectionManager,
+  isConnectionError,
+  ResolvedReconnectionOptions,
+  DEFAULT_RECONNECTION_OPTIONS
+} from './reconnection'
 
 export * from './types'
 export * from './metrics'
+export * from './reconnection'
 
 /**
  * @internal
@@ -31,6 +46,54 @@ export async function runReportingQueryDurationMetric<T>(
   } catch (err) {
     endTimer({ status: 'error' })
     throw err
+  }
+}
+
+const TRUE_CONFIG_VALUES = ['true', '1', 'yes']
+const FALSE_CONFIG_VALUES = ['false', '0', 'no']
+
+/**
+ * Rejects anything that is not recognizably a boolean instead of falling back silently: a typo in
+ * `PG_COMPONENT_RECONNECTION_ENABLED` would otherwise turn reconnection off without a trace.
+ */
+function parseBooleanConfig(name: string, value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === '') {
+    return fallback
+  }
+
+  const normalized = value.trim().toLowerCase()
+  if (TRUE_CONFIG_VALUES.includes(normalized)) {
+    return true
+  }
+  if (FALSE_CONFIG_VALUES.includes(normalized)) {
+    return false
+  }
+
+  const accepted = [...TRUE_CONFIG_VALUES, ...FALSE_CONFIG_VALUES].join(', ')
+  throw new TypeError(`${name} must be one of ${accepted}, got "${value}"`)
+}
+
+/**
+ * @internal
+ */
+export function assertValidReconnectionOptions(options: ResolvedReconnectionOptions): void {
+  const invalidField = (
+    [
+      ['maxRetries', options.maxRetries, 0],
+      ['startMaxRetries', options.startMaxRetries, 0],
+      // The delays have a floor of one millisecond: a zero delay would turn the background
+      // reconnection loop into an unthrottled hammer against a database that is already struggling.
+      ['initialDelayInMilliseconds', options.initialDelayInMilliseconds, 1],
+      ['maxDelayInMilliseconds', options.maxDelayInMilliseconds, 1],
+      ['backoffFactor', options.backoffFactor, 1]
+    ] as const
+  ).find(([, value, minimum]) => !Number.isFinite(value) || value < minimum)
+
+  if (invalidField) {
+    const [name, value, minimum] = invalidField
+    throw new TypeError(
+      `reconnection: "${name}" must be a finite number greater than or equal to ${minimum}, got ${value}`
+    )
   }
 }
 
@@ -88,8 +151,18 @@ export async function createPgComponent(
 
   const finalOptions: PoolConfig = { ...defaultOptions, ...options.pool }
 
+  const reconnectionOptions = await resolveReconnectionOptions(config, options.reconnection)
+  assertValidReconnectionOptions(reconnectionOptions)
+
   // Config
   const pool: Pool = new Pool(finalOptions)
+
+  // Async context for transaction client
+  const transactionContext = new AsyncLocalStorage<PoolClient>()
+
+  const reconnection = createReconnectionManager({ logs, metrics: components.metrics }, reconnectionOptions, () =>
+    probeConnection()
+  )
 
   // Idle-client errors are emitted on the pool and would otherwise become
   // unhandled Node errors. Surface them through the logger so the process stays up.
@@ -98,11 +171,11 @@ export async function createPgComponent(
       error: error?.message ?? String(error),
       stack: error?.stack ?? ''
     })
+    // An idle client dying can mean anything from a server-side idle timeout to the database going
+    // away, so confirm with a probe rather than flipping the reported status on the error alone.
+    reconnection.scheduleProbe(error)
   }
   pool.on('error', onPoolError)
-
-  // Async context for transaction client
-  const transactionContext = new AsyncLocalStorage<PoolClient>()
 
   let didStart = false
 
@@ -136,6 +209,56 @@ export async function createPgComponent(
     }
   }
 
+  /**
+   * Opens a connection and runs a trivial statement. Used both by the health check and by the
+   * background reconnection loop to decide whether the database is reachable again.
+   */
+  async function probeConnection(): Promise<void> {
+    const client = await pool.connect()
+    const detachClientErrorHandler = attachClientErrorHandler(client)
+    let probeError: unknown
+
+    try {
+      await client.query('SELECT 1')
+    } catch (error) {
+      probeError = error
+      throw error
+    } finally {
+      detachClientErrorHandler()
+      releaseClient(client, probeError)
+    }
+  }
+
+  /**
+   * Releasing with an error makes `pg` destroy the client instead of returning a broken connection
+   * to the pool, so the next checkout opens a fresh one instead of failing the same way.
+   */
+  function releaseClient(client: PoolClient, error?: unknown): void {
+    client.release(isConnectionError(error) ? true : undefined)
+  }
+
+  /**
+   * `pg-pool` removes its own 'error' listener while a client is checked out, so a socket dying
+   * mid-statement emits an unhandled 'error' event and takes the process down with it. Holding a
+   * listener for the duration of the checkout keeps the failure to the rejected statement, which the
+   * caller already sees. Returns the function that detaches it, which must run before releasing the
+   * client so the pool's own listener is not shadowed.
+   */
+  function attachClientErrorHandler(client: PoolClient): () => void {
+    const onClientError = (error: Error) => {
+      logger.error('Checked out pg client error', {
+        error: error?.message ?? String(error),
+        stack: error?.stack ?? ''
+      })
+      reconnection.notifyFailure(error)
+    }
+
+    client.on('error', onClientError)
+    return () => {
+      client.off('error', onClientError)
+    }
+  }
+
   // Methods
   async function start() {
     if (didStart) {
@@ -145,31 +268,46 @@ export async function createPgComponent(
     didStart = true
 
     try {
-      const db = await pool.connect()
+      // The database is frequently still booting when the service starts, so the initial connection
+      // gets its own, larger attempt budget.
+      await reconnection.run(
+        'start',
+        async ({ markStatementSent }) => {
+          const db = await pool.connect()
+          const detachClientErrorHandler = attachClientErrorHandler(db)
+          let connectionError: unknown
 
-      try {
-        if (options.migration) {
-          logger.debug('Running migrations:')
+          try {
+            if (options.migration) {
+              logger.debug('Running migrations:')
 
-          const opt: RunnerOption = {
-            ...options.migration,
-            dbClient: db
+              const opt: RunnerOption = {
+                ...options.migration,
+                dbClient: db
+              }
+
+              if (!opt.logger) {
+                opt.logger = logger
+              }
+
+              // Migrations mutate the schema: past this point a retry could re-apply work.
+              markStatementSent()
+              await runMigrations(opt)
+            }
+          } catch (err: any) {
+            connectionError = err
+            logger.error('Migration failed', {
+              error: err?.message ?? String(err),
+              stack: err?.stack ?? ''
+            })
+            throw err
+          } finally {
+            detachClientErrorHandler()
+            releaseClient(db, connectionError)
           }
-
-          if (!opt.logger) {
-            opt.logger = logger
-          }
-          await runMigrations(opt)
-        }
-      } catch (err: any) {
-        logger.error('Migration failed', {
-          error: err?.message ?? String(err),
-          stack: err?.stack ?? ''
-        })
-        throw err
-      } finally {
-        db.release()
-      }
+        },
+        { maxRetries: reconnectionOptions.startMaxRetries }
+      )
     } catch (error: any) {
       logger.error('Error starting pg-component', {
         error: error?.message ?? String(error),
@@ -180,26 +318,43 @@ export async function createPgComponent(
   }
 
   async function executeInTransaction<T>(runCallback: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await pool.connect()
-    let rollbackError: Error | undefined
+    // A retry re-runs the caller's callback, so it is only allowed while the transaction has not
+    // started yet: after `BEGIN` succeeds the callback may already have caused side effects.
+    return reconnection.run(
+      'transaction',
+      async ({ markStatementSent }) => {
+        const client = await pool.connect()
+        const detachClientErrorHandler = attachClientErrorHandler(client)
+        let rollbackError: Error | undefined
+        let transactionError: unknown
 
-    try {
-      await client.query('BEGIN')
-      const result = await runCallback(client)
-      await client.query('COMMIT')
+        try {
+          await client.query('BEGIN')
+          markStatementSent()
+          const result = await runCallback(client)
+          await client.query('COMMIT')
 
-      return result
-    } catch (error) {
-      try {
-        await client.query('ROLLBACK')
-      } catch (err: any) {
-        rollbackError = err
-        logger.error('Error rolling back transaction', { error: err?.message ?? String(err) })
-      }
-      throw error
-    } finally {
-      client.release(rollbackError)
-    }
+          return result
+        } catch (error) {
+          transactionError = error
+          try {
+            await client.query('ROLLBACK')
+          } catch (err: any) {
+            rollbackError = err
+            logger.error('Error rolling back transaction', { error: err?.message ?? String(err) })
+          }
+          throw error
+        } finally {
+          detachClientErrorHandler()
+          if (rollbackError) {
+            client.release(rollbackError)
+          } else {
+            releaseClient(client, transactionError)
+          }
+        }
+      },
+      { retryOnNotSentErrors: false }
+    )
   }
 
   async function withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -210,12 +365,11 @@ export async function createPgComponent(
     return executeInTransaction((client) => transactionContext.run(client, callback))
   }
 
-  async function doQuery<T extends Record<string, any>>(sql: string | SQLStatement): Promise<QueryResult<T>> {
+  async function runQueryOnClient<T extends Record<string, any>>(
+    client: PoolClient,
+    sql: string | SQLStatement
+  ): Promise<QueryResult<T>> {
     const notices: NoticeMessage[] = []
-
-    // Get the transaction's context client or connect a new one
-    const transactionClient = transactionContext.getStore()
-    const client = transactionClient ?? (await pool.connect())
 
     function listenNotice(notice: NoticeMessage) {
       notices.push(notice)
@@ -228,11 +382,42 @@ export async function createPgComponent(
       return { ...result, rowCount: result.rowCount ?? 0, notices }
     } finally {
       client.off('notice', listenNotice)
-      // Only release if we created a new connection (not from transaction context)
-      if (!transactionClient) {
-        client.release()
+    }
+  }
+
+  async function doQuery<T extends Record<string, any>>(sql: string | SQLStatement): Promise<QueryResult<T>> {
+    const transactionClient = transactionContext.getStore()
+
+    // Inside a transaction the statement must run on the transaction's own client: retrying it on a
+    // fresh connection would silently execute it outside the transaction, so the error is surfaced
+    // and the whole transaction is left to fail.
+    if (transactionClient) {
+      try {
+        const result = await runQueryOnClient<T>(transactionClient, sql)
+        reconnection.notifySuccess()
+        return result
+      } catch (error) {
+        reconnection.notifyFailure(error)
+        throw error
       }
     }
+
+    return reconnection.run('query', async ({ markStatementSent }) => {
+      const client = await pool.connect()
+      const detachClientErrorHandler = attachClientErrorHandler(client)
+      let queryError: unknown
+
+      try {
+        markStatementSent()
+        return await runQueryOnClient<T>(client, sql)
+      } catch (error) {
+        queryError = error
+        throw error
+      } finally {
+        detachClientErrorHandler()
+        releaseClient(client, queryError)
+      }
+    })
   }
 
   const metricsComponent = components.metrics
@@ -250,13 +435,6 @@ export async function createPgComponent(
   }
 
   async function* streamQuery<T>(sql: SQLStatement, config?: { batchSize?: number }): AsyncGenerator<T> {
-    const client = new Client({
-      ...finalOptions,
-      // Only override when a stream-specific timeout is configured, otherwise fall back
-      // to `finalOptions.query_timeout` (an explicit `undefined` here would clobber it).
-      ...(STREAM_QUERY_TIMEOUT !== undefined ? { query_timeout: STREAM_QUERY_TIMEOUT } : {})
-    })
-
     // Socket errors on the dedicated stream client would otherwise bubble up as
     // unhandled 'error' events on the EventEmitter. Surface them through the logger.
     const onClientError = (error: Error) => {
@@ -264,15 +442,46 @@ export async function createPgComponent(
         error: error?.message ?? String(error),
         stack: error?.stack ?? ''
       })
+      reconnection.notifyFailure(error)
     }
-    client.on('error', onClientError)
 
-    try {
-      await client.connect()
-    } catch (err) {
-      client.off('error', onClientError)
-      throw err
+    // Only the connection is retried: rows already yielded cannot be un-yielded, so a stream that
+    // breaks mid-iteration is surfaced to the caller instead of silently restarting.
+    const client = await reconnection.run('streamQuery.connect', async () => {
+      const streamClient = new Client({
+        ...finalOptions,
+        // Only override when a stream-specific timeout is configured, otherwise fall back
+        // to `finalOptions.query_timeout` (an explicit `undefined` here would clobber it).
+        ...(STREAM_QUERY_TIMEOUT !== undefined ? { query_timeout: STREAM_QUERY_TIMEOUT } : {})
+      })
+
+      streamClient.on('error', onClientError)
+
+      try {
+        await streamClient.connect()
+        return streamClient
+      } catch (err) {
+        streamClient.off('error', onClientError)
+        // A client whose connection failed cannot be reused, so the next attempt builds a new one.
+        await streamClient.end().catch(() => undefined)
+        throw err
+      }
+    })
+
+    // A connection that dies mid-stream leaves `pg-cursor` waiting for a `readyForQuery` that can
+    // never arrive, so destroying the stream never completes and the iteration would hang forever.
+    // The client's 'end' event fires as soon as the socket is gone, which is what unblocks it.
+    let signalConnectionLost: (error: Error) => void = () => undefined
+    const connectionLost = new Promise<never>((_, reject) => {
+      signalConnectionLost = reject
+    })
+    // Only the race below ever consumes this promise; keep the rejection from escaping unhandled.
+    connectionLost.catch(() => undefined)
+
+    const onClientEnd = () => {
+      signalConnectionLost(new Error('Connection terminated unexpectedly'))
     }
+    client.on('end', onClientEnd)
 
     // TODO: remove this workaround once node-postgres/pg-query-stream#1860 is fixed.
     // https://github.com/brianc/node-postgres/issues/1860
@@ -289,19 +498,36 @@ export async function createPgComponent(
     try {
       client.query(stream)
 
-      for await (const row of stream) {
-        yield row
+      const iterator = stream[Symbol.asyncIterator]()
+
+      for (;;) {
+        const result = await Promise.race([iterator.next(), connectionLost])
+        if (result.done) {
+          break
+        }
+        yield result.value
       }
 
       stream.callback(undefined, undefined)
+      reconnection.notifySuccess()
     } catch (err) {
       stream.callback(err, undefined)
+      reconnection.notifyFailure(err)
       throw err
     } finally {
       stream.destroy()
       client.off('error', onClientError)
+      client.off('end', onClientEnd)
       await client.end()
     }
+  }
+
+  async function ping(): Promise<boolean> {
+    return reconnection.probe()
+  }
+
+  function getConnectionStatus(): ConnectionStatus {
+    return reconnection.getStatus()
   }
 
   let didStop = false
@@ -312,6 +538,10 @@ export async function createPgComponent(
       return
     }
     didStop = true
+
+    // Stop reconnecting before draining: the pool is about to be closed, so any further attempt
+    // would either race the shutdown or keep it from finishing.
+    reconnection.stop()
 
     pool.off('error', onPoolError)
 
@@ -389,7 +619,51 @@ export async function createPgComponent(
     withAsyncContextTransaction,
     streamQuery,
     getPool,
+    getConnectionStatus,
+    ping,
     start,
     stop
+  }
+}
+
+/**
+ * Merges the reconnection settings from, in order of precedence, the options passed to the factory,
+ * the `PG_COMPONENT_RECONNECTION_*` environment variables, and the built-in defaults.
+ */
+async function resolveReconnectionOptions(
+  config: IConfigComponent,
+  options: ReconnectionOptions = {}
+): Promise<ResolvedReconnectionOptions> {
+  const [enabled, maxRetries, startMaxRetries, initialDelay, maxDelay, backoffFactor, retrySentStatements] =
+    await Promise.all([
+      config.getString('PG_COMPONENT_RECONNECTION_ENABLED'),
+      config.getNumber('PG_COMPONENT_RECONNECTION_MAX_RETRIES'),
+      config.getNumber('PG_COMPONENT_RECONNECTION_START_MAX_RETRIES'),
+      config.getNumber('PG_COMPONENT_RECONNECTION_INITIAL_DELAY'),
+      config.getNumber('PG_COMPONENT_RECONNECTION_MAX_DELAY'),
+      config.getNumber('PG_COMPONENT_RECONNECTION_BACKOFF_FACTOR'),
+      config.getString('PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS')
+    ])
+
+  return {
+    enabled:
+      options.enabled ??
+      parseBooleanConfig('PG_COMPONENT_RECONNECTION_ENABLED', enabled, DEFAULT_RECONNECTION_OPTIONS.enabled),
+    maxRetries: options.maxRetries ?? maxRetries ?? DEFAULT_RECONNECTION_OPTIONS.maxRetries,
+    startMaxRetries: options.startMaxRetries ?? startMaxRetries ?? DEFAULT_RECONNECTION_OPTIONS.startMaxRetries,
+    initialDelayInMilliseconds:
+      options.initialDelayInMilliseconds ?? initialDelay ?? DEFAULT_RECONNECTION_OPTIONS.initialDelayInMilliseconds,
+    maxDelayInMilliseconds:
+      options.maxDelayInMilliseconds ?? maxDelay ?? DEFAULT_RECONNECTION_OPTIONS.maxDelayInMilliseconds,
+    backoffFactor: options.backoffFactor ?? backoffFactor ?? DEFAULT_RECONNECTION_OPTIONS.backoffFactor,
+    retrySentStatements:
+      options.retrySentStatements ??
+      parseBooleanConfig(
+        'PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS',
+        retrySentStatements,
+        DEFAULT_RECONNECTION_OPTIONS.retrySentStatements
+      ),
+    onDisconnection: options.onDisconnection,
+    onReconnection: options.onReconnection
   }
 }
