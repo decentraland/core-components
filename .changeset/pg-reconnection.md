@@ -16,9 +16,9 @@ Retries are limited to what is safe: acquiring a connection, and statements `pg`
 because the client was already dead (the usual symptom of a restart behind a warm pool, and proof
 that nothing reached the server). A connection that drops mid-statement is surfaced, since retrying
 it would turn a write into an at-least-once operation; `retrySentStatements` opts into that.
-Transactions are only retried before `BEGIN` succeeds, and queries inside
-`withAsyncContextTransaction` are never retried, since a fresh connection would silently escape the
-transaction.
+Transactions are only retried before `BEGIN` succeeds, migrations only while connecting — both run
+caller-provided code that a replay would repeat — and queries inside `withAsyncContextTransaction`
+are never retried, since a fresh connection would silently escape the transaction.
 
 Also fixes two latent bugs on the same path. `pg-pool` removes its own `'error'` listener while a
 client is checked out, so a socket dying mid-statement emitted an unhandled `'error'` event and took
@@ -31,7 +31,9 @@ New `getConnectionStatus()` (cached, cheap enough for a readiness probe) and `pi
 `SELECT 1`), plus `onDisconnection` / `onReconnection` hooks, a `dcl_db_connection_status` gauge and
 a `dcl_db_reconnection_attempts_total` counter. Everything is tunable through `PG_COMPONENT_RECONNECTION_*`
 env vars or the new `reconnection` factory option, and `PG_COMPONENT_RECONNECTION_ENABLED=false`
-restores the previous fail-fast behaviour.
+restores the previous fail-fast behaviour. Every probe is bounded by
+`PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT` (default 5s), so `ping()` reports an unhealthy database
+even when the pool has no `connectionTimeoutMillis` and `pg` would wait indefinitely.
 
 Released as a major because `IPgComponent` gains two required methods: real component instances are
 unaffected, but anything that implements or mocks the interface structurally — a hand-built

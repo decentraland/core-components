@@ -40,6 +40,13 @@ export type ReconnectionOptions = {
   /** Multiplier applied to the delay after every failed attempt. Defaults to `2`. */
   backoffFactor?: number
   /**
+   * How long a connection probe may take before it is treated as a failure, in milliseconds.
+   * Defaults to `5000`. It bounds `ping()` and the background reconnection loop even when the pool
+   * has no `connectionTimeoutMillis`, where `pg` would otherwise wait on an unreachable host for as
+   * long as the operating system allows.
+   */
+  probeTimeoutInMilliseconds?: number
+  /**
    * Whether to also retry statements that may already have reached the server. Defaults to `false`,
    * because a connection can drop between a write being applied and its acknowledgement arriving, so
    * enabling this turns every write into at-least-once delivery. Leave it off unless every statement
@@ -69,9 +76,17 @@ export type ConnectionStatus = {
    * but do not return it verbatim from a public health endpoint.
    */
   lastError?: string
-  /** Failed reconnection attempts within the current outage. Reset once the database answers again. */
+  /**
+   * Attempts the background reconnection loop has made within the current outage, reset once the
+   * database answers again. Retries of an individual operation are not counted here — they are
+   * reported through `dcl_db_reconnection_attempts_total{source="operation"}`.
+   */
   reconnectionAttempts: number
-  /** How many times the component has lost the connection since it was created. */
+  /**
+   * How many times the component has observed the database become unreachable. A database that is
+   * merely still booting when the service starts counts as one: it was unreachable, and then it was
+   * not.
+   */
   disconnections: number
 }
 

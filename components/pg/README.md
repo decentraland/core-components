@@ -139,7 +139,9 @@ Three things happen when the connection drops:
    (see below).
 3. **A background loop keeps probing** the database with the same backoff until it answers, so the
    pool is warm again before the next request arrives — the component does not wait for a user
-   request to discover the database is back.
+   request to discover the database is back. Each probe is bounded by
+   `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`, so an unreachable host cannot park the loop (or
+   `ping()`) on a connection attempt that never returns.
 
 The pool object itself is never replaced, so a reference obtained from `getPool()` stays valid
 across an outage.
@@ -196,6 +198,10 @@ Three cases behave differently by design:
 - **`streamQuery`** retries the connection, not the iteration. Rows already yielded cannot be
   un-yielded, so a stream that breaks mid-iteration surfaces the error to the caller — promptly,
   rather than hanging on a cursor teardown the dead connection can never acknowledge.
+- **Migrations** are retried only while connecting. Once the runner has started they are never
+  replayed: a migration is caller-provided code, and a non-transactional one (`CREATE INDEX
+  CONCURRENTLY` and friends) can be left half applied. `start()`'s larger attempt budget still
+  applies to reaching the database in the first place.
 
 ### Health checks
 
@@ -213,6 +219,11 @@ readiness probe built on it will not report the service as ready before the data
 The status also carries `lastError`, the driver's raw message, which can name hosts, ports, users or
 databases (`connect ECONNREFUSED 10.0.1.5:5432`). Log it, but keep it out of the body of a public
 health endpoint.
+
+Two details worth knowing when wiring the hooks: a database that is still booting when the service
+starts counts as an outage, so a slow start reports one `onDisconnection` and then one
+`onReconnection`; and after `stop()`, `ping()` answers `false` without touching the closed pool and
+without reporting an outage, so a readiness endpoint polled through a deploy stays quiet.
 
 ## Query Streaming
 
@@ -272,6 +283,7 @@ which takes precedence over the environment:
 | `PG_COMPONENT_RECONNECTION_INITIAL_DELAY`           | `number`  | Delay before the first retry, in ms (default: 300)                                             |
 | `PG_COMPONENT_RECONNECTION_MAX_DELAY`               | `number`  | Upper bound for the backoff delay, in ms (default: 5000)                                       |
 | `PG_COMPONENT_RECONNECTION_BACKOFF_FACTOR`          | `number`  | Multiplier applied to the delay after every failed attempt (default: 2)                        |
+| `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`           | `number`  | How long a connection probe may take before counting as a failure, in ms (default: 5000)       |
 | `PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS`   | `boolean` | Also retry statements that may already have reached the server (default: `false`)              |
 
 ## Metrics

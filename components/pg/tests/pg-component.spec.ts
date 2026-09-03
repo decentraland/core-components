@@ -189,8 +189,9 @@ describe('PgComponent', () => {
     })
 
     it('should have run the migrations against the database', async () => {
+      const migratedTable = 'pg_component_migration_lock_test'
       const result = await pg.query<{ count: string }>(
-        SQL`SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_name = 'pg_component_migration_lock_test'`
+        SQL`SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_name = ${migratedTable}`
       )
       expect(result.rows[0].count).toBe('1')
     })

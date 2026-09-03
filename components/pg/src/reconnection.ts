@@ -84,6 +84,7 @@ export const DEFAULT_RECONNECTION_OPTIONS: Required<
   initialDelayInMilliseconds: 300,
   maxDelayInMilliseconds: 5_000,
   backoffFactor: 2,
+  probeTimeoutInMilliseconds: 5_000,
   retrySentStatements: false
 }
 
@@ -228,7 +229,7 @@ export function createReconnectionManager(
   let reconnectionAttempts = 0
   let disconnections = 0
   let stopped = false
-  let backgroundLoop: Promise<void> | undefined
+  let loopRunning = false
   let inFlightProbe: Promise<boolean> | undefined
   let warnedAboutMissingMetrics = false
 
@@ -268,7 +269,9 @@ export function createReconnectionManager(
 
     const downtimeInMilliseconds = Date.now() - since
     const attempts = reconnectionAttempts
-    // The first successful connection is not a recovery: there was no outage to report.
+    // Only a connection that follows an observed outage is a recovery. Note that a database which
+    // was unreachable while the service booted counts as one such outage, so a slow-starting
+    // database does report a disconnection and then a reconnection.
     const isRecovery = disconnections > 0
 
     connected = true
@@ -286,18 +289,20 @@ export function createReconnectionManager(
   function markDisconnected(error: unknown): void {
     lastError = getErrorMessage(error)
 
-    if (!connected && disconnections > 0) {
-      return
+    // The logs, the metric and the listener describe a transition, so they only fire on the edge:
+    // a hundred queries failing at once is one outage, not a hundred.
+    if (connected || disconnections === 0) {
+      connected = false
+      since = Date.now()
+      disconnections += 1
+
+      logger.warn('Database connection lost', { error: lastError })
+      recordMetric((metricsComponent) => metricsComponent.observe('dcl_db_connection_status', {}, 0))
+      notifyListener('onDisconnection', options.onDisconnection, error instanceof Error ? error : new Error(lastError))
     }
 
-    connected = false
-    since = Date.now()
-    disconnections += 1
-
-    logger.warn('Database connection lost', { error: lastError })
-    recordMetric((metricsComponent) => metricsComponent.observe('dcl_db_connection_status', {}, 0))
-    notifyListener('onDisconnection', options.onDisconnection, error instanceof Error ? error : new Error(lastError))
-
+    // Starting the loop is not edge-triggered: being disconnected must always imply that a loop is
+    // running, whatever the transition did. It is a no-op when one already is.
     startReconnectionLoop()
   }
 
@@ -311,11 +316,48 @@ export function createReconnectionManager(
     }
   }
 
+  /**
+   * Bounds a probe: with no `connectionTimeoutMillis` or `query_timeout` configured, `pg` waits on an
+   * unreachable host for as long as the OS lets it, which would leave `ping()` hanging and the
+   * background loop parked on a promise that never settles.
+   */
+  async function runProbeWithDeadline(): Promise<void> {
+    const deadline = new AbortController()
+    const attempt = probeConnection()
+    // The deadline may win the race; keep a late failure from escaping as an unhandled rejection.
+    attempt.catch(() => undefined)
+
+    try {
+      await Promise.race([
+        attempt,
+        delay(options.probeTimeoutInMilliseconds, undefined, { signal: deadline.signal, ref: false }).then(
+          () => {
+            throw new Error(
+              `The connection probe did not answer within ${options.probeTimeoutInMilliseconds}ms`
+            )
+          },
+          // Aborted because the probe already answered: never settle, so the probe decides the race.
+          () => new Promise<never>(() => undefined)
+        )
+      ])
+    } finally {
+      deadline.abort()
+    }
+  }
+
   async function probe(): Promise<boolean> {
+    // A stopped component cannot serve queries, so it is not reachable — but neither is that an
+    // outage worth reporting: the pool was closed on purpose, and `pool.connect()` would fail with
+    // an error this module classifies as terminal. Answering without touching the pool keeps a
+    // readiness endpoint polled during a deploy from firing `onDisconnection` on every shutdown.
+    if (stopped) {
+      return false
+    }
+
     if (!inFlightProbe) {
       inFlightProbe = (async () => {
         try {
-          await probeConnection()
+          await runProbeWithDeadline()
           markConnected()
           return true
         } catch (error) {
@@ -349,42 +391,49 @@ export function createReconnectionManager(
   }
 
   function startReconnectionLoop(): void {
-    if (backgroundLoop || stopped || !options.enabled) {
+    if (loopRunning || stopped || !options.enabled) {
       return
     }
 
-    backgroundLoop = (async () => {
+    loopRunning = true
+
+    // Fire-and-forget: the loop owns its own lifecycle and no caller waits on it. Failures inside
+    // are already handled, so the catch only guards against an unexpected throw.
+    void (async () => {
       let attempt = 0
 
-      while (!connected && !stopped) {
-        try {
-          // `ref: false` keeps the loop from holding the process open while it waits.
-          await delay(getBackoffDelay(attempt, options), undefined, { signal: abortController.signal, ref: false })
-        } catch {
-          return
+      try {
+        while (!connected && !stopped) {
+          try {
+            // `ref: false` keeps the loop from holding the process open while it waits.
+            await delay(getBackoffDelay(attempt, options), undefined, { signal: abortController.signal, ref: false })
+          } catch {
+            return
+          }
+
+          if (connected || stopped) {
+            return
+          }
+
+          attempt += 1
+          reconnectionAttempts = attempt
+          logger.debug('Attempting to reconnect to the database', { attempt })
+
+          const succeeded = await probe()
+          recordMetric((metricsComponent) =>
+            metricsComponent.increment('dcl_db_reconnection_attempts_total', {
+              source: 'probe',
+              status: succeeded ? 'success' : 'failure'
+            })
+          )
         }
-
-        if (connected || stopped) {
-          return
-        }
-
-        attempt += 1
-        reconnectionAttempts = attempt
-        logger.debug('Attempting to reconnect to the database', { attempt })
-
-        const succeeded = await probe()
-        recordMetric((metricsComponent) =>
-          metricsComponent.increment('dcl_db_reconnection_attempts_total', {
-            source: 'probe',
-            status: succeeded ? 'success' : 'failure'
-          })
-        )
+      } finally {
+        // Cleared here rather than in a `.finally()` on the promise: this runs in the same tick as
+        // the loop's own exit, so there is no window in which the manager is disconnected, no loop
+        // is running, and a stale handle still makes `startReconnectionLoop()` a no-op.
+        loopRunning = false
       }
-    })()
-      .catch((error) => logger.error('Reconnection loop failed', { error: getErrorMessage(error) }))
-      .finally(() => {
-        backgroundLoop = undefined
-      })
+    })().catch((error) => logger.error('Reconnection loop failed', { error: getErrorMessage(error) }))
   }
 
   async function run<T>(
@@ -417,8 +466,19 @@ export function createReconnectionManager(
       } catch (error) {
         notifyFailure(error)
 
+        const isConnectionFailure = isConnectionError(error)
+        if (isConnectionFailure) {
+          // Counted before the budget check so the attempt that exhausts it is not invisible.
+          recordMetric((metricsComponent) =>
+            metricsComponent.increment('dcl_db_reconnection_attempts_total', {
+              source: 'operation',
+              status: 'failure'
+            })
+          )
+        }
+
         const canRetry =
-          isConnectionError(error) &&
+          isConnectionFailure &&
           (!statementSent ||
             (retryAfterStatementSent && (options.retrySentStatements || isNotSentError(error))))
 
@@ -436,9 +496,6 @@ export function createReconnectionManager(
           delayInMilliseconds,
           error: getErrorMessage(error)
         })
-        recordMetric((metricsComponent) =>
-          metricsComponent.increment('dcl_db_reconnection_attempts_total', { source: 'operation', status: 'failure' })
-        )
 
         try {
           await delay(delayInMilliseconds, undefined, { signal: abortController.signal })
@@ -460,7 +517,6 @@ export function createReconnectionManager(
     // The loop is deliberately not awaited: it may be blocked on a probe against an unreachable host,
     // which can outlast the shutdown deadline. The flag keeps it from starting further work, and
     // closing the pool is what actually bounds the connection attempt already in flight.
-    backgroundLoop = undefined
   }
 
   return { run, notifySuccess, notifyFailure, probe, scheduleProbe, getStatus, stop }

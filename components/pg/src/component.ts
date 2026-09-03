@@ -24,7 +24,9 @@ import {
 
 export * from './types'
 export * from './metrics'
-export * from './reconnection'
+// Named rather than a star re-export: the rest of `./reconnection` is `@internal`, and with no
+// api-extractor in the build a star would publish it as part of the package surface.
+export { DEFAULT_RECONNECTION_OPTIONS, getBackoffDelay, isConnectionError, isNotSentError } from './reconnection'
 
 /**
  * @internal
@@ -85,6 +87,7 @@ export function assertValidReconnectionOptions(options: ResolvedReconnectionOpti
       // reconnection loop into an unthrottled hammer against a database that is already struggling.
       ['initialDelayInMilliseconds', options.initialDelayInMilliseconds, 1],
       ['maxDelayInMilliseconds', options.maxDelayInMilliseconds, 1],
+      ['probeTimeoutInMilliseconds', options.probeTimeoutInMilliseconds, 1],
       ['backoffFactor', options.backoffFactor, 1]
     ] as const
   ).find(([, value, minimum]) => !Number.isFinite(value) || value < minimum)
@@ -306,7 +309,10 @@ export async function createPgComponent(
             releaseClient(db, connectionError)
           }
         },
-        { maxRetries: reconnectionOptions.startMaxRetries }
+        // Migrations are caller-provided code and can be non-transactional (`CREATE INDEX
+        // CONCURRENTLY` and friends), so a half-applied one must never be replayed. Connect-phase
+        // retries are unaffected: the marker is only set once migrations begin.
+        { maxRetries: reconnectionOptions.startMaxRetries, retryAfterStatementSent: false }
       )
     } catch (error: any) {
       logger.error('Error starting pg-component', {
@@ -636,14 +642,23 @@ async function resolveReconnectionOptions(
   config: IConfigComponent,
   options: ReconnectionOptions = {}
 ): Promise<ResolvedReconnectionOptions> {
-  const [enabled, maxRetries, startMaxRetries, initialDelay, maxDelay, backoffFactor, retrySentStatements] =
-    await Promise.all([
+  const [
+    enabled,
+    maxRetries,
+    startMaxRetries,
+    initialDelay,
+    maxDelay,
+    backoffFactor,
+    probeTimeout,
+    retrySentStatements
+  ] = await Promise.all([
       config.getString('PG_COMPONENT_RECONNECTION_ENABLED'),
       config.getNumber('PG_COMPONENT_RECONNECTION_MAX_RETRIES'),
       config.getNumber('PG_COMPONENT_RECONNECTION_START_MAX_RETRIES'),
       config.getNumber('PG_COMPONENT_RECONNECTION_INITIAL_DELAY'),
       config.getNumber('PG_COMPONENT_RECONNECTION_MAX_DELAY'),
       config.getNumber('PG_COMPONENT_RECONNECTION_BACKOFF_FACTOR'),
+      config.getNumber('PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT'),
       config.getString('PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS')
     ])
 
@@ -658,6 +673,8 @@ async function resolveReconnectionOptions(
     maxDelayInMilliseconds:
       options.maxDelayInMilliseconds ?? maxDelay ?? DEFAULT_RECONNECTION_OPTIONS.maxDelayInMilliseconds,
     backoffFactor: options.backoffFactor ?? backoffFactor ?? DEFAULT_RECONNECTION_OPTIONS.backoffFactor,
+    probeTimeoutInMilliseconds:
+      options.probeTimeoutInMilliseconds ?? probeTimeout ?? DEFAULT_RECONNECTION_OPTIONS.probeTimeoutInMilliseconds,
     retrySentStatements:
       options.retrySentStatements ??
       parseBooleanConfig(
