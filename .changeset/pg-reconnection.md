@@ -18,7 +18,9 @@ still booting.
 Retries are limited to what is safe: acquiring a connection, and statements `pg` refused to send
 because the client was already dead (the usual symptom of a restart behind a warm pool, and proof
 that nothing reached the server). A connection that drops mid-statement is surfaced, since retrying
-it would turn a write into an at-least-once operation; `retrySentStatements` opts into that.
+it would turn a write into an at-least-once operation; a statement whose replay is harmless can opt
+in per call with `query(sql, { idempotent: true })` — the second argument of `query()` now takes an
+options object as well as the metrics label.
 Transactions are only retried before `BEGIN` succeeds, migrations only while connecting — both run
 caller-provided code that a replay would repeat — and queries inside `withAsyncContextTransaction`
 are never retried, since a fresh connection would silently escape the transaction.

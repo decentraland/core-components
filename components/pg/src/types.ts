@@ -50,13 +50,6 @@ export type ReconnectionOptions = {
    * long as the operating system allows.
    */
   probeTimeoutInMilliseconds?: number
-  /**
-   * Whether to also retry statements that may already have reached the server. Defaults to `false`,
-   * because a connection can drop between a write being applied and its acknowledgement arriving, so
-   * enabling this turns every write into at-least-once delivery. Leave it off unless every statement
-   * the service issues is idempotent.
-   */
-  retrySentStatements?: boolean
   /** Called once per outage, when the component first observes that the database is unreachable. */
   onDisconnection?: (error: Error) => void
   /** Called once per recovery, with how long the database was unreachable. */
@@ -96,6 +89,23 @@ export type ConnectionStatus = {
 
 /**
  * @public
+ *
+ * Per-statement options for `query()`.
+ */
+export type QueryOptions = {
+  /** Label under which the query's duration is reported to the metrics component. */
+  durationQueryNameLabel?: string
+  /**
+   * Declares that running the statement twice has the same effect as running it once, which lets the
+   * component replay it after a connection dropped while it was in flight. Off by default because a
+   * connection can drop between a write being applied and its acknowledgement arriving, so a replay
+   * of a non-idempotent write applies it twice. Reads, upserts and idempotent writes are safe to mark.
+   */
+  idempotent?: boolean
+}
+
+/**
+ * @public
  */
 export type Options = Partial<{
   pool: PoolConfig
@@ -109,8 +119,12 @@ export type Options = Partial<{
 export interface IPgComponent extends IDatabase {
   start(): Promise<void>
 
-  query<T extends Record<string, any>>(sql: string, durationQueryNameLabel?: string): Promise<QueryResult<T>>
-  query<T extends Record<string, any>>(sql: SQLStatement, durationQueryNameLabel?: string): Promise<QueryResult<T>>
+  /**
+   * Runs a statement. The second argument is either the metrics label the duration is reported under
+   * or a {@link QueryOptions} object, which can also mark the statement as idempotent.
+   */
+  query<T extends Record<string, any>>(sql: string, options?: string | QueryOptions): Promise<QueryResult<T>>
+  query<T extends Record<string, any>>(sql: SQLStatement, options?: string | QueryOptions): Promise<QueryResult<T>>
   streamQuery<T = any>(sql: SQLStatement, config?: { batchSize?: number }): AsyncGenerator<T>
   /**
    * Executes a callback within a transaction using a client.
@@ -122,7 +136,7 @@ export interface IPgComponent extends IDatabase {
    * Each call acquires a new connection from the pool.
    *
    * @warning A connection failure is only retried before the transaction starts, so the callback is
-   * never re-run. `retrySentStatements` does not change this.
+   * never re-run; a callback cannot be declared idempotent the way a single statement can.
    */
   withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>
   /**

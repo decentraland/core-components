@@ -100,12 +100,10 @@ describe('PgComponent migration retries', () => {
     let startError: Error | undefined
 
     beforeEach(async () => {
-      // The harshest case for a replay: sent statements are configured to be retried, and the error
-      // is one that proves the last statement never left the client. A migration is still
-      // caller-provided code — and a non-transactional one can be half applied — so neither may
-      // re-run it.
+      // The harshest case for a replay: the error is one that proves the last statement never left
+      // the client, which would earn an ordinary query a retry. A migration is caller-provided code —
+      // and a non-transactional one can be half applied — so it must not be re-run.
       config = createMockConfig({
-        PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS: 'true',
         PG_COMPONENT_RECONNECTION_START_MAX_RETRIES: 3,
         PG_COMPONENT_RECONNECTION_INITIAL_DELAY: 1,
         PG_COMPONENT_RECONNECTION_MAX_DELAY: 1

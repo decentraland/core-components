@@ -88,8 +88,7 @@ export const DEFAULT_RECONNECTION_OPTIONS: Required<
   initialDelayInMilliseconds: 300,
   maxDelayInMilliseconds: 1_000,
   backoffFactor: 2,
-  probeTimeoutInMilliseconds: 5_000,
-  retrySentStatements: false
+  probeTimeoutInMilliseconds: 5_000
 }
 
 /**
@@ -171,7 +170,7 @@ export type OperationContext = {
   /**
    * Marks the point from which the operation may already have been applied by the server. Failures
    * after this point are only retried when the error proves the statement never left the client, or
-   * when `retrySentStatements` is enabled.
+   * when the operation was declared idempotent through `retrySentStatements`.
    */
   markStatementSent(): void
 }
@@ -185,12 +184,18 @@ export type RunOptions = {
   /**
    * Whether the operation may be retried at all once `markStatementSent()` has been called.
    * Defaults to `true`, which still requires the error to prove the statement never left the client
-   * unless `retrySentStatements` is enabled.
+   * unless `retrySentStatements` is set.
    *
    * Operations that run caller-provided code set it to `false`, which overrides
    * `retrySentStatements` too: no error can prove that someone else's callback is safe to run twice.
    */
   retryAfterStatementSent?: boolean
+  /**
+   * Declares the operation idempotent, so a connection error after `markStatementSent()` may be
+   * retried even when nothing proves the statement never reached the server. A statement-level
+   * decision made by the caller, who is the only one who knows; never a global default.
+   */
+  retrySentStatements?: boolean
 }
 
 /**
@@ -487,6 +492,7 @@ export function createReconnectionManager(
   ): Promise<T> {
     const maxRetries = options.enabled ? (runOptions.maxRetries ?? options.maxRetries) : 0
     const retryAfterStatementSent = runOptions.retryAfterStatementSent ?? true
+    const retrySentStatements = runOptions.retrySentStatements ?? false
     let attempt = 0
 
     for (;;) {
@@ -540,7 +546,7 @@ export function createReconnectionManager(
         const canRetry =
           isConnectionFailure &&
           (!statementSent ||
-            (retryAfterStatementSent && (options.retrySentStatements || isNotSentError(error))))
+            (retryAfterStatementSent && (retrySentStatements || isNotSentError(error))))
 
         if (stopped || !canRetry || attempt >= maxRetries) {
           throw error

@@ -205,17 +205,30 @@ A statement that is not retried still leaves the component healthy: the broken c
 destroyed rather than returned to the pool, the background loop brings the pool back, and the
 following query runs on a fresh connection. Only the statement that was in flight fails.
 
-Set `retrySentStatements: true` (or `PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS=true`) to also
-retry statements that may have reached the server. Only do this if every statement the service
-issues is idempotent: a connection can drop between a write being applied and its acknowledgement
-coming back, so the retry may apply it twice.
+A statement whose replay is harmless can say so, and it will then be retried even after a mid-flight
+drop:
+
+```typescript
+// Reads, upserts and other idempotent statements are safe to mark
+await pg.query(SQL`SELECT * FROM users WHERE id = ${userId}`, { idempotent: true })
+
+// The options object also takes the metrics label that used to be the second argument
+await pg.query(SQL`INSERT INTO seen (id) VALUES (${id}) ON CONFLICT DO NOTHING`, {
+  idempotent: true,
+  durationQueryNameLabel: 'mark_seen'
+})
+```
+
+This is deliberately a per-statement declaration rather than a service-wide switch: a connection can
+drop between a write being applied and its acknowledgement coming back, so replaying a plain
+`INSERT` applies it twice, and only the caller knows which statements that is true for.
 
 Three cases behave differently by design:
 
 - **Transactions** are retried only while the transaction has not started yet — that is, when the
   connection could not be acquired or `BEGIN` failed. Once the callback has run, a retry would
-  repeat whatever else it did, so the error is surfaced instead. `retrySentStatements` does not
-  change this: it speaks for single statements, not for arbitrary callbacks.
+  repeat whatever else it did, so the error is surfaced instead. A callback cannot be declared
+  idempotent the way a single statement can.
 - **Queries inside `withAsyncContextTransaction`** are never retried: they must run on the
   transaction's own client, and retrying them on a fresh connection would silently execute them
   outside the transaction. The transaction fails as a whole and rolls back.
@@ -308,7 +321,6 @@ which takes precedence over the environment:
 | `PG_COMPONENT_RECONNECTION_MAX_DELAY`               | `number`  | Upper bound for the backoff delay, in ms (default: 1000)                                       |
 | `PG_COMPONENT_RECONNECTION_BACKOFF_FACTOR`          | `number`  | Multiplier applied to the delay after every failed attempt (default: 2)                        |
 | `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`           | `number`  | How long a connection probe may take before counting as a failure, in ms (default: 5000)       |
-| `PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS`   | `boolean` | Also retry statements that may already have reached the server (default: `false`)              |
 
 ## Metrics
 

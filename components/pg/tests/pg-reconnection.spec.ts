@@ -553,17 +553,14 @@ describe('PgComponent reconnection', () => {
     })
   })
 
-  describe('when sent statements are configured to be retried', () => {
+  describe('when a statement is declared idempotent', () => {
     let proxy: TcpProxy
     let pg: IPgComponent
 
     beforeEach(async () => {
       proxy = await createTcpProxy(container.getHost(), container.getPort())
       pg = await createPgComponent(
-        {
-          config: createMockConfig(proxy.port, { PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS: 'true' }),
-          logs: createMockLogs()
-        },
+        { config: createMockConfig(proxy.port), logs: createMockLogs() },
         { reconnection: FAST_RECONNECTION }
       )
       await pg.start()
@@ -579,7 +576,7 @@ describe('PgComponent reconnection', () => {
       let result: { rows: { pg_sleep: string }[] }
 
       beforeEach(async () => {
-        const inFlightQuery = pg.query<{ pg_sleep: string }>(SQL`SELECT pg_sleep(0.2)`)
+        const inFlightQuery = pg.query<{ pg_sleep: string }>(SQL`SELECT pg_sleep(0.2)`, { idempotent: true })
         await sleep(50)
         proxy.dropLiveConnections()
         result = await inFlightQuery
@@ -615,7 +612,7 @@ describe('PgComponent reconnection', () => {
         expect(transactionError?.message).toMatch(/Connection terminated/)
       })
 
-      it('should not run the callback a second time, whatever the statement-level setting says', () => {
+      it('should not run the callback a second time, since a callback cannot be declared idempotent', () => {
         expect(callback).toHaveBeenCalledTimes(1)
       })
     })

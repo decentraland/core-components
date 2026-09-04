@@ -11,6 +11,7 @@ import {
   Options,
   IPgComponent,
   IMetricsComponent,
+  QueryOptions,
   QueryStreamWithCallback,
   QueryResult,
   ReconnectionOptions
@@ -333,8 +334,8 @@ export async function createPgComponent(
   async function executeInTransaction<T>(runCallback: (client: PoolClient) => Promise<T>): Promise<T> {
     // A retry re-runs the caller's callback, so it is only allowed while the transaction has not
     // started yet: after `BEGIN` succeeds the callback may already have applied writes or caused
-    // side effects outside the database. `retrySentStatements` does not lift this — it speaks for
-    // single statements, which the component can reason about, not for arbitrary callbacks.
+    // side effects outside the database. Idempotency is declared per statement, by the one caller who
+    // knows; there is no way to declare it for an arbitrary callback.
     return reconnection.run(
       'transaction',
       async ({ markStatementSent }) => {
@@ -400,7 +401,10 @@ export async function createPgComponent(
     }
   }
 
-  async function doQuery<T extends Record<string, any>>(sql: string | SQLStatement): Promise<QueryResult<T>> {
+  async function doQuery<T extends Record<string, any>>(
+    sql: string | SQLStatement,
+    idempotent: boolean
+  ): Promise<QueryResult<T>> {
     const transactionClient = transactionContext.getStore()
 
     // Inside a transaction the statement must run on the transaction's own client: retrying it on a
@@ -417,36 +421,44 @@ export async function createPgComponent(
       }
     }
 
-    return reconnection.run('query', async ({ markStatementSent }) => {
-      const client = await pool.connect()
-      const detachClientErrorHandler = attachClientErrorHandler(client)
-      let queryError: unknown
+    return reconnection.run(
+      'query',
+      async ({ markStatementSent }) => {
+        const client = await pool.connect()
+        const detachClientErrorHandler = attachClientErrorHandler(client)
+        let queryError: unknown
 
-      try {
-        markStatementSent()
-        return await runQueryOnClient<T>(client, sql)
-      } catch (error) {
-        queryError = error
-        throw error
-      } finally {
-        detachClientErrorHandler()
-        releaseClient(client, queryError)
-      }
-    })
+        try {
+          markStatementSent()
+          return await runQueryOnClient<T>(client, sql)
+        } catch (error) {
+          queryError = error
+          throw error
+        } finally {
+          detachClientErrorHandler()
+          releaseClient(client, queryError)
+        }
+      },
+      { retrySentStatements: idempotent }
+    )
   }
 
   const metricsComponent = components.metrics
 
   async function query<T extends Record<string, any>>(
     sql: string | SQLStatement,
-    durationQueryNameLabel?: string
+    options?: string | QueryOptions
   ): Promise<QueryResult<T>> {
+    // A bare string is the pre-existing "metrics label" form of the second argument.
+    const { durationQueryNameLabel, idempotent = false }: QueryOptions =
+      typeof options === 'string' ? { durationQueryNameLabel: options } : (options ?? {})
+
     if (durationQueryNameLabel && metricsComponent) {
       return runReportingQueryDurationMetric({ metrics: metricsComponent }, durationQueryNameLabel, () =>
-        doQuery<T>(sql)
+        doQuery<T>(sql, idempotent)
       )
     }
-    return doQuery<T>(sql)
+    return doQuery<T>(sql, idempotent)
   }
 
   async function* streamQuery<T>(sql: SQLStatement, config?: { batchSize?: number }): AsyncGenerator<T> {
@@ -656,8 +668,7 @@ async function resolveReconnectionOptions(
     initialDelay,
     maxDelay,
     backoffFactor,
-    probeTimeout,
-    retrySentStatements
+    probeTimeout
   ] = await Promise.all([
       config.getString('PG_COMPONENT_RECONNECTION_ENABLED'),
       config.getNumber('PG_COMPONENT_RECONNECTION_MAX_RETRIES'),
@@ -665,8 +676,7 @@ async function resolveReconnectionOptions(
       config.getNumber('PG_COMPONENT_RECONNECTION_INITIAL_DELAY'),
       config.getNumber('PG_COMPONENT_RECONNECTION_MAX_DELAY'),
       config.getNumber('PG_COMPONENT_RECONNECTION_BACKOFF_FACTOR'),
-      config.getNumber('PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT'),
-      config.getString('PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS')
+      config.getNumber('PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT')
     ])
 
   return {
@@ -682,13 +692,6 @@ async function resolveReconnectionOptions(
     backoffFactor: options.backoffFactor ?? backoffFactor ?? DEFAULT_RECONNECTION_OPTIONS.backoffFactor,
     probeTimeoutInMilliseconds:
       options.probeTimeoutInMilliseconds ?? probeTimeout ?? DEFAULT_RECONNECTION_OPTIONS.probeTimeoutInMilliseconds,
-    retrySentStatements:
-      options.retrySentStatements ??
-      parseBooleanConfig(
-        'PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS',
-        retrySentStatements,
-        DEFAULT_RECONNECTION_OPTIONS.retrySentStatements
-      ),
     onDisconnection: options.onDisconnection,
     onReconnection: options.onReconnection
   }

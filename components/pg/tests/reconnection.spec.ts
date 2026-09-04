@@ -47,8 +47,7 @@ const FAST_OPTIONS: ResolvedReconnectionOptions = {
   initialDelayInMilliseconds: 2,
   maxDelayInMilliseconds: 50,
   backoffFactor: 2,
-  probeTimeoutInMilliseconds: 200,
-  retrySentStatements: false
+  probeTimeoutInMilliseconds: 200
 }
 
 function waitUntil(condition: () => boolean): Promise<void> {
@@ -522,7 +521,7 @@ describe('when running an operation through the reconnection manager', () => {
     })
   })
 
-  describe('and the operation opts out of retrying while sent statements are configured to be retried', () => {
+  describe('and the operation opts out of retrying while also declared idempotent', () => {
     let operation: jest.Mock<Promise<string>, [{ markStatementSent(): void }]>
 
     beforeEach(() => {
@@ -532,18 +531,18 @@ describe('when running an operation through the reconnection manager', () => {
         context.markStatementSent()
         throw new Error('Connection terminated unexpectedly')
       })
-      manager = createReconnectionManager({ logs }, { ...FAST_OPTIONS, retrySentStatements: true }, probeConnection)
+      manager = createReconnectionManager({ logs }, FAST_OPTIONS, probeConnection)
     })
 
-    it('should reject without retrying, since the opt-out overrides the global setting', async () => {
-      await expect(manager.run('test', operation, { retryAfterStatementSent: false })).rejects.toThrow(
-        'Connection terminated unexpectedly'
-      )
+    it('should reject without retrying, since the opt-out wins over the idempotency declaration', async () => {
+      await expect(
+        manager.run('test', operation, { retryAfterStatementSent: false, retrySentStatements: true })
+      ).rejects.toThrow('Connection terminated unexpectedly')
       expect(operation).toHaveBeenCalledTimes(1)
     })
   })
 
-  describe('and sent statements are configured to be retried', () => {
+  describe('and the operation is declared idempotent', () => {
     let operation: jest.Mock<Promise<string>, [{ markStatementSent(): void }]>
     let result: string
 
@@ -557,8 +556,8 @@ describe('when running an operation through the reconnection manager', () => {
           throw new Error('Connection terminated unexpectedly')
         })
         .mockResolvedValueOnce('ok')
-      manager = createReconnectionManager({ logs }, { ...FAST_OPTIONS, retrySentStatements: true }, probeConnection)
-      result = await manager.run('test', operation)
+      manager = createReconnectionManager({ logs }, FAST_OPTIONS, probeConnection)
+      result = await manager.run('test', operation, { retrySentStatements: true })
     })
 
     it('should retry the operation and return its result', () => {
