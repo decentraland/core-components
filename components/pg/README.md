@@ -146,6 +146,19 @@ Three things happen when the connection drops:
 The pool object itself is never replaced, so a reference obtained from `getPool()` stays valid
 across an outage.
 
+Two pool settings underpin all of this and are defaulted by the component: `connectionTimeoutMillis`
+(10s) and TCP `keepAlive`. Reconnection only reacts to failures it can see — a refused connection, a
+reset, a closed socket. A host that silently drops packets, as a load balancer mid-failover or a
+half-open socket does, produces none of those: without a connection timeout an attempt hangs for the
+operating system's SYN timeout, and without keepalive an established connection never learns its
+peer is gone. Both can still be overridden through `options.pool`.
+
+One consequence of the connection timeout worth knowing: `pg` also applies it to the wait for a free
+client when the pool is full, so a saturated pool now fails callers after 10s instead of queueing
+them indefinitely. That failure ("timeout exceeded when trying to connect") is deliberately *not*
+treated as a disconnection — the database is fine, the pool is busy — so it is neither retried nor
+counted as an outage.
+
 ```typescript
 const pg = await createPgComponent(
   { config, logs, metrics },
@@ -268,7 +281,7 @@ Environment variables read by the component:
 | `PG_COMPONENT_IDLE_TIMEOUT`           | `number` | Idle connection timeout (ms)                                                         |
 | `PG_COMPONENT_QUERY_TIMEOUT`          | `number` | Query timeout (ms)                                                                   |
 | `PG_COMPONENT_STREAM_QUERY_TIMEOUT`   | `number` | Stream query timeout (ms); falls back to `PG_COMPONENT_QUERY_TIMEOUT` when unset     |
-| `PG_COMPONENT_CONNECTION_TIMEOUT`     | `number` | How long `pool.connect()` waits for a TCP connection before failing (ms)             |
+| `PG_COMPONENT_CONNECTION_TIMEOUT`     | `number` | How long `pool.connect()` waits for a connection before failing (ms; default: 10000). Also bounds how long a caller waits for a free client when the pool is full |
 | `PG_COMPONENT_GRACE_PERIODS`          | `number` | Grace periods for shutdown (default: 10)                                             |
 | `PG_COMPONENT_STOP_TIMEOUT`           | `number` | Upper bound (ms) for `stop()` to drain the pool before abandoning it (default: 30000) |
 
@@ -278,10 +291,10 @@ which takes precedence over the environment:
 | Variable                                            | Type      | Description                                                                                  |
 | --------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
 | `PG_COMPONENT_RECONNECTION_ENABLED`                 | `boolean` | Whether disconnections are retried at all (default: `true`)                                    |
-| `PG_COMPONENT_RECONNECTION_MAX_RETRIES`             | `number`  | Retries per operation (default: 5)                                                             |
-| `PG_COMPONENT_RECONNECTION_START_MAX_RETRIES`       | `number`  | Retries for the initial connection in `start()` (default: 10)                                  |
+| `PG_COMPONENT_RECONNECTION_MAX_RETRIES`             | `number`  | Retries per operation (default: 3)                                                             |
+| `PG_COMPONENT_RECONNECTION_START_MAX_RETRIES`       | `number`  | Retries for the initial connection in `start()` (default: 30)                                  |
 | `PG_COMPONENT_RECONNECTION_INITIAL_DELAY`           | `number`  | Delay before the first retry, in ms (default: 300)                                             |
-| `PG_COMPONENT_RECONNECTION_MAX_DELAY`               | `number`  | Upper bound for the backoff delay, in ms (default: 5000)                                       |
+| `PG_COMPONENT_RECONNECTION_MAX_DELAY`               | `number`  | Upper bound for the backoff delay, in ms (default: 1000)                                       |
 | `PG_COMPONENT_RECONNECTION_BACKOFF_FACTOR`          | `number`  | Multiplier applied to the delay after every failed attempt (default: 2)                        |
 | `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`           | `number`  | How long a connection probe may take before counting as a failure, in ms (default: 5000)       |
 | `PG_COMPONENT_RECONNECTION_RETRY_SENT_STATEMENTS`   | `boolean` | Also retry statements that may already have reached the server (default: `false`)              |

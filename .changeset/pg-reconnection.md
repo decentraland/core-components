@@ -20,6 +20,12 @@ Transactions are only retried before `BEGIN` succeeds, migrations only while con
 caller-provided code that a replay would repeat — and queries inside `withAsyncContextTransaction`
 are never retried, since a fresh connection would silently escape the transaction.
 
+The component now defaults `connectionTimeoutMillis` to 10s and enables TCP `keepAlive`: reconnection
+only reacts to failures it can see, and a host that silently drops packets produces none without
+them. Note that `pg` applies the connection timeout to the wait for a free client too, so a saturated
+pool now fails callers after 10s instead of queueing them indefinitely — that failure is
+deliberately not treated as a disconnection.
+
 Also fixes two latent bugs on the same path. `pg-pool` removes its own `'error'` listener while a
 client is checked out, so a socket dying mid-statement emitted an unhandled `'error'` event and took
 the process down; the component now holds a listener for the duration of every checkout. And a

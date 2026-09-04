@@ -143,7 +143,13 @@ export async function createPgComponent(
     password,
     idleTimeoutMillis,
     query_timeout,
-    connectionTimeoutMillis
+    // Reconnection only reacts to failures it can see. A host that silently drops packets — a load
+    // balancer failing over, a security group change, a half-open socket — produces none, so
+    // without these two settings a connection attempt hangs for the OS's SYN timeout (minutes) and
+    // an established connection never learns the peer is gone. Both are overridable through
+    // `options.pool`.
+    connectionTimeoutMillis: connectionTimeoutMillis ?? 10_000,
+    keepAlive: true
   }
 
   const STREAM_QUERY_TIMEOUT = await config.getNumber('PG_COMPONENT_STREAM_QUERY_TIMEOUT')

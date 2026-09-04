@@ -44,9 +44,12 @@ const CONNECTION_ERROR_CODES = new Set([
  * @internal
  */
 const CONNECTION_ERROR_MESSAGES = [
+  // Also covers pg-pool's "Connection terminated due to connection timeout", the real connect
+  // timeout. Its other timeout, "timeout exceeded when trying to connect", is deliberately absent: pg-pool
+  // raises that one while *waiting for a free client in a full pool*, which means saturation, not a
+  // database that went away — retrying it would only add another waiter to the queue.
   'connection terminated',
   'connection ended unexpectedly',
-  'timeout exceeded when trying to connect',
   'server closed the connection unexpectedly',
   'the database system is starting up',
   'the database system is shutting down',
@@ -79,10 +82,10 @@ export const DEFAULT_RECONNECTION_OPTIONS: Required<
   Omit<ReconnectionOptions, 'onDisconnection' | 'onReconnection'>
 > = {
   enabled: true,
-  maxRetries: 5,
-  startMaxRetries: 10,
+  maxRetries: 3,
+  startMaxRetries: 30,
   initialDelayInMilliseconds: 300,
-  maxDelayInMilliseconds: 5_000,
+  maxDelayInMilliseconds: 1_000,
   backoffFactor: 2,
   probeTimeoutInMilliseconds: 5_000,
   retrySentStatements: false

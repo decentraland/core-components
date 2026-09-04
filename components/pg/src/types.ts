@@ -29,13 +29,17 @@ export type QueryResult<T extends Record<string, any>> = IDatabase.IQueryResult<
 export type ReconnectionOptions = {
   /** Whether disconnections are retried at all. Defaults to `true`. */
   enabled?: boolean
-  /** Retries per operation once the connection drops. Defaults to `5`. */
+  /**
+   * Retries per operation once the connection drops. Defaults to `3`, which with the default delays
+   * bounds a request-path query to a few seconds before it fails; the caller is usually an HTTP
+   * request whose own timeout is closer than that.
+   */
   maxRetries?: number
-  /** Retries for the initial connection in `start()`, which usually outlasts a database boot. Defaults to `10`. */
+  /** Retries for the initial connection in `start()`, which usually outlasts a database boot. Defaults to `30`. */
   startMaxRetries?: number
   /** Delay before the first retry, in milliseconds. Defaults to `300`. */
   initialDelayInMilliseconds?: number
-  /** Upper bound for the backoff delay, in milliseconds. Defaults to `5000`. */
+  /** Upper bound for the backoff delay, in milliseconds. Defaults to `1000`. */
   maxDelayInMilliseconds?: number
   /** Multiplier applied to the delay after every failed attempt. Defaults to `2`. */
   backoffFactor?: number

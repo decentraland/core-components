@@ -130,15 +130,27 @@ describe('when checking whether an error is a connection error', () => {
     })
   })
 
-  describe('and the error reports a connection timeout in its message', () => {
+  describe('and the error is pg-pool timing out a real connection attempt', () => {
+    let error: Error
+
+    beforeEach(() => {
+      error = new Error('Connection terminated due to connection timeout')
+    })
+
+    it('should classify it as a connection error', () => {
+      expect(isConnectionError(error)).toBe(true)
+    })
+  })
+
+  describe('and the error is pg-pool timing out the wait for a free client', () => {
     let error: Error
 
     beforeEach(() => {
       error = new Error('timeout exceeded when trying to connect')
     })
 
-    it('should classify it as a connection error', () => {
-      expect(isConnectionError(error)).toBe(true)
+    it('should not classify it as a connection error, since it means the pool is saturated', () => {
+      expect(isConnectionError(error)).toBe(false)
     })
   })
 
