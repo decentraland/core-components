@@ -135,13 +135,23 @@ Three things happen when the connection drops:
 1. **The broken connection is evicted.** A client that failed with a connection error is released
    back with an error, so `pg` destroys it instead of handing the same dead socket to the next
    caller.
-2. **The operation is retried** with exponential backoff and jitter, as long as the retry is safe
-   (see below).
-3. **A background loop keeps probing** the database with the same backoff until it answers, so the
-   pool is warm again before the next request arrives — the component does not wait for a user
-   request to discover the database is back. Each probe is bounded by
+2. **A background loop keeps probing** the database with exponential backoff and jitter until it
+   answers, so the pool is warm again before the next request arrives — the component does not wait
+   for a user request to discover the database is back. Each probe is bounded by
    `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`, so an unreachable host cannot park the loop (or
    `ping()`) on a connection attempt that never returns.
+3. **Operations wait for that loop instead of retrying on their own.** While the database is known
+   to be down, a query does not open connections of its own — a hundred concurrent requests during an
+   outage would otherwise mean a hundred connection attempts per retry against a database trying to
+   come back. Each waits for the next probe's verdict, capped at `PG_COMPONENT_RECONNECTION_MAX_DELAY`
+   and counted against its retry budget. If the database answers, the query runs; if the budget runs
+   out first, it fails with a typed `DatabaseUnavailableError` whose `cause` is the driver's last
+   error. With the defaults a query issued during an outage fails within about three seconds, and
+   `start()` waits up to about thirty for a database that is still booting.
+
+A client that `pg` refuses to use because its socket already died is a different case: that says
+something about the client, not the database. It is evicted and the statement retried at once on a
+fresh connection, without opening the circuit or reporting an outage.
 
 The pool object itself is never replaced, so a reference obtained from `getPool()` stays valid
 across an outage.
@@ -179,12 +189,13 @@ const pg = await createPgComponent(
 Retrying a statement that may already have been applied would turn a write into an at-least-once
 operation, so the component only retries when it can tell that is safe:
 
-| Failure                                                            | Retried by default |
-| ------------------------------------------------------------------ | ------------------ |
-| The connection could not be acquired (`ECONNREFUSED`, timeouts, ...) | Yes                |
-| `pg` refused to send the statement because the client was dead      | Yes                |
-| The connection dropped while the statement was in flight            | No                 |
-| The statement failed for any non-connection reason                  | No                 |
+| Failure                                                              | Retried by default                 |
+| -------------------------------------------------------------------- | ---------------------------------- |
+| The connection could not be acquired (`ECONNREFUSED`, connect timeout) | Yes, paced by the reconnection loop |
+| `pg` refused to send the statement because the client was dead        | Yes, immediately on a fresh client  |
+| The connection dropped while the statement was in flight              | No                                 |
+| The pool is full and the wait for a free client timed out             | No — the database is fine          |
+| The statement failed for any non-connection reason                    | No                                 |
 
 The second row is the common case behind a warm pool: when the database restarts, the pool still
 holds sockets that are already dead, and `pg` rejects the statement before writing anything to the

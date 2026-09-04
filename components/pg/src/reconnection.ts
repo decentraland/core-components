@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'timers/promises'
 import { ILoggerComponent } from '@well-known-components/interfaces'
 import { ConnectionStatus, IMetricsComponent, ReconnectionOptions } from './types'
+import { DatabaseUnavailableError } from './errors'
 
 /**
  * Socket-level failures and PostgreSQL SQLSTATEs that mean "the connection to the database is gone,
@@ -121,6 +122,10 @@ export function isConnectionError(error: unknown): boolean {
     return false
   }
 
+  if (error instanceof DatabaseUnavailableError) {
+    return true
+  }
+
   // A pool that was explicitly ended is not a disconnection; no amount of retrying revives it.
   if (matchesAnyMessage(error, TERMINAL_ERROR_MESSAGES)) {
     return false
@@ -229,6 +234,8 @@ export function createReconnectionManager(
   let connected = false
   let since = Date.now()
   let lastError: string | undefined
+  let lastErrorCause: unknown
+  let recoveryWaiters: Array<(recovered: boolean) => void> = []
   let reconnectionAttempts = 0
   let disconnections = 0
   let stopped = false
@@ -282,6 +289,7 @@ export function createReconnectionManager(
     reconnectionAttempts = 0
 
     recordMetric((metricsComponent) => metricsComponent.observe('dcl_db_connection_status', {}, 1))
+    settleRecoveryWaiters(true)
 
     if (isRecovery) {
       logger.info('Database connection restored', { downtimeInMilliseconds, attempts })
@@ -291,6 +299,7 @@ export function createReconnectionManager(
 
   function markDisconnected(error: unknown): void {
     lastError = getErrorMessage(error)
+    lastErrorCause = error
 
     // The logs, the metric and the listener describe a transition, so they only fire on the edge:
     // a hundred queries failing at once is one outage, not a hundred.
@@ -314,9 +323,40 @@ export function createReconnectionManager(
   }
 
   function notifyFailure(error: unknown): void {
-    if (isConnectionError(error)) {
+    // A client `pg` refused to use because it was already dead says something about that client,
+    // not about the database: the pool evicts it and the next checkout opens a fresh one. Only a
+    // failure to reach the server is treated as an outage.
+    if (isConnectionError(error) && !isNotSentError(error)) {
       markDisconnected(error)
     }
+  }
+
+  function settleRecoveryWaiters(recovered: boolean): void {
+    const waiters = recoveryWaiters
+    recoveryWaiters = []
+    for (const waiter of waiters) {
+      waiter(recovered)
+    }
+  }
+
+  /**
+   * Parks an operation until the reconnection loop reports a verdict — the database answered a probe
+   * (`true`) or refused one (`false`) — or until the cap expires without one (`false`). This is what
+   * turns N concurrent callers during an outage into a single stream of probes instead of N × retries.
+   */
+  function waitForRecovery(capInMilliseconds: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const waiter = (recovered: boolean) => {
+        clearTimeout(cap)
+        resolve(recovered)
+      }
+      const cap = globalThis.setTimeout(() => {
+        recoveryWaiters = recoveryWaiters.filter((candidate) => candidate !== waiter)
+        resolve(false)
+      }, capInMilliseconds)
+
+      recoveryWaiters.push(waiter)
+    })
   }
 
   /**
@@ -367,6 +407,7 @@ export function createReconnectionManager(
           // Any failure to open a connection and run `SELECT 1` means the database is unusable,
           // whatever the reason, so the state flips regardless of how the error is classified.
           markDisconnected(error)
+          settleRecoveryWaiters(false)
           return false
         } finally {
           inFlightProbe = undefined
@@ -449,6 +490,22 @@ export function createReconnectionManager(
     let attempt = 0
 
     for (;;) {
+      // Circuit open: the database is known to be down and the loop is already probing it. Piling
+      // this operation's own connection attempts on top would slow the recovery and cost this caller
+      // the full backoff schedule, so it waits for the loop's verdict instead, one bounded wait per
+      // attempt. Nothing is sent, so nothing here can violate the statement-level retry rules.
+      if (!connected && loopRunning && !stopped) {
+        const recovered = await waitForRecovery(options.maxDelayInMilliseconds)
+
+        if (!recovered) {
+          if (stopped || attempt >= maxRetries) {
+            throw new DatabaseUnavailableError(lastError, lastErrorCause)
+          }
+          attempt += 1
+          continue
+        }
+      }
+
       let statementSent = false
       const context: OperationContext = {
         markStatementSent: () => {
@@ -489,23 +546,17 @@ export function createReconnectionManager(
           throw error
         }
 
-        const delayInMilliseconds = getBackoffDelay(attempt, options)
         attempt += 1
-
         logger.warn('Retrying a database operation after a connection error', {
           operation: name,
           attempt,
           maxRetries,
-          delayInMilliseconds,
           error: getErrorMessage(error)
         })
 
-        try {
-          await delay(delayInMilliseconds, undefined, { signal: abortController.signal })
-        } catch {
-          // The component is stopping: surface the failure that got us here instead of the abort.
-          throw error
-        }
+        // No backoff of its own. A dead pooled client is retried straight away on a fresh one — the
+        // database is presumed fine. A failure to reach the server just opened the circuit through
+        // notifyFailure(), so the next iteration is paced by the reconnection loop's probes.
       }
     }
   }
@@ -517,6 +568,7 @@ export function createReconnectionManager(
   function stop(): void {
     stopped = true
     abortController.abort()
+    settleRecoveryWaiters(false)
     // The loop is deliberately not awaited: it may be blocked on a probe against an unreachable host,
     // which can outlast the shutdown deadline. The flag keeps it from starting further work, and
     // closing the pool is what actually bounds the connection attempt already in flight.

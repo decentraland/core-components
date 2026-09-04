@@ -6,11 +6,14 @@ Recover from database disconnections instead of failing the request. A failover,
 service booting before its database no longer needs a process restart.
 
 On a connection error the component now evicts the broken client so `pg` cannot hand the same dead
-socket to the next caller, retries the operation with exponential backoff and jitter, and keeps a
-background loop probing the database until it answers — so the pool is warm again before the next
-request arrives. The pool object is never replaced, so a reference from `getPool()` survives an
-outage. `start()` gets its own, larger attempt budget for the common case of the database still
-booting.
+socket to the next caller and keeps a background loop probing the database with exponential backoff
+and jitter until it answers — so the pool is warm again before the next request arrives. Operations
+issued while the database is known to be down wait for that loop's verdict rather than retrying on
+their own (a circuit breaker: one stream of probes instead of one per caller), and fail with a typed
+`DatabaseUnavailableError` if it does not come back within their budget — about three seconds by
+default. The pool object is never replaced, so a reference from `getPool()` survives an outage.
+`start()` gets its own, larger budget (about thirty seconds) for the common case of the database
+still booting.
 
 Retries are limited to what is safe: acquiring a connection, and statements `pg` refused to send
 because the client was already dead (the usual symptom of a restart behind a warm pool, and proof

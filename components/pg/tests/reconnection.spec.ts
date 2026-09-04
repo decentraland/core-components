@@ -8,6 +8,7 @@ import {
   ResolvedReconnectionOptions
 } from '../src/reconnection'
 import { IMetricsComponent } from '../src/types'
+import { DatabaseUnavailableError } from '../src/errors'
 
 function createMockLogs(): ILoggerComponent {
   return {
@@ -44,7 +45,7 @@ const FAST_OPTIONS: ResolvedReconnectionOptions = {
   maxRetries: 3,
   startMaxRetries: 3,
   initialDelayInMilliseconds: 2,
-  maxDelayInMilliseconds: 8,
+  maxDelayInMilliseconds: 50,
   backoffFactor: 2,
   probeTimeoutInMilliseconds: 200,
   retrySentStatements: false
@@ -346,9 +347,101 @@ describe('when running an operation through the reconnection manager', () => {
       await expect(manager.run('test', operation)).rejects.toThrow('connect ECONNREFUSED')
     })
 
-    it('should have attempted the operation once per configured retry plus the original call', async () => {
+    it('should attempt the operation once and then wait on the shared probes instead of retrying it', async () => {
       await expect(manager.run('test', operation)).rejects.toThrow()
-      expect(operation).toHaveBeenCalledTimes(FAST_OPTIONS.maxRetries + 1)
+      expect(operation).toHaveBeenCalledTimes(1)
+    })
+
+    it('should reject with a typed unavailability error that the classifier recognises', async () => {
+      const error = await manager.run('test', operation).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(DatabaseUnavailableError)
+      expect(isConnectionError(error)).toBe(true)
+    })
+  })
+
+  describe('and the database is already known to be down when the operation arrives', () => {
+    let operation: jest.Mock<Promise<string>, []>
+    let result: string
+
+    beforeEach(async () => {
+      logs = createMockLogs()
+      probeConnection = jest
+        .fn()
+        .mockRejectedValueOnce(createErrorWithCode('connect ECONNREFUSED', 'ECONNREFUSED'))
+        .mockRejectedValueOnce(createErrorWithCode('connect ECONNREFUSED', 'ECONNREFUSED'))
+        .mockResolvedValue(undefined)
+      operation = jest.fn().mockResolvedValue('ok')
+      manager = createReconnectionManager({ logs }, { ...FAST_OPTIONS, maxRetries: 5 }, probeConnection)
+      manager.notifySuccess()
+      manager.notifyFailure(createErrorWithCode('connect ECONNREFUSED', 'ECONNREFUSED'))
+      result = await manager.run('test', operation)
+    })
+
+    it('should not invoke the operation until a probe has succeeded', () => {
+      // Two probes failed before the third succeeded; the operation ran only after that verdict.
+      expect(operation).toHaveBeenCalledTimes(1)
+    })
+
+    it('should return the result once the database is back', () => {
+      expect(result).toBe('ok')
+    })
+  })
+
+  describe('and many operations arrive during the same outage', () => {
+    let operation: jest.Mock<Promise<string>, []>
+    let results: string[]
+
+    beforeEach(async () => {
+      logs = createMockLogs()
+      probeConnection = jest
+        .fn()
+        .mockRejectedValueOnce(createErrorWithCode('connect ECONNREFUSED', 'ECONNREFUSED'))
+        .mockResolvedValue(undefined)
+      operation = jest.fn().mockResolvedValue('ok')
+      manager = createReconnectionManager({ logs }, { ...FAST_OPTIONS, maxRetries: 5 }, probeConnection)
+      manager.notifySuccess()
+      manager.notifyFailure(createErrorWithCode('connect ECONNREFUSED', 'ECONNREFUSED'))
+      results = await Promise.all(Array.from({ length: 25 }, () => manager.run('test', operation)))
+    })
+
+    it('should serve every operation once the database is back', () => {
+      expect(results).toEqual(Array.from({ length: 25 }, () => 'ok'))
+    })
+
+    it('should have probed the database a handful of times rather than once per caller', () => {
+      expect(probeConnection.mock.calls.length).toBeLessThan(5)
+    })
+  })
+
+  describe('and the failure was a dead pooled client rather than an unreachable database', () => {
+    let operation: jest.Mock<Promise<string>, [{ markStatementSent(): void }]>
+    let result: string
+
+    beforeEach(async () => {
+      logs = createMockLogs()
+      probeConnection = jest.fn().mockResolvedValue(undefined)
+      operation = jest
+        .fn()
+        .mockImplementationOnce(async (context: { markStatementSent(): void }) => {
+          context.markStatementSent()
+          throw new Error('Client has encountered a connection error and is not queryable')
+        })
+        .mockResolvedValueOnce('ok')
+      manager = createReconnectionManager({ logs }, FAST_OPTIONS, probeConnection)
+      manager.notifySuccess()
+      result = await manager.run('test', operation)
+    })
+
+    it('should retry on a fresh client straight away and succeed', () => {
+      expect(result).toBe('ok')
+    })
+
+    it('should not report an outage, since the database itself was never unreachable', () => {
+      expect(manager.getStatus().disconnections).toBe(0)
+    })
+
+    it('should not have started probing', () => {
+      expect(probeConnection).not.toHaveBeenCalled()
     })
   })
 
@@ -550,6 +643,30 @@ describe('when the reconnection manager tracks the connection status', () => {
     })
   })
 
+  describe('and the only failure is a client pg refused to use', () => {
+    beforeEach(() => {
+      logs = createMockLogs()
+      onDisconnection = jest.fn()
+      onReconnection = jest.fn()
+      probeConnection = jest.fn().mockResolvedValue(undefined)
+      manager = createReconnectionManager(
+        { logs },
+        { ...FAST_OPTIONS, enabled: false, onDisconnection, onReconnection },
+        probeConnection
+      )
+      manager.notifySuccess()
+      manager.notifyFailure(new Error('Client has encountered a connection error and is not queryable'))
+    })
+
+    it('should keep reporting the connection as established', () => {
+      expect(manager.getStatus().connected).toBe(true)
+    })
+
+    it('should not notify the disconnection listener', () => {
+      expect(onDisconnection).not.toHaveBeenCalled()
+    })
+  })
+
   describe('and the database stays unreachable across several failures', () => {
     beforeEach(async () => {
       logs = createMockLogs()
@@ -690,8 +807,9 @@ describe('when the reconnection manager is stopped while an operation is waiting
     }
   })
 
-  it('should reject with the failure that triggered the retry rather than the abort', () => {
-    expect(runError?.message).toBe('connect ECONNREFUSED')
+  it('should reject as unavailable, naming the failure that opened the circuit', () => {
+    expect(runError).toBeInstanceOf(DatabaseUnavailableError)
+    expect(runError?.message).toMatch(/connect ECONNREFUSED/)
   })
 
   it('should not attempt the operation again', () => {

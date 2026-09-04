@@ -24,6 +24,7 @@ import {
 
 export * from './types'
 export * from './metrics'
+export * from './errors'
 // Named rather than a star re-export: the rest of `./reconnection` is `@internal`, and with no
 // api-extractor in the build a star would publish it as part of the package surface.
 export { DEFAULT_RECONNECTION_OPTIONS, getBackoffDelay, isConnectionError, isNotSentError } from './reconnection'
