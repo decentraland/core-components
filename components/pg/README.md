@@ -136,17 +136,20 @@ Three things happen when the connection drops:
    back with an error, so `pg` destroys it instead of handing the same dead socket to the next
    caller.
 2. **A background loop keeps probing** the database with exponential backoff and jitter until it
-   answers, so the pool is warm again before the next request arrives — the component does not wait
-   for a user request to discover the database is back. Each probe is bounded by
-   `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`, so an unreachable host cannot park the loop (or
-   `ping()`) on a connection attempt that never returns.
+   answers, so the component knows the database is back before the next request has to find out.
+   Probes use a short-lived connection of their own rather than a pooled checkout: a checkout also
+   asks "is a client free?", and under load the answer can be "no" for longer than the probe deadline,
+   which would turn a busy service into a self-inflicted outage. Each probe is bounded by
+   `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`, which also clamps that connection's own timeouts, so an
+   unreachable host cannot park the loop (or `ping()`) on an attempt that never returns.
 3. **Operations wait for that loop instead of retrying on their own.** While the database is known
    to be down, a query does not open connections of its own — a hundred concurrent requests during an
    outage would otherwise mean a hundred connection attempts per retry against a database trying to
    come back. Each waits for the next probe's verdict, capped at `PG_COMPONENT_RECONNECTION_MAX_DELAY`
    and counted against its retry budget. If the database answers, the query runs; if the budget runs
-   out first, it fails with a typed `DatabaseUnavailableError` whose `cause` is the driver's last
-   error. With the defaults a query issued during an outage fails within about three seconds, and
+   out first, it fails with a typed `DatabaseUnavailableError`. Its message is deliberately generic
+   — the driver's last error, which can name hosts and users, is in `cause` for logs and mapping, not
+   in text an HTTP error serializer might echo. With the defaults a query issued during an outage fails within about three seconds, and
    `start()` waits up to about thirty for a database that is still booting.
 
 A client that `pg` refuses to use because its socket already died is a different case: that says
@@ -246,7 +249,7 @@ Three cases behave differently by design:
 // Cached state, cheap enough for a readiness probe on every request
 const { connected, since, reconnectionAttempts, disconnections } = pg.getConnectionStatus()
 
-// Actively opens a connection and runs `SELECT 1`; returns false instead of throwing
+// Opens a short-lived connection of its own (not a pooled one) and runs `SELECT 1`; returns false instead of throwing
 const reachable = await pg.ping()
 ```
 

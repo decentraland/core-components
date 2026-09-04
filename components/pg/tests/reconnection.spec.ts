@@ -79,6 +79,11 @@ describe('when importing the package entry point', () => {
   it('should not publish the internal reconnection manager', () => {
     expect(entryPoint.createReconnectionManager).toBeUndefined()
   })
+
+  it('should not publish the backoff helper or the default constants, which have no consumer', () => {
+    expect(entryPoint.getBackoffDelay).toBeUndefined()
+    expect(entryPoint.DEFAULT_RECONNECTION_OPTIONS).toBeUndefined()
+  })
 })
 
 describe('when checking whether an error is a connection error', () => {
@@ -342,8 +347,15 @@ describe('when running an operation through the reconnection manager', () => {
       manager = createReconnectionManager({ logs }, FAST_OPTIONS, probeConnection)
     })
 
-    it('should reject with the last connection error after exhausting the retries', async () => {
-      await expect(manager.run('test', operation)).rejects.toThrow('connect ECONNREFUSED')
+    it('should reject as unavailable after exhausting the retries, keeping the driver error as the cause', async () => {
+      const error = await manager.run('test', operation).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(DatabaseUnavailableError)
+      expect((error as DatabaseUnavailableError).cause).toMatchObject({ message: 'connect ECONNREFUSED' })
+    })
+
+    it('should keep the driver detail out of the public message', async () => {
+      await expect(manager.run('test', operation)).rejects.toThrow('The database is unreachable')
+      await expect(manager.run('test', operation)).rejects.not.toThrow('ECONNREFUSED')
     })
 
     it('should attempt the operation once and then wait on the shared probes instead of retrying it', async () => {
@@ -806,9 +818,9 @@ describe('when the reconnection manager is stopped while an operation is waiting
     }
   })
 
-  it('should reject as unavailable, naming the failure that opened the circuit', () => {
+  it('should reject as unavailable, carrying the failure that opened the circuit as the cause', () => {
     expect(runError).toBeInstanceOf(DatabaseUnavailableError)
-    expect(runError?.message).toMatch(/connect ECONNREFUSED/)
+    expect((runError as DatabaseUnavailableError).cause).toMatchObject({ message: 'connect ECONNREFUSED' })
   })
 
   it('should not attempt the operation again', () => {
@@ -939,6 +951,50 @@ describe('when the database flaps in and out', () => {
       // fanned out into a probe per failure.
       expect(probeConnection.mock.calls.length).toBeLessThan(10)
     })
+  })
+})
+
+describe('when a probe outlives its deadline', () => {
+  let logs: ILoggerComponent
+  let manager: ReconnectionManager
+  let probeConnection: jest.Mock<Promise<void>, []>
+  let firstVerdict: boolean
+  let secondVerdict: boolean
+  let callsWhileTheFirstWasPending: number
+
+  beforeEach(async () => {
+    logs = createMockLogs()
+    // Settles well after the 10ms deadline, the way a driver attempt with a longer timeout would.
+    probeConnection = jest.fn().mockImplementation(() => new Promise<void>((resolve) => global.setTimeout(resolve, 60)))
+    manager = createReconnectionManager(
+      { logs },
+      { ...FAST_OPTIONS, enabled: false, probeTimeoutInMilliseconds: 10 },
+      probeConnection
+    )
+
+    firstVerdict = await manager.probe()
+    secondVerdict = await manager.probe()
+    callsWhileTheFirstWasPending = probeConnection.mock.calls.length
+
+    await new Promise((resolve) => global.setTimeout(resolve, 80))
+    await manager.probe()
+  })
+
+  afterEach(() => {
+    manager.stop()
+  })
+
+  it('should report the deadline as a failure without waiting for the driver', () => {
+    expect(firstVerdict).toBe(false)
+  })
+
+  it('should hand a second caller the pending attempt rather than start another on top of it', () => {
+    expect(secondVerdict).toBe(false)
+    expect(callsWhileTheFirstWasPending).toBe(1)
+  })
+
+  it('should start a fresh attempt once the first has actually finished', () => {
+    expect(probeConnection).toHaveBeenCalledTimes(2)
   })
 })
 

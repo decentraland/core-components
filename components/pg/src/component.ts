@@ -27,8 +27,9 @@ export * from './types'
 export * from './metrics'
 export * from './errors'
 // Named rather than a star re-export: the rest of `./reconnection` is `@internal`, and with no
-// api-extractor in the build a star would publish it as part of the package surface.
-export { DEFAULT_RECONNECTION_OPTIONS, getBackoffDelay, isConnectionError, isNotSentError } from './reconnection'
+// api-extractor in the build a star would publish it as part of the package surface. Only the
+// classifier has a consumer outside this package — error middleware deciding what a failure means.
+export { isConnectionError } from './reconnection'
 
 /**
  * @internal
@@ -77,10 +78,7 @@ function parseBooleanConfig(name: string, value: string | undefined, fallback: b
   throw new TypeError(`${name} must be one of ${accepted}, got "${value}"`)
 }
 
-/**
- * @internal
- */
-export function assertValidReconnectionOptions(options: ResolvedReconnectionOptions): void {
+function assertValidReconnectionOptions(options: ResolvedReconnectionOptions): void {
   const invalidField = (
     [
       ['maxRetries', options.maxRetries, 0],
@@ -234,18 +232,31 @@ export async function createPgComponent(
   /**
    * Opens a connection and runs a trivial statement. Used both by the health check and by the
    * background reconnection loop to decide whether the database is reachable again.
+   *
+   * It is a connection of its own rather than a pooled checkout. A checkout answers two questions at
+   * once — is the database reachable, and is a client free — and under load the second can be "no"
+   * for longer than the probe deadline, which would turn a busy service into a self-inflicted outage.
+   * Its timeouts are clamped to the probe deadline so the attempt itself is bounded, and `end()` on
+   * the way out tears down whatever is still pending.
    */
   async function probeConnection(): Promise<void> {
-    const client = await pool.connect()
-    let probeError: unknown
+    const probeTimeout = reconnectionOptions.probeTimeoutInMilliseconds
+    const client = new Client({
+      ...finalOptions,
+      connectionTimeoutMillis: Math.min(finalOptions.connectionTimeoutMillis ?? Infinity, probeTimeout),
+      query_timeout: Math.min(finalOptions.query_timeout ?? Infinity, probeTimeout)
+    })
+    // The failure reaches the caller through the rejected connect/query; the event only needs a home.
+    client.on('error', (error: Error) => {
+      logger.debug('Probe pg client error', { error: error?.message ?? String(error) })
+    })
 
     try {
+      await client.connect()
       await client.query('SELECT 1')
-    } catch (error) {
-      probeError = error
-      throw error
     } finally {
-      releaseClient(client, probeError)
+      // A client whose connection failed cannot be reused; ending it also cancels a pending attempt.
+      await client.end().catch(() => undefined)
     }
   }
 

@@ -6,6 +6,7 @@ import { createPgComponent } from '../src/component'
 import { Client, PoolClient } from 'pg'
 import { IMetricsComponent, IPgComponent, Options } from '../src/types'
 import { isNotSentError } from '../src/reconnection'
+import { DatabaseUnavailableError } from '../src/errors'
 
 /**
  * A TCP proxy in front of the database container. Closing and reopening it reproduces a real outage
@@ -196,8 +197,9 @@ describe('PgComponent reconnection', () => {
         }
       })
 
-      it('should fail with the connection error after exhausting the attempts', () => {
-        expect(startError?.message).toMatch(/ECONNREFUSED/)
+      it('should fail as unavailable after exhausting the attempts, with the connection error as the cause', () => {
+        expect(startError).toBeInstanceOf(DatabaseUnavailableError)
+        expect(String((startError as DatabaseUnavailableError)?.cause)).toMatch(/ECONNREFUSED/)
       })
 
       it('should report the connection as lost', () => {
@@ -367,8 +369,9 @@ describe('PgComponent reconnection', () => {
         await proxy.startAccepting()
       })
 
-      it('should reject with the connection error after exhausting the retries', () => {
-        expect(queryError?.message).toMatch(/ECONNREFUSED/)
+      it('should reject as unavailable after exhausting the retries, with the connection error as the cause', () => {
+        expect(queryError).toBeInstanceOf(DatabaseUnavailableError)
+        expect(String((queryError as DatabaseUnavailableError)?.cause)).toMatch(/ECONNREFUSED/)
       })
 
       it('should report the connection as lost', () => {
@@ -616,6 +619,43 @@ describe('PgComponent reconnection', () => {
       it('should not run the callback a second time, since a callback cannot be declared idempotent', () => {
         expect(callback).toHaveBeenCalledTimes(1)
       })
+    })
+  })
+
+  describe('when checking the database health while every pooled client is checked out', () => {
+    let proxy: TcpProxy
+    let pg: IPgComponent
+    let heldClient: PoolClient
+    let onDisconnection: jest.Mock<void, [Error]>
+    let reachable: boolean
+
+    beforeEach(async () => {
+      proxy = await createTcpProxy(container.getHost(), container.getPort())
+      onDisconnection = jest.fn()
+      pg = await createPgComponent(
+        { config: createMockConfig(proxy.port), logs: createMockLogs() },
+        { pool: { max: 1 }, reconnection: { ...FAST_RECONNECTION, onDisconnection } }
+      )
+      await pg.start()
+
+      // The pool's only client is busy for the whole probe: a probe that borrowed from the pool would
+      // wait for it, hit its deadline, and report Postgres as down while it is perfectly healthy.
+      heldClient = await pg.getPool().connect()
+      reachable = await pg.ping()
+    })
+
+    afterEach(async () => {
+      heldClient.release()
+      await pg.stop()
+      await proxy.close()
+    })
+
+    it('should still reach the database on a connection of its own', () => {
+      expect(reachable).toBe(true)
+    })
+
+    it('should not mistake the busy pool for an outage', () => {
+      expect(onDisconnection).not.toHaveBeenCalled()
     })
   })
 

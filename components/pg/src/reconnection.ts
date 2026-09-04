@@ -77,7 +77,7 @@ const NOT_SENT_ERROR_MESSAGES = [
 const TERMINAL_ERROR_MESSAGES = ['calling end on the pool', 'called end on pool more than once']
 
 /**
- * @public
+ * @internal
  */
 export const DEFAULT_RECONNECTION_OPTIONS: Required<
   Omit<ReconnectionOptions, 'onDisconnection' | 'onReconnection'>
@@ -143,7 +143,7 @@ export function isConnectionError(error: unknown): boolean {
 /**
  * Whether the error proves the statement never reached the server, which makes retrying it safe even
  * when the statement is not idempotent.
- * @public
+ * @internal
  */
 export function isNotSentError(error: unknown): boolean {
   return matchesAnyMessage(error, NOT_SENT_ERROR_MESSAGES)
@@ -152,7 +152,7 @@ export function isNotSentError(error: unknown): boolean {
 /**
  * Exponential backoff capped at `maxDelayInMilliseconds`, with half of the delay jittered so a fleet
  * of instances reconnecting after the same outage does not stampede the recovering database.
- * @public
+ * @internal
  */
 export function getBackoffDelay(
   attempt: number,
@@ -196,6 +196,13 @@ export type RunOptions = {
    * decision made by the caller, who is the only one who knows; never a global default.
    */
   retrySentStatements?: boolean
+}
+
+type ProbeRun = {
+  /** Resolves with the probe's outcome, no later than the probe deadline. */
+  verdict: Promise<boolean>
+  /** Resolves once the underlying driver work has finished, however long that takes. */
+  settled: Promise<boolean>
 }
 
 /**
@@ -245,7 +252,7 @@ export function createReconnectionManager(
   let disconnections = 0
   let stopped = false
   let loopRunning = false
-  let inFlightProbe: Promise<boolean> | undefined
+  let inFlightProbe: ProbeRun | undefined
   let warnedAboutMissingMetrics = false
 
   function recordMetric(record: (metricsComponent: IMetricsComponent) => void): void {
@@ -365,15 +372,12 @@ export function createReconnectionManager(
   }
 
   /**
-   * Bounds a probe: with no `connectionTimeoutMillis` or `query_timeout` configured, `pg` waits on an
-   * unreachable host for as long as the OS lets it, which would leave `ping()` hanging and the
+   * Bounds a probe's verdict: the component clamps the probe connection's own timeouts to the same
+   * deadline, but a `probeConnection` that ignores them must still not leave `ping()` hanging or the
    * background loop parked on a promise that never settles.
    */
-  async function runProbeWithDeadline(): Promise<void> {
+  async function awaitWithDeadline(attempt: Promise<void>): Promise<void> {
     const deadline = new AbortController()
-    const attempt = probeConnection()
-    // The deadline may win the race; keep a late failure from escaping as an unhandled rejection.
-    attempt.catch(() => undefined)
 
     try {
       await Promise.race([
@@ -393,6 +397,51 @@ export function createReconnectionManager(
     }
   }
 
+  /**
+   * Starts a probe, or joins the one in flight. The verdict handed to callers is bounded by the
+   * deadline; the deduplication handle is not — it lives for as long as the driver work does, so a
+   * slow attempt can never be overlapped by a second one.
+   */
+  function startProbe(): ProbeRun {
+    if (inFlightProbe) {
+      return inFlightProbe
+    }
+
+    const attempt = probeConnection()
+    // The deadline may win the race; keep a late failure from escaping as an unhandled rejection.
+    const settled = attempt.then(
+      () => true,
+      () => false
+    )
+
+    const run: ProbeRun = {
+      settled,
+      verdict: (async () => {
+        try {
+          await awaitWithDeadline(attempt)
+          markConnected()
+          return true
+        } catch (error) {
+          // The probe connection is the component's own, sized to the deadline: any failure to open
+          // it and run `SELECT 1` means the database is unusable, whatever the reason, so the state
+          // flips regardless of how the error is classified.
+          markDisconnected(error)
+          settleRecoveryWaiters(false)
+          return false
+        }
+      })()
+    }
+
+    inFlightProbe = run
+    void settled.then(() => {
+      if (inFlightProbe === run) {
+        inFlightProbe = undefined
+      }
+    })
+
+    return run
+  }
+
   async function probe(): Promise<boolean> {
     // A stopped component cannot serve queries, so it is not reachable — but neither is that an
     // outage worth reporting: the pool was closed on purpose, and `pool.connect()` would fail with
@@ -402,25 +451,7 @@ export function createReconnectionManager(
       return false
     }
 
-    if (!inFlightProbe) {
-      inFlightProbe = (async () => {
-        try {
-          await runProbeWithDeadline()
-          markConnected()
-          return true
-        } catch (error) {
-          // Any failure to open a connection and run `SELECT 1` means the database is unusable,
-          // whatever the reason, so the state flips regardless of how the error is classified.
-          markDisconnected(error)
-          settleRecoveryWaiters(false)
-          return false
-        } finally {
-          inFlightProbe = undefined
-        }
-      })()
-    }
-
-    return inFlightProbe
+    return startProbe().verdict
   }
 
   function scheduleProbe(error?: unknown): void {
@@ -468,7 +499,11 @@ export function createReconnectionManager(
           reconnectionAttempts = attempt
           logger.debug('Attempting to reconnect to the database', { attempt })
 
-          const succeeded = await probe()
+          const run = startProbe()
+          const succeeded = await run.verdict
+          // Wait out the driver work too: a verdict cut short by the deadline must not be followed by
+          // a second attempt piling onto the first, nor be counted again on the next iteration.
+          await run.settled
           recordMetric((metricsComponent) =>
             metricsComponent.increment('dcl_db_reconnection_attempts_total', {
               source: 'probe',
@@ -505,7 +540,7 @@ export function createReconnectionManager(
 
         if (!recovered) {
           if (stopped || attempt >= maxRetries) {
-            throw new DatabaseUnavailableError(lastError, lastErrorCause)
+            throw new DatabaseUnavailableError(lastErrorCause)
           }
           attempt += 1
           continue
