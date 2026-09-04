@@ -3,8 +3,9 @@ import { IConfigComponent, ILoggerComponent } from '@well-known-components/inter
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import SQL from 'sql-template-strings'
 import { createPgComponent } from '../src/component'
-import { PoolClient } from 'pg'
+import { Client, PoolClient } from 'pg'
 import { IMetricsComponent, IPgComponent, Options } from '../src/types'
+import { isNotSentError } from '../src/reconnection'
 
 /**
  * A TCP proxy in front of the database container. Closing and reopening it reproduces a real outage
@@ -700,6 +701,72 @@ describe('PgComponent reconnection', () => {
 
     it('should still report the connection as lost', () => {
       expect(pg.getConnectionStatus().connected).toBe(false)
+    })
+  })
+
+  // Canaries: `isNotSentError` decides whether a failed statement is safe to retry by matching the
+  // wording of errors `pg` raises internally. These pin that wording against the installed driver, so
+  // an upgrade that rephrases it fails a test instead of silently disabling the safe-retry path.
+  describe('when pg refuses a statement on a client that was closed', () => {
+    let client: Client
+    let queryError: Error | undefined
+
+    beforeEach(async () => {
+      client = new Client({ connectionString: container.getConnectionUri() })
+      await client.connect()
+      await client.end()
+
+      queryError = undefined
+      try {
+        await client.query('SELECT 1')
+      } catch (error) {
+        queryError = error as Error
+      }
+    })
+
+    it('should word the refusal the way the not-sent classifier expects', () => {
+      expect(queryError?.message).toMatch(/not queryable/)
+    })
+
+    it('should be recognised as an error that proves the statement never left the client', () => {
+      expect(isNotSentError(queryError)).toBe(true)
+    })
+  })
+
+  describe('when pg refuses a statement on a client whose socket died', () => {
+    let proxy: TcpProxy
+    let client: Client
+    let queryError: Error | undefined
+
+    beforeEach(async () => {
+      proxy = await createTcpProxy(container.getHost(), container.getPort())
+      client = new Client({ connectionString: `postgres://test:test@127.0.0.1:${proxy.port}/test` })
+      // The dying socket is reported on the client's 'error' event as well as through the query.
+      client.on('error', () => undefined)
+      await client.connect()
+
+      proxy.dropLiveConnections()
+      await sleep(50)
+
+      queryError = undefined
+      try {
+        await client.query('SELECT 1')
+      } catch (error) {
+        queryError = error as Error
+      }
+    })
+
+    afterEach(async () => {
+      await client.end()
+      await proxy.close()
+    })
+
+    it('should word the refusal the way the not-sent classifier expects', () => {
+      expect(queryError?.message).toMatch(/not queryable/)
+    })
+
+    it('should be recognised as an error that proves the statement never left the client', () => {
+      expect(isNotSentError(queryError)).toBe(true)
     })
   })
 

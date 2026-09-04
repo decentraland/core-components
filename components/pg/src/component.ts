@@ -476,9 +476,12 @@ export async function createPgComponent(
       }
     })
 
-    // A connection that dies mid-stream leaves `pg-cursor` waiting for a `readyForQuery` that can
-    // never arrive, so destroying the stream never completes and the iteration would hang forever.
-    // The client's 'end' event fires as soon as the socket is gone, which is what unblocks it.
+    // TODO: remove this workaround once the upstream hang is fixed. A connection that dies mid-stream
+    // leaves `pg-cursor` waiting for a `readyForQuery` that can never arrive, so destroying the stream
+    // never completes and the iteration would hang forever — brianc/node-postgres#2870 ("QueryStream
+    // gets stuck permanently on lost connections") and #2468 ("cursor.read hangs indefinitely after a
+    // termination error"). The client's 'end' event fires as soon as the socket is gone, which is
+    // what unblocks it here.
     let signalConnectionLost: (error: Error) => void = () => undefined
     const connectionLost = new Promise<never>((_, reject) => {
       signalConnectionLost = reject
