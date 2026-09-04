@@ -7,9 +7,7 @@ import { createPgComponent } from '../src/component'
 jest.mock('node-pg-migrate')
 jest.mock('pg', () => ({
   Pool: jest.fn().mockImplementation(() => ({
-    // The checked-out client needs `on`/`off`: the component holds an 'error' listener for the
-    // duration of every checkout, since `pg-pool` drops its own while the client is in use.
-    connect: jest.fn().mockResolvedValue({ release: jest.fn(), on: jest.fn(), off: jest.fn(), query: jest.fn() }),
+    connect: jest.fn().mockResolvedValue({ release: jest.fn() }),
     on: jest.fn(),
     end: jest.fn(),
     query: jest.fn()

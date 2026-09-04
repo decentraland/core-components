@@ -188,6 +188,17 @@ export async function createPgComponent(
   }
   pool.on('error', onPoolError)
 
+  // `pg-pool` removes its own 'error' listener while a client is checked out, so a socket dying
+  // mid-statement would emit an unhandled 'error' event and take the process down. Attaching one
+  // here, when the pool creates the client, covers every checkout for the client's lifetime — the
+  // component's own and any made through `getPool()` directly. It only observes: the failure already
+  // reaches the caller through the rejected statement, and idle-client errors reach `onPoolError`.
+  pool.on('connect', (client) => {
+    client.on('error', (error: Error) => {
+      logger.debug('Checked out pg client error', { error: error?.message ?? String(error) })
+    })
+  })
+
   let didStart = false
 
   // node-pg-migrate guards against concurrent migrations with a non-blocking advisory lock
@@ -226,7 +237,6 @@ export async function createPgComponent(
    */
   async function probeConnection(): Promise<void> {
     const client = await pool.connect()
-    const detachClientErrorHandler = attachClientErrorHandler(client)
     let probeError: unknown
 
     try {
@@ -235,7 +245,6 @@ export async function createPgComponent(
       probeError = error
       throw error
     } finally {
-      detachClientErrorHandler()
       releaseClient(client, probeError)
     }
   }
@@ -246,28 +255,6 @@ export async function createPgComponent(
    */
   function releaseClient(client: PoolClient, error?: unknown): void {
     client.release(isConnectionError(error) ? true : undefined)
-  }
-
-  /**
-   * `pg-pool` removes its own 'error' listener while a client is checked out, so a socket dying
-   * mid-statement emits an unhandled 'error' event and takes the process down with it. Holding a
-   * listener for the duration of the checkout keeps the failure to the rejected statement, which the
-   * caller already sees. Returns the function that detaches it, which must run before releasing the
-   * client so the pool's own listener is not shadowed.
-   */
-  function attachClientErrorHandler(client: PoolClient): () => void {
-    const onClientError = (error: Error) => {
-      logger.error('Checked out pg client error', {
-        error: error?.message ?? String(error),
-        stack: error?.stack ?? ''
-      })
-      reconnection.notifyFailure(error)
-    }
-
-    client.on('error', onClientError)
-    return () => {
-      client.off('error', onClientError)
-    }
   }
 
   // Methods
@@ -285,7 +272,6 @@ export async function createPgComponent(
         'start',
         async ({ markStatementSent }) => {
           const db = await pool.connect()
-          const detachClientErrorHandler = attachClientErrorHandler(db)
           let connectionError: unknown
 
           try {
@@ -313,7 +299,6 @@ export async function createPgComponent(
             })
             throw err
           } finally {
-            detachClientErrorHandler()
             releaseClient(db, connectionError)
           }
         },
@@ -340,7 +325,6 @@ export async function createPgComponent(
       'transaction',
       async ({ markStatementSent }) => {
         const client = await pool.connect()
-        const detachClientErrorHandler = attachClientErrorHandler(client)
         let rollbackError: Error | undefined
         let transactionError: unknown
 
@@ -361,7 +345,6 @@ export async function createPgComponent(
           }
           throw error
         } finally {
-          detachClientErrorHandler()
           if (rollbackError) {
             client.release(rollbackError)
           } else {
@@ -425,7 +408,6 @@ export async function createPgComponent(
       'query',
       async ({ markStatementSent }) => {
         const client = await pool.connect()
-        const detachClientErrorHandler = attachClientErrorHandler(client)
         let queryError: unknown
 
         try {
@@ -435,7 +417,6 @@ export async function createPgComponent(
           queryError = error
           throw error
         } finally {
-          detachClientErrorHandler()
           releaseClient(client, queryError)
         }
       },
