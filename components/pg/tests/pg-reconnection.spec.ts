@@ -622,6 +622,67 @@ describe('PgComponent reconnection', () => {
     })
   })
 
+  describe('when the pool timeout is disabled and the database accepts connections but never answers', () => {
+    let silentServer: net.Server
+    let silentPort: number
+    let pg: IPgComponent
+    let reachable: boolean
+    let attemptsAfterAWhile: number
+
+    beforeEach(async () => {
+      // A host that completes the TCP handshake and then says nothing — the shape of a blackholed
+      // database behind a load balancer. `pg` would wait on it for as long as its timeout allows, and a
+      // timeout of `0` means forever.
+      const sockets = new Set<net.Socket>()
+      silentServer = net.createServer((socket) => {
+        sockets.add(socket)
+        socket.on('error', () => undefined)
+        socket.on('close', () => sockets.delete(socket))
+      })
+      await new Promise<void>((resolve) => silentServer.listen(0, '127.0.0.1', resolve))
+      const address = silentServer.address()
+      if (address === null || typeof address === 'string') {
+        throw new Error('The silent server did not bind to a port')
+      }
+      silentPort = address.port
+
+      pg = await createPgComponent(
+        { config: createMockConfig(silentPort), logs: createMockLogs() },
+        {
+          pool: { connectionTimeoutMillis: 0 },
+          reconnection: {
+            ...FAST_RECONNECTION,
+            initialDelayInMilliseconds: 10,
+            maxDelayInMilliseconds: 20,
+            probeTimeoutInMilliseconds: 100
+          }
+        }
+      )
+
+      reachable = await pg.ping()
+      // Long enough for several probe cycles; a wedged loop would still be waiting on the first.
+      await sleep(600)
+      attemptsAfterAWhile = pg.getConnectionStatus().reconnectionAttempts
+
+      silentServer.close()
+      for (const socket of sockets) {
+        socket.destroy()
+      }
+    })
+
+    afterEach(async () => {
+      await pg.stop()
+    })
+
+    it('should report the database as unreachable within the probe deadline', () => {
+      expect(reachable).toBe(false)
+    })
+
+    it('should keep probing instead of being wedged behind the first attempt that never returned', () => {
+      expect(attemptsAfterAWhile).toBeGreaterThanOrEqual(2)
+    })
+  })
+
   describe('when checking the database health while every pooled client is checked out', () => {
     let proxy: TcpProxy
     let pg: IPgComponent

@@ -45,7 +45,8 @@ env vars or the new `reconnection` factory option, and `PG_COMPONENT_RECONNECTIO
 restores the previous fail-fast behaviour. Probes use a short-lived connection of
 their own, never a pooled checkout, so a saturated pool cannot be mistaken for an outage; each is
 bounded by `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT` (default 5s), which also clamps that
-connection's timeouts, so `ping()` reports an unhealthy database instead of hanging. The
+connection's timeouts — a pool timeout disabled with `0` is replaced, not inherited — so `ping()`
+reports an unhealthy database instead of hanging. The
 `DatabaseUnavailableError` message is generic; the driver's error is in `cause`.
 
 Released as a major because `IPgComponent` gains two required methods: real component instances are

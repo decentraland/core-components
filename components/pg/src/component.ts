@@ -243,8 +243,8 @@ export async function createPgComponent(
     const probeTimeout = reconnectionOptions.probeTimeoutInMilliseconds
     const client = new Client({
       ...finalOptions,
-      connectionTimeoutMillis: Math.min(finalOptions.connectionTimeoutMillis ?? Infinity, probeTimeout),
-      query_timeout: Math.min(finalOptions.query_timeout ?? Infinity, probeTimeout)
+      connectionTimeoutMillis: boundedByProbeDeadline(finalOptions.connectionTimeoutMillis, probeTimeout),
+      query_timeout: boundedByProbeDeadline(finalOptions.query_timeout, probeTimeout)
     })
     // The failure reaches the caller through the rejected connect/query; the event only needs a home.
     client.on('error', (error: Error) => {
@@ -646,6 +646,17 @@ export async function createPgComponent(
     start,
     stop
   }
+}
+
+/**
+ * The timeout a probe connection runs with. `pg` reads `0` (and treats anything non-positive) as "no
+ * timeout", so a consumer who disabled the pool's timeout must not hand that to the probe: its whole
+ * point is to be bounded, and an unbounded attempt would pin the probe handle — and with it every
+ * later probe — for as long as a silent host cares to keep the socket open. `pg` enforces the value it
+ * gets by destroying the socket, which is what actually retires the attempt.
+ */
+function boundedByProbeDeadline(timeout: number | undefined, deadline: number): number {
+  return timeout !== undefined && Number.isFinite(timeout) && timeout > 0 ? Math.min(timeout, deadline) : deadline
 }
 
 /**

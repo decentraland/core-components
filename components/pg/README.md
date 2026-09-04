@@ -140,8 +140,9 @@ Three things happen when the connection drops:
    Probes use a short-lived connection of their own rather than a pooled checkout: a checkout also
    asks "is a client free?", and under load the answer can be "no" for longer than the probe deadline,
    which would turn a busy service into a self-inflicted outage. Each probe is bounded by
-   `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`, which also clamps that connection's own timeouts, so an
-   unreachable host cannot park the loop (or `ping()`) on an attempt that never returns.
+   `PG_COMPONENT_RECONNECTION_PROBE_TIMEOUT`, which also clamps that connection's own timeouts — a pool
+   timeout that was disabled with `0` is replaced, not inherited — so an unreachable host cannot park
+   the loop (or `ping()`) on an attempt that never returns.
 3. **Operations wait for that loop instead of retrying on their own.** While the database is known
    to be down, a query does not open connections of its own — a hundred concurrent requests during an
    outage would otherwise mean a hundred connection attempts per retry against a database trying to
