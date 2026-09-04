@@ -93,4 +93,37 @@ describe('PgComponent migration retries', () => {
       expect(mockedRunner).toHaveBeenCalledTimes(3)
     })
   })
+
+  describe('when the connection drops once the migrations have begun', () => {
+    let startError: Error | undefined
+
+    beforeEach(async () => {
+      // The harshest case for a replay: the error is one that proves the last statement never left
+      // the client, which would earn an ordinary query a retry. A migration is caller-provided code —
+      // and a non-transactional one can be half applied — so it must not be re-run.
+      config = createMockConfig({
+        PG_COMPONENT_RECONNECTION_START_MAX_RETRIES: 3,
+        PG_COMPONENT_RECONNECTION_INITIAL_DELAY: 1,
+        PG_COMPONENT_RECONNECTION_MAX_DELAY: 1
+      })
+      mockedRunner.mockRejectedValue(new Error('Client has encountered a connection error and is not queryable'))
+
+      const pg = await createPgComponent({ config, logs }, { migration })
+
+      startError = undefined
+      try {
+        await pg.start()
+      } catch (error) {
+        startError = error as Error
+      }
+    })
+
+    it('should fail to start with the connection error', () => {
+      expect(startError?.message).toMatch(/not queryable/)
+    })
+
+    it('should have run the migrations exactly once', () => {
+      expect(mockedRunner).toHaveBeenCalledTimes(1)
+    })
+  })
 })

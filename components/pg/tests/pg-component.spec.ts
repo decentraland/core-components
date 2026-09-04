@@ -97,6 +97,35 @@ describe('PgComponent', () => {
     })
   })
 
+  describe('when starting the component more than once', () => {
+    let pg: IPgComponent
+    let config: IConfigComponent
+    let logs: ILoggerComponent
+    let secondStartError: Error | undefined
+
+    beforeEach(async () => {
+      config = createMockConfig()
+      logs = createMockLogs()
+      pg = await createPgComponent({ config, logs })
+      await pg.start()
+
+      secondStartError = undefined
+      try {
+        await pg.start()
+      } catch (error) {
+        secondStartError = error as Error
+      }
+    })
+
+    afterEach(async () => {
+      await pg.stop()
+    })
+
+    it('should ignore the second call instead of connecting again', () => {
+      expect(secondStartError).toBeUndefined()
+    })
+  })
+
   describe('when two components run migrations against the same database', () => {
     let pgA: IPgComponent
     let pgB: IPgComponent
@@ -128,6 +157,82 @@ describe('PgComponent', () => {
       // the loser retries with backoff until the first releases the lock, then runs (a no-op here,
       // since the migration is already applied).
       await expect(Promise.all([pgA.start(), pgB.start()])).resolves.toHaveLength(2)
+    })
+  })
+
+  describe('when starting the component with migrations configured', () => {
+    let pg: IPgComponent
+    let config: IConfigComponent
+    let logs: ILoggerComponent
+
+    beforeEach(async () => {
+      config = createMockConfig()
+      logs = createMockLogs()
+      pg = await createPgComponent(
+        { config, logs },
+        {
+          migration: {
+            migrationsTable: 'pgmigrations',
+            dir: resolve(__dirname, 'fixtures', 'migrations'),
+            direction: 'up',
+            count: Infinity
+          }
+        }
+      )
+      await pg.start()
+    })
+
+    afterEach(async () => {
+      await pg.query(SQL`DROP TABLE IF EXISTS pg_component_migration_lock_test`)
+      await pg.query(SQL`DROP TABLE IF EXISTS pgmigrations`)
+      await pg.stop()
+    })
+
+    it('should have run the migrations against the database', async () => {
+      const migratedTable = 'pg_component_migration_lock_test'
+      const result = await pg.query<{ count: string }>(
+        SQL`SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_name = ${migratedTable}`
+      )
+      expect(result.rows[0].count).toBe('1')
+    })
+  })
+
+  describe('when starting the component with a migration that fails', () => {
+    let pg: IPgComponent
+    let config: IConfigComponent
+    let logs: ILoggerComponent
+    let startError: Error | undefined
+
+    beforeEach(async () => {
+      config = createMockConfig()
+      logs = createMockLogs()
+      pg = await createPgComponent(
+        { config, logs },
+        {
+          migration: {
+            migrationsTable: 'broken_pgmigrations',
+            dir: resolve(__dirname, 'fixtures', 'broken-migrations'),
+            direction: 'up',
+            count: Infinity
+          }
+        }
+      )
+
+      startError = undefined
+      try {
+        await pg.start()
+      } catch (error) {
+        startError = error as Error
+      }
+    })
+
+    afterEach(async () => {
+      await pg.query(SQL`DROP TABLE IF EXISTS broken_pgmigrations`)
+      await pg.stop()
+    })
+
+    it('should fail to start with the error raised by the migration', () => {
+      expect(startError?.message).toContain('migration exploded')
     })
   })
 
@@ -198,6 +303,19 @@ describe('PgComponent', () => {
 
         expect(result.rowCount).toBe(1)
         expect(result.rows[0].value).toBe(200)
+      })
+    })
+
+    describe('and the statement raises a notice', () => {
+      let notices: (string | undefined)[]
+
+      beforeEach(async () => {
+        const result = await pg.query(SQL`DO $$ BEGIN RAISE NOTICE 'something happened'; END $$`)
+        notices = result.notices.map((notice) => notice.message)
+      })
+
+      it('should collect the notice alongside the result', () => {
+        expect(notices).toContain('something happened')
       })
     })
 
