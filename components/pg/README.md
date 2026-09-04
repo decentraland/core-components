@@ -262,6 +262,12 @@ const reachable = await pg.ping()
 `getConnectionStatus()` reports `connected: false` until the first successful interaction, so a
 readiness probe built on it will not report the service as ready before the database answers.
 
+Every `ping()` that actually probes opens a real connection — a backend fork on the server — so it is
+rate-floored: a verdict younger than `PG_COMPONENT_RECONNECTION_INITIAL_DELAY` is reused, capping it at
+the cadence the reconnection loop itself would probe at, and any state change the component observes
+clears the cache. Even so, prefer `getConnectionStatus()` for an endpoint anyone can reach, and keep
+`ping()` behind authentication or the platform's health-check rate.
+
 The status also carries `lastError`, the driver's raw message, which can name hosts, ports, users or
 databases (`connect ECONNREFUSED 10.0.1.5:5432`). Log it, but keep it out of the body of a public
 health endpoint.

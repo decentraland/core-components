@@ -276,6 +276,7 @@ export function createReconnectionManager(
   let stopped = false
   let loopRunning = false
   let inFlightProbe: ProbeRun | undefined
+  let lastVerdict: { reachable: boolean; at: number } | undefined
   let warnedAboutMissingMetrics = false
 
   function recordMetric(record: (metricsComponent: IMetricsComponent) => void): void {
@@ -322,6 +323,7 @@ export function createReconnectionManager(
     connected = true
     since = Date.now()
     reconnectionAttempts = 0
+    lastVerdict = undefined
 
     recordMetric((metricsComponent) => metricsComponent.observe('dcl_db_connection_status', {}, 1))
     settleRecoveryWaiters(true)
@@ -342,6 +344,7 @@ export function createReconnectionManager(
       connected = false
       since = Date.now()
       disconnections += 1
+      lastVerdict = undefined
 
       logger.warn('Database connection lost', { error: lastError })
       recordMetric((metricsComponent) => metricsComponent.observe('dcl_db_connection_status', {}, 0))
@@ -443,6 +446,7 @@ export function createReconnectionManager(
         try {
           await awaitWithDeadline(attempt)
           markConnected()
+          lastVerdict = { reachable: true, at: Date.now() }
           return true
         } catch (error) {
           // The probe connection is the component's own, sized to the deadline: any failure to open
@@ -450,6 +454,7 @@ export function createReconnectionManager(
           // flips regardless of how the error is classified.
           markDisconnected(error)
           settleRecoveryWaiters(false)
+          lastVerdict = { reachable: false, at: Date.now() }
           return false
         }
       })()
@@ -472,6 +477,15 @@ export function createReconnectionManager(
     // readiness endpoint polled during a deploy from firing `onDisconnection` on every shutdown.
     if (stopped) {
       return false
+    }
+
+    // Rate floor. Every probe is a real connection — a backend fork on the server — and `ping()` is
+    // typically wired to an endpoint anyone can hit, so without this a caller could drive connection
+    // churn at request rate. A verdict younger than the initial backoff delay is reused, which caps
+    // `ping()` at the cadence the loop itself would probe at. State transitions clear the cache, so
+    // a change the component has observed is never masked by it.
+    if (lastVerdict && Date.now() - lastVerdict.at < options.initialDelayInMilliseconds) {
+      return lastVerdict.reachable
     }
 
     return startProbe().verdict

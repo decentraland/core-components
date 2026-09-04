@@ -989,6 +989,83 @@ describe('when the database flaps in and out', () => {
   })
 })
 
+describe('when the database is pinged repeatedly', () => {
+  let logs: ILoggerComponent
+  let manager: ReconnectionManager
+  let probeConnection: jest.Mock<Promise<void>, []>
+
+  afterEach(() => {
+    manager.stop()
+  })
+
+  describe('and the pings arrive faster than the initial backoff delay', () => {
+    let verdicts: boolean[]
+
+    beforeEach(async () => {
+      logs = createMockLogs()
+      probeConnection = jest.fn().mockResolvedValue(undefined)
+      manager = createReconnectionManager(
+        { logs },
+        { ...FAST_OPTIONS, enabled: false, initialDelayInMilliseconds: 200 },
+        probeConnection
+      )
+      verdicts = [await manager.probe(), await manager.probe(), await manager.probe()]
+    })
+
+    it('should answer every ping', () => {
+      expect(verdicts).toEqual([true, true, true])
+    })
+
+    it('should have opened a single connection, reusing the verdict for the rest', () => {
+      expect(probeConnection).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and the initial backoff delay has passed between pings', () => {
+    beforeEach(async () => {
+      logs = createMockLogs()
+      probeConnection = jest.fn().mockResolvedValue(undefined)
+      manager = createReconnectionManager(
+        { logs },
+        { ...FAST_OPTIONS, enabled: false, initialDelayInMilliseconds: 20 },
+        probeConnection
+      )
+      await manager.probe()
+      await new Promise((resolve) => global.setTimeout(resolve, 40))
+      await manager.probe()
+    })
+
+    it('should probe again', () => {
+      expect(probeConnection).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('and the connection state changed since the last verdict', () => {
+    let verdictAfterTheChange: boolean
+
+    beforeEach(async () => {
+      logs = createMockLogs()
+      probeConnection = jest.fn().mockResolvedValue(undefined)
+      manager = createReconnectionManager(
+        { logs },
+        { ...FAST_OPTIONS, enabled: false, initialDelayInMilliseconds: 200 },
+        probeConnection
+      )
+      await manager.probe()
+      manager.notifyFailure(createErrorWithCode('connect ECONNREFUSED', 'ECONNREFUSED'))
+      verdictAfterTheChange = await manager.probe()
+    })
+
+    it('should not serve the stale verdict', () => {
+      expect(probeConnection).toHaveBeenCalledTimes(2)
+    })
+
+    it('should report what the fresh probe found', () => {
+      expect(verdictAfterTheChange).toBe(true)
+    })
+  })
+})
+
 describe('when a probe outlives its deadline', () => {
   let logs: ILoggerComponent
   let manager: ReconnectionManager

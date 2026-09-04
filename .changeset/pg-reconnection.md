@@ -39,7 +39,7 @@ connection dying mid-`streamQuery` hung the iteration forever — destroying the
 client's `'end'` event and rejects instead of blocking.
 
 New `getConnectionStatus()` (cached, cheap enough for a readiness probe) and `ping()` (active
-`SELECT 1`), plus `onDisconnection` / `onReconnection` hooks, a `dcl_db_connection_status` gauge and
+`SELECT 1`, rate-floored to one probe per initial backoff delay since each is a real connection), plus `onDisconnection` / `onReconnection` hooks, a `dcl_db_connection_status` gauge and
 a `dcl_db_reconnection_attempts_total` counter. Everything is tunable through `PG_COMPONENT_RECONNECTION_*`
 env vars or the new `reconnection` factory option, and `PG_COMPONENT_RECONNECTION_ENABLED=false`
 restores the previous fail-fast behaviour. Probes use a short-lived connection of
