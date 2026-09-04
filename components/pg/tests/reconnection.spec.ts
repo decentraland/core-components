@@ -7,6 +7,7 @@ import {
   ReconnectionManager,
   ResolvedReconnectionOptions
 } from '../src/reconnection'
+import { DatabaseError } from 'pg'
 import { IMetricsComponent } from '../src/types'
 import { DatabaseUnavailableError } from '../src/errors'
 
@@ -192,6 +193,40 @@ describe('when checking whether an error is a connection error', () => {
 
     it('should not classify it as a connection error, since reconnecting can never fix it', () => {
       expect(isConnectionError(error)).toBe(false)
+    })
+  })
+
+  describe('and the server raised an error whose text mimics a driver disconnection', () => {
+    let error: DatabaseError
+
+    beforeEach(() => {
+      // What `RAISE EXCEPTION 'Client has encountered a connection error and is not queryable'`
+      // arrives as: a server error with a SQLSTATE and attacker-chosen text.
+      error = new DatabaseError('Client has encountered a connection error and is not queryable', 60, 'error')
+      error.severity = 'ERROR'
+      error.code = 'P0001'
+    })
+
+    it('should not classify it as a connection error, since the SQLSTATE says otherwise', () => {
+      expect(isConnectionError(error)).toBe(false)
+    })
+
+    it('should not take it as proof the statement never reached the server', () => {
+      expect(isNotSentError(error)).toBe(false)
+    })
+  })
+
+  describe('and the server reports a genuine connection-class SQLSTATE', () => {
+    let error: DatabaseError
+
+    beforeEach(() => {
+      error = new DatabaseError('terminating connection due to administrator command', 60, 'error')
+      error.severity = 'FATAL'
+      error.code = '57P01'
+    })
+
+    it('should classify it as a connection error by its code', () => {
+      expect(isConnectionError(error)).toBe(true)
     })
   })
 

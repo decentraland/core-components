@@ -106,6 +106,20 @@ function getErrorMessage(error: unknown): string {
   return String(error ?? '')
 }
 
+/**
+ * Whether the error is one the server sent, as opposed to one the driver raised itself. Server errors
+ * arrive as `pg`'s `DatabaseError`, which always carries a `severity` and a SQLSTATE `code`; driver and
+ * socket errors carry neither. Checked structurally rather than with `instanceof` so it holds across
+ * a mocked `pg` and across duplicate copies of `pg-protocol` in a dependency tree.
+ */
+function isServerError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false
+  }
+  const { severity, code } = error as { severity?: unknown; code?: unknown }
+  return typeof severity === 'string' && typeof code === 'string'
+}
+
 function matchesAnyMessage(error: unknown, fragments: string[]): boolean {
   const message = getErrorMessage(error).toLowerCase()
   return message.length > 0 && fragments.some((fragment) => message.includes(fragment))
@@ -137,6 +151,14 @@ export function isConnectionError(error: unknown): boolean {
     }
   }
 
+  // An error the server sent carries a SQLSTATE, and that code alone decides. Its message is
+  // application text — a `RAISE EXCEPTION '%', user_input` can carry anything, including the exact
+  // wording of the driver errors matched below — so matching on it would let a caller stage a fake
+  // disconnection, and with it a replay of the statement, from inside a query.
+  if (isServerError(error)) {
+    return false
+  }
+
   return matchesAnyMessage(error, CONNECTION_ERROR_MESSAGES) || isNotSentError(error)
 }
 
@@ -146,7 +168,8 @@ export function isConnectionError(error: unknown): boolean {
  * @internal
  */
 export function isNotSentError(error: unknown): boolean {
-  return matchesAnyMessage(error, NOT_SENT_ERROR_MESSAGES)
+  // The server cannot vouch for a statement never having reached it; only the driver can.
+  return !isServerError(error) && matchesAnyMessage(error, NOT_SENT_ERROR_MESSAGES)
 }
 
 /**

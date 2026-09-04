@@ -805,6 +805,60 @@ describe('PgComponent reconnection', () => {
     })
   })
 
+  describe('when a statement raises an error whose text mimics a driver disconnection', () => {
+    let proxy: TcpProxy
+    let pg: IPgComponent
+    let onDisconnection: jest.Mock<void, [Error]>
+    let queryError: Error | undefined
+    let executions: string
+
+    beforeEach(async () => {
+      proxy = await createTcpProxy(container.getHost(), container.getPort())
+      onDisconnection = jest.fn()
+      pg = await createPgComponent(
+        { config: createMockConfig(proxy.port), logs: createMockLogs() },
+        { reconnection: { ...FAST_RECONNECTION, onDisconnection } }
+      )
+      await pg.start()
+      // A sequence survives the statement's rollback, so it counts how many times the statement ran.
+      await pg.query(SQL`CREATE SEQUENCE replay_probe`)
+
+      queryError = undefined
+      try {
+        await pg.query(SQL`
+          DO $$ BEGIN
+            PERFORM nextval('replay_probe');
+            RAISE EXCEPTION 'Client has encountered a connection error and is not queryable';
+          END $$
+        `)
+      } catch (error) {
+        queryError = error as Error
+      }
+
+      const counter = await pg.query<{ last_value: string }>(SQL`SELECT last_value::text FROM replay_probe`)
+      executions = counter.rows[0].last_value
+    })
+
+    afterEach(async () => {
+      await pg.query(SQL`DROP SEQUENCE IF EXISTS replay_probe`)
+      await pg.stop()
+      await proxy.close()
+    })
+
+    it('should surface the raised error as an ordinary query failure', () => {
+      expect(queryError?.message).toMatch(/not queryable/)
+    })
+
+    it('should have run the statement exactly once, not replayed it as a stale-client retry', () => {
+      expect(executions).toBe('1')
+    })
+
+    it('should not report an outage the database never had', () => {
+      expect(onDisconnection).not.toHaveBeenCalled()
+      expect(pg.getConnectionStatus().disconnections).toBe(0)
+    })
+  })
+
   // Canaries: `isNotSentError` decides whether a failed statement is safe to retry by matching the
   // wording of errors `pg` raises internally. These pin that wording against the installed driver, so
   // an upgrade that rephrases it fails a test instead of silently disabling the safe-retry path.

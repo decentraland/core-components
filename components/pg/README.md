@@ -201,6 +201,11 @@ operation, so the component only retries when it can tell that is safe:
 | The pool is full and the wait for a free client timed out             | No — the database is fine          |
 | The statement failed for any non-connection reason                    | No                                 |
 
+An error the server sent is classified by its SQLSTATE alone, never by its text. Server messages are
+application text — a `RAISE EXCEPTION` can carry anything, user input included — so matching on them
+would let a caller stage a fake disconnection, and a replay of the statement, from inside a query.
+Only errors the driver raised itself, which carry no SQLSTATE, are classified by their wording.
+
 The second row is the common case behind a warm pool: when the database restarts, the pool still
 holds sockets that are already dead, and `pg` rejects the statement before writing anything to the
 wire. That error proves the statement never reached the server, which makes the retry safe.
